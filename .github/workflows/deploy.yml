@@ -1,0 +1,141 @@
+# Ship what was tested (Let's Go Further ch. 21).
+#
+#   1. test     re-uses test.yml: nothing below runs unless it passes
+#   2. build    builds the Linux binary with `make staging/binary` (the same command
+#               used for staging on Docker Desktop), then packages that exact binary
+#               into the image (Dockerfile target `prebuilt`) and pushes it to GHCR
+#   3. release  version tags only: attaches the binary to a GitHub Release
+#   4. deploy   only if the repository variable PROD_HOST is set: pulls the image on
+#               the server over SSH and restarts it
+#
+# Server setup for step 4 (Settings -> Secrets and variables -> Actions):
+#   variables: PROD_HOST, PROD_USER, PROD_APP_DIR (a folder holding a compose file
+#              whose api service uses image: ${API_IMAGE})
+#   secrets:   PROD_SSH_KEY
+name: deploy
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
+  build:
+    name: build tested binary + image
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history + tags so `git describe` gives a real version
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Version and image name
+        id: meta
+        run: |
+          version="$(git describe --always --dirty --tags)"
+          image="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
+      - name: Build Linux binary (same target as staging)
+        run: make staging/binary
+
+      - name: Check the binary reports its version
+        run: ./bin/linux_amd64/api -version | grep -F "${{ steps.meta.outputs.version }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: api-linux-amd64-${{ steps.meta.outputs.version }}
+          path: bin/linux_amd64/api
+          retention-days: 30
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image from the tested binary
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: prebuilt
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}
+            ${{ steps.meta.outputs.image }}:sha-${{ github.sha }}
+            ${{ github.ref == 'refs/heads/main' && format('{0}:latest', steps.meta.outputs.image) || '' }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+
+  release:
+    name: GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: api-linux-amd64-${{ needs.build.outputs.version }}
+          path: dist
+
+      - name: Create release with the binary attached
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mv dist/api "dist/zemi-fleet-api-linux-amd64"
+          gh release create "${{ github.ref_name }}" dist/zemi-fleet-api-linux-amd64 \
+            --repo "${{ github.repository }}" --title "${{ github.ref_name }}" --generate-notes
+
+  deploy:
+    name: deploy to production
+    if: vars.PROD_HOST != ''
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Pull and restart on the server
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          API_IMAGE: ${{ needs.build.outputs.image }}:sha-${{ github.sha }}
+        with:
+          host: ${{ vars.PROD_HOST }}
+          username: ${{ vars.PROD_USER }}
+          key: ${{ secrets.PROD_SSH_KEY }}
+          envs: API_IMAGE
+          script: |
+            set -e
+            cd "${{ vars.PROD_APP_DIR }}"
+            export API_IMAGE
+            docker compose pull api
+            docker compose run --rm migrate
+            docker compose up -d api
+            docker image prune -f

@@ -1,0 +1,88 @@
+# Quality gate (Let's Go Further ch. 20.3). Runs the same checks as `make dev/audit`,
+# plus the race detector and a migration round-trip against a real Postgres.
+#
+# Runs on pull requests and on pushes to branches other than main. Pushes to main
+# and version tags run it through deploy.yml (workflow_call), so it never runs twice.
+name: test
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: audit + unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Tidy check
+        run: go mod tidy -diff
+
+      - name: Verify modules
+        run: go mod verify
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
+
+      - name: Tests (race detector + coverage)
+        run: go test -race -count=1 -coverprofile=coverage.out ./...
+
+      - name: Coverage summary
+        run: go tool cover -func=coverage.out | tail -1
+
+  migrations:
+    name: migrations up / down / up
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: zemi
+          POSTGRES_PASSWORD: zemi_ci_password
+          POSTGRES_DB: zemi_fleet
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U zemi -d zemi_fleet"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://zemi:zemi_ci_password@localhost:5432/zemi_fleet?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Round-trip all migrations
+        run: |
+          migrate() {
+            docker run --rm --network host -v "$PWD/db/migrations:/migrations:ro" \
+              migrate/migrate:v4.18.1 -path=/migrations -database="$DATABASE_URL" "$@"
+          }
+          migrate up
+          migrate down -all
+          migrate up

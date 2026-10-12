@@ -1,0 +1,16 @@
+# Local environment and secrets
+app.env
+.env
+*.env.local
+
+# Go build outputs and coverage
+bin/
+coverage.out
+coverage.html
+*.test
+
+# IDE / OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

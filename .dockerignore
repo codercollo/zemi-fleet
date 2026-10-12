@@ -1,0 +1,13 @@
+.git
+.github
+app.env
+.env
+coverage.out
+coverage.html
+docs
+postman
+*.md
+
+# Keep only the Linux binary that the `prebuilt` target copies.
+bin/*
+!bin/linux_amd64/

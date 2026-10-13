@@ -4,7 +4,6 @@ package repository
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -12,13 +11,13 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/codercollo/zemi-fleet/internal/config"
+	"github.com/codercollo/zemi-fleet/internal/testdb"
 )
 
 // A genuinely slow statement (pg_sleep) is cancelled at DB_QUERY_TIMEOUT: the caller gets a
 // deadline error after about the timeout, not after the full two seconds.
 func TestIntegration_SlowQueryIsCancelled(t *testing.T) {
-	dsn := os.Getenv("DATABASE_URL")
-	require.NotEmpty(t, dsn, "DATABASE_URL must be set (make exports it from app.env)")
+	dsn := testdb.URL(t)
 	pool, err := OpenPool(context.Background(), config.DBConfig{DSN: dsn, MaxConns: 5, MaxConnIdleTime: time.Minute})
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)

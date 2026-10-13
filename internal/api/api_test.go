@@ -24,7 +24,7 @@ func (f fakeDB) Ping(context.Context) error { return f.err }
 func newTestServer(db Pinger) *Server {
 	gin.SetMode(gin.TestMode)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return NewServer(config.Config{Env: config.EnvDevelopment}, logger, db, nil, nil, nil, nil, nil, "test")
+	return NewServer(config.Config{Env: config.EnvDevelopment}, logger, db, Services{}, "test")
 }
 
 func do(t *testing.T, h http.Handler, method, path string) *httptest.ResponseRecorder {

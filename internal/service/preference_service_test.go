@@ -42,7 +42,7 @@ func details() *OrderDetails {
 func candidate(id string, current int16, minValue int64, rate float64, loc *domain.Location, seen *time.Time) sqlc.ListMatchCandidateRidersRow {
 	row := sqlc.ListMatchCandidateRidersRow{
 		ID: id, IsAvailable: true, CurrentOrdersCount: current, MaxCapacity: 5,
-		MinOrderValueCents: minValue, AcceptanceRate: &rate, LocationUpdatedAt: seen,
+		MinOrderValueCents: minValue, AcceptanceRate: &rate, LocationUpdatedAt: seen, // counts 0: a newcomer, smoothed to 0.5
 	}
 	if loc != nil {
 		row.LastLat, row.LastLng = &loc.Lat, &loc.Lng

@@ -22,8 +22,9 @@ func (s *Server) Routes() http.Handler {
 	v2 := r.Group(apiPrefix)
 	v2.GET("/healthz", s.healthzHandler)
 
-	v2.POST("/orders", s.createOrderHandler)
-	v2.POST("/orders/batch", s.createBatchesHandler)
+	// POST /orders and POST /orders/batch honour an Idempotency-Key header (see idempotency.go).
+	v2.POST("/orders", s.idempotent(), s.createOrderHandler)
+	v2.POST("/orders/batch", s.idempotent(), s.createBatchesHandler)
 	v2.POST("/orders/match-riders", s.matchRidersHandler)
 	v2.GET("/orders/:id", s.showOrderHandler)
 

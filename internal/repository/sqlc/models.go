@@ -203,6 +203,16 @@ type Category struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type IdempotencyKey struct {
+	Key             string    `json:"key"`
+	Endpoint        string    `json:"endpoint"`
+	RequestHash     string    `json:"request_hash"`
+	ResponseStatus  *int32    `json:"response_status"`
+	ResponseBody    *string   `json:"response_body"`
+	ResponseHeaders []byte    `json:"response_headers"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
 type Order struct {
 	ID                 string      `json:"id"`
 	VendorID           string      `json:"vendor_id"`

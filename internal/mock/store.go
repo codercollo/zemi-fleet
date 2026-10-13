@@ -133,6 +133,35 @@ func (mr *MockStoreMockRecorder) BumpRiderVersion(ctx, arg any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BumpRiderVersion", reflect.TypeOf((*MockStore)(nil).BumpRiderVersion), ctx, arg)
 }
 
+// ClaimIdempotencyKey mocks base method.
+func (m *MockStore) ClaimIdempotencyKey(ctx context.Context, arg sqlc.ClaimIdempotencyKeyParams) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ClaimIdempotencyKey", ctx, arg)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ClaimIdempotencyKey indicates an expected call of ClaimIdempotencyKey.
+func (mr *MockStoreMockRecorder) ClaimIdempotencyKey(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClaimIdempotencyKey", reflect.TypeOf((*MockStore)(nil).ClaimIdempotencyKey), ctx, arg)
+}
+
+// CompleteIdempotencyKey mocks base method.
+func (m *MockStore) CompleteIdempotencyKey(ctx context.Context, arg sqlc.CompleteIdempotencyKeyParams) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CompleteIdempotencyKey", ctx, arg)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CompleteIdempotencyKey indicates an expected call of CompleteIdempotencyKey.
+func (mr *MockStoreMockRecorder) CompleteIdempotencyKey(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CompleteIdempotencyKey", reflect.TypeOf((*MockStore)(nil).CompleteIdempotencyKey), ctx, arg)
+}
+
 // CreateBatch mocks base method.
 func (m *MockStore) CreateBatch(ctx context.Context, arg sqlc.CreateBatchParams) (sqlc.Batch, error) {
 	m.ctrl.T.Helper()
@@ -207,6 +236,20 @@ func (mr *MockStoreMockRecorder) CreateOrder(ctx, arg any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateOrder", reflect.TypeOf((*MockStore)(nil).CreateOrder), ctx, arg)
 }
 
+// DeleteExpiredIdempotencyKeys mocks base method.
+func (m *MockStore) DeleteExpiredIdempotencyKeys(ctx context.Context, cutoff time.Time) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DeleteExpiredIdempotencyKeys", ctx, cutoff)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DeleteExpiredIdempotencyKeys indicates an expected call of DeleteExpiredIdempotencyKeys.
+func (mr *MockStoreMockRecorder) DeleteExpiredIdempotencyKeys(ctx, cutoff any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteExpiredIdempotencyKeys", reflect.TypeOf((*MockStore)(nil).DeleteExpiredIdempotencyKeys), ctx, cutoff)
+}
+
 // DeletePreferredAreas mocks base method.
 func (m *MockStore) DeletePreferredAreas(ctx context.Context, riderID string) error {
 	m.ctrl.T.Helper()
@@ -247,6 +290,21 @@ func (m *MockStore) ExecTx(ctx context.Context, fn func(sqlc.Querier) error) err
 func (mr *MockStoreMockRecorder) ExecTx(ctx, fn any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExecTx", reflect.TypeOf((*MockStore)(nil).ExecTx), ctx, fn)
+}
+
+// ExpireBatchesTx mocks base method.
+func (m *MockStore) ExpireBatchesTx(ctx context.Context, now time.Time) (int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ExpireBatchesTx", ctx, now)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ExpireBatchesTx indicates an expected call of ExpireBatchesTx.
+func (mr *MockStoreMockRecorder) ExpireBatchesTx(ctx, now any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExpireBatchesTx", reflect.TypeOf((*MockStore)(nil).ExpireBatchesTx), ctx, now)
 }
 
 // ExpireStaleBatches mocks base method.
@@ -337,6 +395,21 @@ func (m *MockStore) GetCategory(ctx context.Context, code string) (sqlc.Category
 func (mr *MockStoreMockRecorder) GetCategory(ctx, code any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetCategory", reflect.TypeOf((*MockStore)(nil).GetCategory), ctx, code)
+}
+
+// GetIdempotencyKey mocks base method.
+func (m *MockStore) GetIdempotencyKey(ctx context.Context, arg sqlc.GetIdempotencyKeyParams) (sqlc.IdempotencyKey, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetIdempotencyKey", ctx, arg)
+	ret0, _ := ret[0].(sqlc.IdempotencyKey)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetIdempotencyKey indicates an expected call of GetIdempotencyKey.
+func (mr *MockStoreMockRecorder) GetIdempotencyKey(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetIdempotencyKey", reflect.TypeOf((*MockStore)(nil).GetIdempotencyKey), ctx, arg)
 }
 
 // GetOrder mocks base method.
@@ -651,6 +724,20 @@ func (mr *MockStoreMockRecorder) RecordRiderAccept(ctx, arg any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordRiderAccept", reflect.TypeOf((*MockStore)(nil).RecordRiderAccept), ctx, arg)
 }
 
+// ReleaseIdempotencyKey mocks base method.
+func (m *MockStore) ReleaseIdempotencyKey(ctx context.Context, arg sqlc.ReleaseIdempotencyKeyParams) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ReleaseIdempotencyKey", ctx, arg)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ReleaseIdempotencyKey indicates an expected call of ReleaseIdempotencyKey.
+func (mr *MockStoreMockRecorder) ReleaseIdempotencyKey(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleaseIdempotencyKey", reflect.TypeOf((*MockStore)(nil).ReleaseIdempotencyKey), ctx, arg)
+}
+
 // ReleaseOrdersFromBatches mocks base method.
 func (m *MockStore) ReleaseOrdersFromBatches(ctx context.Context, batchIds []string) error {
 	m.ctrl.T.Helper()
@@ -663,6 +750,21 @@ func (m *MockStore) ReleaseOrdersFromBatches(ctx context.Context, batchIds []str
 func (mr *MockStoreMockRecorder) ReleaseOrdersFromBatches(ctx, batchIds any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleaseOrdersFromBatches", reflect.TypeOf((*MockStore)(nil).ReleaseOrdersFromBatches), ctx, batchIds)
+}
+
+// TakeOverIdempotencyKey mocks base method.
+func (m *MockStore) TakeOverIdempotencyKey(ctx context.Context, arg sqlc.TakeOverIdempotencyKeyParams) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "TakeOverIdempotencyKey", ctx, arg)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// TakeOverIdempotencyKey indicates an expected call of TakeOverIdempotencyKey.
+func (mr *MockStoreMockRecorder) TakeOverIdempotencyKey(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TakeOverIdempotencyKey", reflect.TypeOf((*MockStore)(nil).TakeOverIdempotencyKey), ctx, arg)
 }
 
 // UpdateRiderAvailability mocks base method.

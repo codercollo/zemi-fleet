@@ -34,7 +34,9 @@ func (s *Server) matchRidersHandler(c *gin.Context) {
 
 	v := validator.New()
 	req.OrderID = strings.TrimSpace(req.OrderID)
-	v.Check(len(req.OrderID) <= maxIDLength, "order_id", "must not be more than 64 characters long")
+	if req.OrderID != "" {
+		checkID(v, "order_id", req.OrderID, orderID)
+	}
 
 	in := service.MatchRidersInput{OrderID: req.OrderID}
 	if d := req.OrderDetails; d == nil {
@@ -42,11 +44,10 @@ func (s *Server) matchRidersHandler(c *gin.Context) {
 		v.Check(req.OrderID != "", "order_id", "must be provided when order_details is not")
 	} else {
 		category := strings.TrimSpace(d.Category)
-		v.Check(category != "", "order_details.category", "must be provided")
-		v.Check(len(category) <= maxIDLength, "order_details.category", "must not be more than 64 characters long")
+		checkID(v, "order_details.category", category, categoryID)
 		pickup := checkLocation(v, "order_details.pickup_location", d.PickupLocation)
 		delivery := checkLocation(v, "order_details.delivery_location", d.DeliveryLocation)
-		valueCents := checkAmount(v, "order_details.value_kes", d.ValueKES, true)
+		valueCents := checkAmount(v, "order_details.value_kes", d.ValueKES, true, s.cfg.OrderMaxValueKES)
 		in.Details = &service.OrderDetails{Category: category, Pickup: pickup, Delivery: delivery, ValueCents: valueCents}
 	}
 	if !v.Valid() {

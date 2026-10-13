@@ -62,6 +62,7 @@ func TestMatchOrders_HappyPath(t *testing.T) {
 			assert.True(t, p.LocationUpdatedAt.Equal(testNow), "stamped by the injected clock")
 			return nil
 		})
+	f.store.EXPECT().ExpireBatchesTx(gomock.Any(), gomock.Any()).Return(0, nil)
 	f.store.EXPECT().ListPendingOrdersInBox(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, p sqlc.ListPendingOrdersInBoxParams) ([]sqlc.ListPendingOrdersInBoxRow, error) {
 			assert.Less(t, p.MinLat, sarit.Lat)
@@ -96,6 +97,7 @@ func TestMatchOrders_NoCandidates(t *testing.T) {
 	f := newMatchFixture(t)
 	f.store.EXPECT().GetRider(gomock.Any(), gomock.Any()).Return(riderRow(0, 5, true), nil)
 	f.store.EXPECT().UpdateRiderTelemetry(gomock.Any(), gomock.Any()).Return(nil)
+	f.store.EXPECT().ExpireBatchesTx(gomock.Any(), gomock.Any()).Return(0, nil)
 	f.store.EXPECT().ListPendingOrdersInBox(gomock.Any(), gomock.Any()).Return(nil, nil)
 
 	res, err := f.svc.MatchOrders(context.Background(), MatchOrdersInput{RiderID: "rider_001", Position: sarit})
@@ -168,6 +170,7 @@ func TestMatchOrders_ServerCountIsAuthoritative(t *testing.T) {
 			f.store.EXPECT().GetRider(gomock.Any(), gomock.Any()).Return(riderRow(tc.serverCount, 5, true), nil)
 			f.store.EXPECT().UpdateRiderTelemetry(gomock.Any(), gomock.Any()).Return(nil)
 			if tc.wantCanAccep {
+				f.store.EXPECT().ExpireBatchesTx(gomock.Any(), gomock.Any()).Return(0, nil)
 				f.store.EXPECT().ListPendingOrdersInBox(gomock.Any(), gomock.Any()).Return(nil, nil)
 			}
 
@@ -198,6 +201,7 @@ func TestMatchOrders_UnknownHeadingAndSpeedStoredAsNull(t *testing.T) {
 			assert.Nil(t, p.LastSpeedKmh)
 			return nil
 		})
+	f.store.EXPECT().ExpireBatchesTx(gomock.Any(), gomock.Any()).Return(0, nil)
 	f.store.EXPECT().ListPendingOrdersInBox(gomock.Any(), gomock.Any()).Return(nil, nil)
 
 	_, err := f.svc.MatchOrders(context.Background(), MatchOrdersInput{RiderID: "rider_001", Position: sarit})
@@ -209,6 +213,7 @@ func TestMatchOrders_FullCircleFallbackKeepsBehindOrders(t *testing.T) {
 	f := newMatchFixture(t)
 	f.store.EXPECT().GetRider(gomock.Any(), gomock.Any()).Return(riderRow(0, 5, true), nil)
 	f.store.EXPECT().UpdateRiderTelemetry(gomock.Any(), gomock.Any()).Return(nil)
+	f.store.EXPECT().ExpireBatchesTx(gomock.Any(), gomock.Any()).Return(0, nil)
 	f.store.EXPECT().ListPendingOrdersInBox(gomock.Any(), gomock.Any()).Return([]sqlc.ListPendingOrdersInBoxRow{
 		pickupRow("ord_ahead", 0.002, 0, time.Minute), pickupRow("ord_behind", -0.002, 0, time.Minute),
 	}, nil)
@@ -246,6 +251,7 @@ func TestMatchOrders_StoreErrors(t *testing.T) {
 		f := newMatchFixture(t)
 		f.store.EXPECT().GetRider(gomock.Any(), gomock.Any()).Return(riderRow(0, 5, true), nil)
 		f.store.EXPECT().UpdateRiderTelemetry(gomock.Any(), gomock.Any()).Return(nil)
+		f.store.EXPECT().ExpireBatchesTx(gomock.Any(), gomock.Any()).Return(0, nil)
 		f.store.EXPECT().ListPendingOrdersInBox(gomock.Any(), gomock.Any()).Return(nil, boom)
 
 		_, err := f.svc.MatchOrders(context.Background(), MatchOrdersInput{RiderID: "rider_001"})

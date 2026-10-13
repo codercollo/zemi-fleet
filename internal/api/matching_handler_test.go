@@ -36,6 +36,7 @@ func TestMatchOrders_200(t *testing.T) {
 		h, store := newStoreHandler(t)
 		store.EXPECT().GetRider(gomock.Any(), "rider_001").Return(matchRiderRow(2, 5, true), nil)
 		store.EXPECT().UpdateRiderTelemetry(gomock.Any(), gomock.Any()).Return(nil)
+		store.EXPECT().ExpireBatchesTx(gomock.Any(), gomock.Any()).Return(0, nil)
 		store.EXPECT().ListPendingOrdersInBox(gomock.Any(), gomock.Any()).Return([]sqlc.ListPendingOrdersInBoxRow{
 			pendingRow("ord_a", 0.00225, 12*time.Minute+40*time.Second, 11700), // ~250.2 m due north
 			pendingRow("ord_b", 0.0045, 3*time.Hour, 25050),                    // ~500.4 m due north
@@ -75,6 +76,7 @@ func TestMatchOrders_200(t *testing.T) {
 		// ~12.5 degrees west of north (atan(0.001/0.0045)) (a negative signed angle): 0.0045 lat, -0.001 lng
 		row := pendingRow("ord_w", 0.0045, time.Minute, 100)
 		row.PickupLng = 36.8030 - 0.001
+		store.EXPECT().ExpireBatchesTx(gomock.Any(), gomock.Any()).Return(0, nil)
 		store.EXPECT().ListPendingOrdersInBox(gomock.Any(), gomock.Any()).Return([]sqlc.ListPendingOrdersInBoxRow{row}, nil)
 
 		rec := send(t, h, http.MethodPost, matchPath, validMatchBody)
@@ -89,6 +91,7 @@ func TestMatchOrders_200(t *testing.T) {
 		h, store := newStoreHandler(t)
 		store.EXPECT().GetRider(gomock.Any(), gomock.Any()).Return(matchRiderRow(0, 5, true), nil)
 		store.EXPECT().UpdateRiderTelemetry(gomock.Any(), gomock.Any()).Return(nil)
+		store.EXPECT().ExpireBatchesTx(gomock.Any(), gomock.Any()).Return(0, nil)
 		store.EXPECT().ListPendingOrdersInBox(gomock.Any(), gomock.Any()).Return([]sqlc.ListPendingOrdersInBoxRow{
 			pendingRow("ord_behind", -0.002, time.Minute, 100),
 		}, nil)
@@ -111,6 +114,7 @@ func TestMatchOrders_200(t *testing.T) {
 		h, store := newStoreHandler(t)
 		store.EXPECT().GetRider(gomock.Any(), gomock.Any()).Return(matchRiderRow(0, 5, true), nil)
 		store.EXPECT().UpdateRiderTelemetry(gomock.Any(), gomock.Any()).Return(nil)
+		store.EXPECT().ExpireBatchesTx(gomock.Any(), gomock.Any()).Return(0, nil)
 		store.EXPECT().ListPendingOrdersInBox(gomock.Any(), gomock.Any()).Return(nil, nil)
 
 		rec := send(t, h, http.MethodPost, matchPath,
@@ -124,6 +128,7 @@ func TestMatchOrders_200(t *testing.T) {
 		h, store := newStoreHandler(t)
 		store.EXPECT().GetRider(gomock.Any(), gomock.Any()).Return(matchRiderRow(2, 5, true), nil)
 		store.EXPECT().UpdateRiderTelemetry(gomock.Any(), gomock.Any()).Return(nil)
+		store.EXPECT().ExpireBatchesTx(gomock.Any(), gomock.Any()).Return(0, nil)
 		store.EXPECT().ListPendingOrdersInBox(gomock.Any(), gomock.Any()).Return(nil, nil)
 
 		rec := send(t, h, http.MethodPost, matchPath, validMatchBody)
@@ -164,6 +169,7 @@ func TestMatchOrders_200(t *testing.T) {
 		h, store := newStoreHandler(t)
 		store.EXPECT().GetRider(gomock.Any(), gomock.Any()).Return(matchRiderRow(4, 5, true), nil)
 		store.EXPECT().UpdateRiderTelemetry(gomock.Any(), gomock.Any()).Return(nil)
+		store.EXPECT().ExpireBatchesTx(gomock.Any(), gomock.Any()).Return(0, nil)
 		store.EXPECT().ListPendingOrdersInBox(gomock.Any(), gomock.Any()).Return(nil, nil)
 
 		rec := send(t, h, http.MethodPost, matchPath, validMatchBody) // says 2, server says 4
@@ -187,7 +193,7 @@ func TestMatchOrders_400(t *testing.T) {
 		{"bad json", `{"rider_id":`},
 		{"unknown field", `{"rider_id":"rider_001","altitude":4}`},
 		{"wrong type", `{"rider_id":7}`},
-		{"string speed", `{"rider_id":"r","current_location":{"latitude":-1,"longitude":36},"speed_kmh":"fast","current_orders_count":0}`},
+		{"string speed", `{"rider_id":"rider_001","current_location":{"latitude":-1,"longitude":36},"speed_kmh":"fast","current_orders_count":0}`},
 		{"two documents", validMatchBody + validMatchBody},
 	}
 	for _, tc := range tests {
@@ -214,21 +220,21 @@ func TestMatchOrders_404(t *testing.T) {
 func TestMatchOrders_422(t *testing.T) {
 	loc := `"current_location":{"latitude":-1.2635,"longitude":36.8030}`
 	tests := []struct{ name, body, wantField string }{
-		{"latitude too high", `{"rider_id":"r",` + strings.Replace(loc, "-1.2635", "91", 1) + `,"current_orders_count":0}`, "current_location.latitude"},
-		{"latitude too low", `{"rider_id":"r",` + strings.Replace(loc, "-1.2635", "-90.5", 1) + `,"current_orders_count":0}`, "current_location.latitude"},
-		{"longitude too high", `{"rider_id":"r",` + strings.Replace(loc, "36.8030", "181", 1) + `,"current_orders_count":0}`, "current_location.longitude"},
-		{"missing latitude", `{"rider_id":"r","current_location":{"longitude":36.8},"current_orders_count":0}`, "current_location.latitude"},
-		{"missing longitude", `{"rider_id":"r","current_location":{"latitude":-1.2},"current_orders_count":0}`, "current_location.longitude"},
-		{"missing location", `{"rider_id":"r","current_orders_count":0}`, "current_location"},
-		{"bearing 360", `{"rider_id":"r",` + loc + `,"bearing_degrees":360,"current_orders_count":0}`, "bearing_degrees"},
-		{"negative bearing", `{"rider_id":"r",` + loc + `,"bearing_degrees":-0.1,"current_orders_count":0}`, "bearing_degrees"},
-		{"negative speed", `{"rider_id":"r",` + loc + `,"speed_kmh":-1,"current_orders_count":0}`, "speed_kmh"},
-		{"speed above 200", `{"rider_id":"r",` + loc + `,"speed_kmh":200.5,"current_orders_count":0}`, "speed_kmh"},
+		{"latitude too high", `{"rider_id":"rider_001",` + strings.Replace(loc, "-1.2635", "91", 1) + `,"current_orders_count":0}`, "current_location.latitude"},
+		{"latitude too low", `{"rider_id":"rider_001",` + strings.Replace(loc, "-1.2635", "-90.5", 1) + `,"current_orders_count":0}`, "current_location.latitude"},
+		{"longitude too high", `{"rider_id":"rider_001",` + strings.Replace(loc, "36.8030", "181", 1) + `,"current_orders_count":0}`, "current_location.longitude"},
+		{"missing latitude", `{"rider_id":"rider_001","current_location":{"longitude":36.8},"current_orders_count":0}`, "current_location.latitude"},
+		{"missing longitude", `{"rider_id":"rider_001","current_location":{"latitude":-1.2},"current_orders_count":0}`, "current_location.longitude"},
+		{"missing location", `{"rider_id":"rider_001","current_orders_count":0}`, "current_location"},
+		{"bearing 360", `{"rider_id":"rider_001",` + loc + `,"bearing_degrees":360,"current_orders_count":0}`, "bearing_degrees"},
+		{"negative bearing", `{"rider_id":"rider_001",` + loc + `,"bearing_degrees":-0.1,"current_orders_count":0}`, "bearing_degrees"},
+		{"negative speed", `{"rider_id":"rider_001",` + loc + `,"speed_kmh":-1,"current_orders_count":0}`, "speed_kmh"},
+		{"speed above 200", `{"rider_id":"rider_001",` + loc + `,"speed_kmh":200.5,"current_orders_count":0}`, "speed_kmh"},
 		{"missing rider_id", `{` + loc + `,"current_orders_count":0}`, "rider_id"},
 		{"blank rider_id", `{"rider_id":"   ",` + loc + `,"current_orders_count":0}`, "rider_id"},
-		{"count above 5", `{"rider_id":"r",` + loc + `,"current_orders_count":6}`, "current_orders_count"},
-		{"negative count", `{"rider_id":"r",` + loc + `,"current_orders_count":-1}`, "current_orders_count"},
-		{"missing count", `{"rider_id":"r",` + loc + `}`, "current_orders_count"},
+		{"count above 5", `{"rider_id":"rider_001",` + loc + `,"current_orders_count":6}`, "current_orders_count"},
+		{"negative count", `{"rider_id":"rider_001",` + loc + `,"current_orders_count":-1}`, "current_orders_count"},
+		{"missing count", `{"rider_id":"rider_001",` + loc + `}`, "current_orders_count"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -247,7 +253,7 @@ func TestMatchOrders_422(t *testing.T) {
 		store.EXPECT().UpdateRiderTelemetry(gomock.Any(), gomock.Any()).Return(nil)
 
 		rec := send(t, h, http.MethodPost, matchPath,
-			`{"rider_id":"r","current_location":{"latitude":-90,"longitude":180},"bearing_degrees":359.99,"speed_kmh":200,"current_orders_count":5}`)
+			`{"rider_id":"rider_001","current_location":{"latitude":-90,"longitude":180},"bearing_degrees":359.99,"speed_kmh":200,"current_orders_count":5}`)
 
 		assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	})
@@ -269,6 +275,7 @@ func TestMatchOrders_BearingWithoutSpeedUsesCone(t *testing.T) {
 	h, store := newStoreHandler(t)
 	store.EXPECT().GetRider(gomock.Any(), gomock.Any()).Return(matchRiderRow(0, 5, true), nil)
 	store.EXPECT().UpdateRiderTelemetry(gomock.Any(), gomock.Any()).Return(nil)
+	store.EXPECT().ExpireBatchesTx(gomock.Any(), gomock.Any()).Return(0, nil)
 	store.EXPECT().ListPendingOrdersInBox(gomock.Any(), gomock.Any()).Return([]sqlc.ListPendingOrdersInBoxRow{
 		pendingRow("ord_ahead", 0.002, time.Minute, 100), pendingRow("ord_behind", -0.002, time.Minute, 100),
 	}, nil)

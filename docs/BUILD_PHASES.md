@@ -38,6 +38,7 @@ The algorithm packages (`geo`, `batching`, `matching`) are pure Go and are calle
 | 6 | Proximity matching: 60° cone, `POST /riders/match-orders` | 9 (sorting) | ✅ done |
 | 7 | Batching: clustering, sequencing, scoring, batch endpoints, exclusive accept | 8, 9 | ✅ done |
 | 8 | Preference matching: `POST /orders/match-riders` | 9 | ✅ done |
+| 8.5 | Integration hardening: separate test database, e2e scenarios with SQL invariants, CI job, dead-file audit | — | ✅ done |
 | 9 | Structured logging, panic recovery, rate limiting, graceful shutdown | 10, 11, 12 | |
 | 10 | Authentication: API key (+ PASETO stretch) | 16, 17 (13–15 skipped) | |
 | 11 | CORS and metrics | 18, 19 | |
@@ -239,6 +240,38 @@ Target pace (deadline Fri 16 Oct, 22:00): Mon 0–2 · Tue 3–5 · Wed 6–7 ·
 **Done when:** tests cover a rider with no preferences (matches everything), an order below a rider's minimum (excluded), the ranking order, and the case where no riders match.
 
 > **Prompt:** Build Phase 8 from docs/BUILD_PHASES.md: preference filtering and scoring with tests, and POST /api/v2/orders/match-riders.
+
+---
+
+## Phase 8.5 — Integration hardening ✅
+**Why:** after eight phases of features, prove they work *together* on the real stack, protect the development data from the tests, and remove everything that is empty or dead.
+
+**Scope (as built)**
+- **Phase 8 review fixes:** the score uses a smoothed acceptance rate `(accepted+1)/(offers+2)` (a newcomer scores 0.5); the response still shows the raw stored `acceptance_rate`. README "Try it" explains stale seeded locations and the ping to send.
+- **`docs/TESTING.md`:** the systems-under-test table (pure, repository, services, handlers, whole API), what each layer proves, and the known gaps.
+- **Separate test database:** `TEST_DATABASE_URL` (`zemi_fleet_test`), enforced by `internal/testdb` (refuses any name not ending in `_test`). `make dev/test/integration` and the new `dev/test/e2e` migrate it first; `dev/test/all` runs unit, integration and e2e. Existing integration tests moved onto it; every test resets and loads its own fixtures (`db/testdata/reference.sql`, `testdb.AddRider`); tagged packages run with `-p 1`.
+- **`internal/app.Build`:** the single place the Store, services and handlers are wired; `cmd/api` and the e2e tests both use it.
+- **E2E (`internal/e2e`, tag `e2e`):** five scenarios driven over HTTP (order lifecycle, capacity across features, expiry and release, concurrent load, location freshness). Each ends with `assertInvariants` (nine SQL invariants + every timestamp is UTC).
+- **Found by the e2e expiry scenario:** orders of a timed-out batch stayed invisible to `match-orders` until somebody next asked for batches. Fixed: `match-orders` now calls `ExpireBatchesTx` first (verified by disabling the call and watching the scenario fail).
+- **Hardening from the security review:** `Idempotency-Key` on `POST /orders` and `POST /orders/batch` (migration `000002_idempotency`; atomic claim, replay, 422 on a different body, release on failure, takeover of a crashed claim, `IDEMPOTENCY_TTL` / `IDEMPOTENCY_PROCESSING_TIMEOUT`); money with `math.Round`, a 2-decimal rule, configured bounds `ORDER_MAX_VALUE_KES` / `ORDER_MAX_DELIVERY_FEE_KES` and saturating batch sums; a format and length check on every ID (`internal/api/ids.go`), list and body caps; `govulncheck` (pinned `v1.9.0`) in `make dev/audit` and CI; the "Security" section in `docs/DOCUMENTATION.md` with the CWE/OWASP mapping and the shared-API-key limitation. govulncheck's first run found vulnerable `x/text`, `x/net` and `quic-go`, now upgraded (`go.mod` now needs Go 1.26.0, the Dockerfile builder is `golang:1.27-alpine`).
+- **CI:** an `integration-e2e` job with a `postgres:16` service (integration, then e2e with `-race` and `-count=3`); the audit job also vets and staticchecks the tagged files. `deploy.yml` reuses `test.yml`, so deploys are gated by it.
+- **Dead-file audit** (every file listed with `find`, then inspected; decisions applied):
+
+| Item | Finding | Decision |
+|---|---|---|
+| `scripts/smoke_test.sh` | empty (0 bytes); referenced nowhere (the Makefile smoke target uses curl) | **Keep for Phase 12** (it lists "a full smoke test"); file removed until then |
+| `internal/token/` | empty directory | **Keep for Phase 10 stretch** (it lists `internal/token` PASETO, only if asked); directory removed until then |
+| `.gitkeep` files | none left (`db/query/.gitkeep` went when the directory got queries) | nothing to do |
+| empty, whitespace-only or package-clause-only files | none other than the smoke script | nothing to do |
+| `TODO` / `FIXME` / `XXX` / `HACK` | none (the Phase 5 TODO went with `service/geo.go`) | nothing to do |
+| commented-out code | none (grep hits are formula blocks in doc comments) | nothing to do |
+| stale text in `BUILD_PHASES.md` (Phase 2 note that the seed creates `users` rows) | wrong since Phase 3 | **Implemented now**: corrected |
+| unused exported functions and types | none: staticcheck (including the `integration`/`e2e` files, newly added to `make dev/audit`) is clean, and a caller scan finds every exported function and type used | nothing to do |
+| 12 exported status constants in `internal/domain` (`OrderPending` ... `BatchExpired`) | mirror the database enums; most are never referenced | **Keep, and implement a use now**: `TestDomainStatusesMatchTheDatabaseEnums` ties them to the sqlc enums so they cannot drift |
+| 2 unused vars and 1 unused `append` in the new e2e code | staticcheck U1000, SA4010 | **Deleted** |
+| `db/testdata/reference.sql` (new) | a copy of the seed's reference tables | **Keep**; `TestIntegration_ReferenceDataMatchesSeed` fails if it drifts |
+
+**Done when:** `make dev/audit` and `make dev/test/all` pass against `zemi_fleet_test` with the development database untouched, each e2e scenario is stable over repeated runs, and nothing empty remains in the repository.
 
 ---
 

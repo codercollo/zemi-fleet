@@ -36,6 +36,16 @@ type Config struct {
 	// no meaningful direction and is not worth a rider; creating one is a 422.
 	OrderMinTripM int `mapstructure:"ORDER_MIN_TRIP_M"`
 
+	// OrderMaxValueKES and OrderMaxDeliveryFeeKES are the largest amounts a request may carry (KES). They bound every
+	// amount that is converted to int64 cents, so no sum of cents can come near overflowing.
+	OrderMaxValueKES       float64 `mapstructure:"ORDER_MAX_VALUE_KES"`
+	OrderMaxDeliveryFeeKES float64 `mapstructure:"ORDER_MAX_DELIVERY_FEE_KES"`
+
+	// IdempotencyTTL is how long an Idempotency-Key is remembered; older keys are ignored and deleted on write.
+	IdempotencyTTL time.Duration `mapstructure:"IDEMPOTENCY_TTL"`
+	// IdempotencyProcessingTimeout is how long a claimed key may stay unfinished before a retry may take it over.
+	IdempotencyProcessingTimeout time.Duration `mapstructure:"IDEMPOTENCY_PROCESSING_TIMEOUT"`
+
 	Cone  ConeConfig  `mapstructure:",squash"`
 	Batch BatchConfig `mapstructure:",squash"`
 	Match MatchConfig `mapstructure:",squash"`
@@ -91,6 +101,8 @@ const (
 	maxBatchAvgSpeed  = 200.0
 	maxBatchTolerance = 180.0
 	maxOrderMinTripM  = 10_000
+	// maxAmountKESLimit keeps any configured amount (KES) times 100 far inside int64, even when summed over a batch.
+	maxAmountKESLimit = 1_000_000_000.0
 )
 
 // ConeConfig holds the proximity-matching (60 degree cone) tunables.
@@ -151,15 +163,19 @@ var defaults = map[string]any{
 	"MATCH_WEIGHT_ACCEPTANCE":    0.20,
 	"MATCH_MAX_RESULTS":          10,
 
-	"BATCH_MAX_ORDERS":              5,
-	"BATCH_PICKUP_RADIUS_KM":        2,
-	"BATCH_DIRECTION_TOLERANCE_DEG": 45,
-	"BATCH_SEARCH_RADIUS_KM":        5,
-	"BATCH_VISIBILITY_RADIUS_KM":    3,
-	"ORDER_MIN_TRIP_M":              50,
-	"BATCH_TTL":                     "10m",
-	"AVG_SPEED_KMH":                 20,
-	"STOP_DWELL_MIN":                2,
+	"BATCH_MAX_ORDERS":               5,
+	"BATCH_PICKUP_RADIUS_KM":         2,
+	"BATCH_DIRECTION_TOLERANCE_DEG":  45,
+	"BATCH_SEARCH_RADIUS_KM":         5,
+	"BATCH_VISIBILITY_RADIUS_KM":     3,
+	"ORDER_MIN_TRIP_M":               50,
+	"ORDER_MAX_VALUE_KES":            10_000_000,
+	"ORDER_MAX_DELIVERY_FEE_KES":     10_000_000,
+	"IDEMPOTENCY_TTL":                "24h",
+	"IDEMPOTENCY_PROCESSING_TIMEOUT": "2m",
+	"BATCH_TTL":                      "10m",
+	"AVG_SPEED_KMH":                  20,
+	"STOP_DWELL_MIN":                 2,
 }
 
 // Load configuration
@@ -211,6 +227,17 @@ func (c Config) validate() error {
 	}
 	if c.OrderMinTripM < 0 || c.OrderMinTripM > maxOrderMinTripM {
 		errs = append(errs, fmt.Errorf("ORDER_MIN_TRIP_M must be between 0 and %d (got %d)", maxOrderMinTripM, c.OrderMinTripM))
+	}
+	for name, v := range map[string]float64{"ORDER_MAX_VALUE_KES": c.OrderMaxValueKES, "ORDER_MAX_DELIVERY_FEE_KES": c.OrderMaxDeliveryFeeKES} {
+		if v <= 0 || v > maxAmountKESLimit {
+			errs = append(errs, fmt.Errorf("%s must be greater than 0 and at most %v (got %v)", name, maxAmountKESLimit, v))
+		}
+	}
+	if c.IdempotencyTTL <= 0 {
+		errs = append(errs, fmt.Errorf("IDEMPOTENCY_TTL must be greater than zero (got %s)", c.IdempotencyTTL))
+	}
+	if c.IdempotencyProcessingTimeout <= 0 || c.IdempotencyProcessingTimeout > c.IdempotencyTTL {
+		errs = append(errs, fmt.Errorf("IDEMPOTENCY_PROCESSING_TIMEOUT must be greater than zero and at most IDEMPOTENCY_TTL (got %s)", c.IdempotencyProcessingTimeout))
 	}
 	if c.RiderPayoutBPS < 0 || c.RiderPayoutBPS > MaxPayoutBPS {
 		errs = append(errs, fmt.Errorf("RIDER_PAYOUT_BPS must be 0-%d (got %d)", MaxPayoutBPS, c.RiderPayoutBPS))

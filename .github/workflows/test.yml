@@ -29,6 +29,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          # Newest patch release of that Go line: govulncheck also reports vulnerabilities in the standard library.
+          check-latest: true
 
       - name: Tidy check
         run: go mod tidy -diff
@@ -49,11 +51,21 @@ jobs:
       - name: staticcheck
         run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
 
+      # The integration and e2e files carry build tags, so they need their own pass to be checked at all.
+      - name: vet and staticcheck the tagged tests
+        run: |
+          go vet -tags=integration,e2e ./...
+          go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 -tags=integration,e2e ./...
+
       - name: Tests (race detector + coverage)
         run: go test -race -count=1 -coverprofile=coverage.out ./...
 
       - name: Coverage summary
         run: go tool cover -func=coverage.out | tail -1
+
+      # Known vulnerabilities (OWASP A06) in the dependencies we call and in the Go toolchain. Version pinned.
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
   migrations:
     name: migrations up / down / up
@@ -86,3 +98,45 @@ jobs:
           migrate up
           migrate down -all
           migrate up
+
+  # The integration and e2e tests need a real PostgreSQL. They run against a database named *_test (the tests
+  # refuse any other name) and never see a development or production database.
+  integration-e2e:
+    name: integration + e2e (postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: zemi
+          POSTGRES_PASSWORD: zemi_ci_password
+          POSTGRES_DB: zemi_fleet_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U zemi -d zemi_fleet_test"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgres://zemi:zemi_ci_password@localhost:5432/zemi_fleet_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Migrate the test database
+        run: |
+          docker run --rm --network host -v "$PWD/db/migrations:/migrations:ro" \
+            migrate/migrate:v4.18.1 -path=/migrations -database="$TEST_DATABASE_URL" up
+
+      # -p 1: the packages share one database, so they must not run at the same time.
+      - name: Integration tests
+        run: go test -tags=integration -count=1 -p 1 -run Integration ./...
+
+      # The race detector needs cgo, which the CI runner has (a Windows dev machine without gcc does not).
+      - name: End-to-end tests (race detector, each scenario three times)
+        run: go test -race -tags=e2e -count=3 -p 1 ./internal/e2e/...

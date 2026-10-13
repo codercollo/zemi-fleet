@@ -441,7 +441,7 @@ timestamp cannot be trusted and is treated as unknown. A timestamp slightly in t
 category   = 1.0 if the rider explicitly prefers this category, 0.5 if they have no category preference
 area       = 1.0 if the pickup is inside an explicitly preferred area, 0.5 if they have no area preference
 proximity  = 1 - distance / MATCH_MAX_DISTANCE_KM       (0 if the location is unknown)
-acceptance = the rider's acceptance_rate                (accepted / offered)
+acceptance = (accepted + 1) / (offers + 2)               the SMOOTHED acceptance rate; 0.5 for a newcomer
 
 match_score = round2( 0.25*category + 0.20*area + 0.35*proximity + 0.20*acceptance )
 ```
@@ -450,6 +450,12 @@ The weights are `MATCH_WEIGHT_CATEGORY` (0.25), `MATCH_WEIGHT_AREA` (0.20), `MAT
 `MATCH_WEIGHT_ACCEPTANCE` (0.20). **They must sum to 1.0**; the server refuses to start otherwise (a tolerance of
 1e-9 absorbs float noise). The neutral 0.5 means "no opinion": a rider with no preferences sits between a rider who
 explicitly wants the order (1.0) and one who would have been filtered out.
+
+**Why smoothed.** Scoring the raw `accepted / offered` rate gives every newcomer 0 and buries them under riders
+with any history at all, and gives a rider with one lucky offer a perfect 1.0. `(accepted + 1) / (offers + 2)` (Laplace
+smoothing) starts a newcomer at a neutral 0.5 and converges on the real rate as offers accumulate: 1 accepted of 1
+offered is 0.67, 0 of 1 is 0.33, 45 of 50 is 0.88, 1 of 20 is 0.09. The response still shows the **raw stored**
+`acceptance_rate` (what the rider's record actually is); only the score uses the smoothed value.
 
 **Sorting:** `match_score` descending, then distance ascending with unknown distances last, then `rider_id`. The
 sort uses the *rounded* score, the number the client sees, so two riders who both show 0.80 are ordered by distance
@@ -471,16 +477,20 @@ filtered out (hard filters)
   rider_006 Grace   prefers food and documents only
   rider_007 Peter   prefers Upper Hill and South B only
 
-ranked
+ranked   (acceptance below is the SMOOTHED rate used in the score)
   rider_002 Mercy   0.25*1.0 (prefers electronics)  + 0.20*1.0 (pickup is in Kilimani, Kileleshwa and Lavington, all preferred)
-                    + 0.35*(1 - 0.39/10) = 0.336    + 0.20*0.88 = 0.176          = 0.962  -> 0.96
+                    + 0.35*(1 - 0.39/10) = 0.336    + 0.20*(23/27 = 0.852) = 0.170   = 0.957  -> 0.96
   rider_010 Aisha   0.25*0.5 (no category pref)     + 0.20*0.5 (no area pref)
-                    + 0.35*(1 - 0.25/10) = 0.341    + 0.20*0.857 = 0.171         = 0.738  -> 0.74
+                    + 0.35*(1 - 0.25/10) = 0.341    + 0.20*(31/37 = 0.838) = 0.168   = 0.734  -> 0.73
   rider_009 David   0.25*0.5                        + 0.20*0.5
-                    + 0.35*(1 - 4.48/10) = 0.193    + 0.20*0.80 = 0.160          = 0.578  -> 0.58
-  rider_004 Faith   0.125 + 0.10 + 0.35*(1 - 5.24/10) = 0.167 + 0.20*0.917 = 0.183 = 0.575  -> 0.58   (ties David on the rounded score; David is nearer, so he is first)
-  rider_008 Lucy    0.125 + 0.10 + 0 (no location yet) + 0 (no offers yet)          = 0.225  -> 0.23   (distance_to_pickup_km: null)
+                    + 0.35*(1 - 4.48/10) = 0.193    + 0.20*(49/62 = 0.790) = 0.158   = 0.576  -> 0.58
+  rider_004 Faith   0.125 + 0.10 + 0.35*(1 - 5.24/10) = 0.167 + 0.20*(12/14 = 0.857) = 0.171 = 0.563 -> 0.56
+  rider_008 Lucy    0.125 + 0.10 + 0 (no location yet) + 0.20*0.5 (no offers yet: neutral) = 0.325 -> 0.33   (distance_to_pickup_km: null)
 ```
+
+The raw rates shown in the response are 0.88, 0.857, 0.8, 0.917 and 0 (Lucy has no offers), exactly as stored; smoothing
+changes the ranking terms, not the numbers reported. Faith's raw 0.917 is the best record of the five, but her 5.24 km
+costs her more than it earns her.
 
 At KES 300 Mercy drops out (her minimum order value is KES 500), and a **food** order drops Mercy too and brings
 in Grace (prefers food; the pickup is inside her Kileleshwa and Lavington areas).
@@ -498,13 +508,13 @@ in Grace (prefers food; the pickup is inside her Kileleshwa and Lavington areas)
 
 - The pool of candidates is every rider who is on shift with spare capacity; the SQL only pre-filters those two
   conditions and the pure function applies all six (so each is testable in isolation).
-- A new rider with no offers yet has an acceptance rate of 0, so scores lowest on that term; there is no
-  "benefit of the doubt" for newcomers.
-- `acceptance_rate` is shown with 3 decimals (as stored) and `match_score` with 2.
+- A new rider with no offers yet scores a neutral 0.5 on acceptance (smoothing), so a newcomer is neither buried nor
+  favoured; their response shows `acceptance_rate: 0` because that is the stored value.
+- `acceptance_rate` in the response is the raw stored rate with 3 decimals; `match_score` has 2 decimals.
 - Order creation's minimum trip rule also applies to `order_details`, so an unsaved order is judged as strictly
   as a saved one. A stored order found by `order_id` is not re-validated.
 - The seeded rider locations are timestamped when the seed runs, so after `RIDER_LOCATION_STALE_AFTER` they
-  become unknown until the riders ping again.
+  become unknown until the riders ping again (see "Try it" in the README for the ping to send first).
 
 ### Limitations (for Improvements)
 
@@ -514,3 +524,64 @@ in Grace (prefers food; the pickup is inside her Kileleshwa and Lavington areas)
   would be needed for tens of thousands of riders.
 - Preferences are all-or-nothing filters. There is no "prefers X but will accept Y at a premium".
 - It ranks riders but does not reserve or notify anyone; the offer flow is the batch accept in Phase 7.
+
+---
+
+## Idempotency (`Idempotency-Key`)
+
+`POST /orders` and `POST /orders/batch` accept an `Idempotency-Key` header (1 to 64 visible ASCII characters), so a
+client that times out and retries cannot create a second order or form a second set of batches. Without the header
+nothing changes.
+
+| Situation | Result |
+|---|---|
+| New key | The request runs normally. The key is **claimed first** (an atomic `INSERT ... ON CONFLICT DO NOTHING`), so two simultaneous requests with one key cannot both run |
+| Same key, same body, after the first finished | The stored response is **replayed**: same status, same body, same `Location`, plus `Idempotent-Replay: true`. Nothing is executed |
+| Same key, **different** body | `422`, field `idempotency_key` |
+| Same key, same body, first still running | `409`, retry shortly |
+| First request failed (any non-2xx) | The key is **released**: the failure is not stored, so the corrected retry runs |
+| A claim whose request never finished (a crash) | After `IDEMPOTENCY_PROCESSING_TIMEOUT` (2m) another request with the same body takes it over |
+| Key older than `IDEMPOTENCY_TTL` (24h) | Ignored; expired keys are deleted whenever a new key is written |
+| Malformed key (a space, a control or non-ASCII character, or more than 64 characters) | `400` |
+
+A key is scoped to its endpoint (`/api/v2/orders` and `/api/v2/orders/batch` are independent). "Same body" means the
+same JSON after whitespace is removed (a retry that only re-indents still matches; reordering keys does not). Storage:
+table `idempotency_keys` (`key`, `endpoint`, `request_hash`, `response_status`, `response_body`, `response_headers`,
+`created_at`), migration `000002_idempotency`. A replayed `POST /orders/batch` returns the batches as they were when
+first computed, which may have since been accepted or expired; send a new key for a fresh result.
+
+---
+
+## Security
+
+How the code maps to the usual weakness lists. "Proof" is the test or check that fails if the protection is removed.
+
+| Weakness | What we did | Proof |
+|---|---|---|
+| **CWE-362** race condition (OWASP A04 insecure design) | **Exclusive accept:** one conditional `UPDATE batches ... WHERE status = 'open' AND expires_at > now` decides the winner; the rider row is locked first, then the batch, in that fixed order (no deadlock). **Capacity:** checked under the rider row lock, with a `CHECK (current_orders_count <= max_capacity)` as the last line. **Batch creation:** `FOR UPDATE SKIP LOCKED`. **Idempotency claim:** one atomic insert. **Rider edits:** optimistic locking on `version` | integration: 20 riders accept one batch (1 winner); one rider accepts two batches (never over capacity); concurrent riders never share an order; 20 concurrent claims of one idempotency key (1 runs); e2e concurrent load with SQL invariants |
+| **CWE-89** SQL injection (OWASP A03) | Every query is a **sqlc**-generated, parameterised statement; no SQL is built from strings. The IDs that reach queries are also format-checked first | `grep` finds no string-built SQL outside tests; `internal/api/ids_test.go` sends `'; DROP TABLE` in every ID position |
+| **CWE-190** integer overflow / wraparound | Money is **int64 cents**, never float. KES is converted with `math.Round` (19.99 becomes 1999, not 1998), values with more than 2 decimals are rejected, and `ORDER_MAX_VALUE_KES` / `ORDER_MAX_DELIVERY_FEE_KES` (default 10,000,000, validated at most 1e9) bound every amount. Batch totals use **saturating** addition. Page numbers and list lengths are bounded | `money_test.go` (0.1 + 0.2, 19.99, the maximum, every cent from 0.00 to 20,000.00 round-trips), `batching/money_test.go` (saturation) |
+| **CWE-20** improper input validation (OWASP A03) | JSON is decoded strictly (unknown fields, trailing data and bodies over 1 MiB are `400`). Every ID in a path or body must match its format (`^rider_[0-9A-Za-z]{1,40}$`, `^ord_...`, `^batch_...`, `^ven_...`, `^area_...`, category `^[a-z][a-z_]{1,39}$`); malformed path IDs are `404` without a query. Coordinates, bearings, speeds, amounts, `page`, `page_size`, `radius_km` and `max_orders` are range-checked; list inputs are capped at 50 entries; `Idempotency-Key` and `X-Expected-Version` are validated. There are **no free-text fields**: every string a client sends is an ID, a code or a header value, each length-capped | handler tests for each rule (`ids_test.go`, `*_422` tables) |
+| **CWE-209** information exposure through error messages (OWASP A05) | Every unexpected error is logged once, server side, and the client gets a fixed message: *"the server encountered a problem and could not process your request"*. Domain errors map to fixed 404/409/422 messages. A malformed or unknown ID is the same `404` | handler tests assert a 500 never contains the internal error text (hosts, SQL, driver messages) |
+| **A06** vulnerable and outdated components | **`govulncheck`** (pinned, `v1.9.0`) runs in `make dev/audit` and in CI, and covers the dependencies we actually call *and* the Go standard library of the toolchain in use. Its first run found real issues in `golang.org/x/text`, `golang.org/x/net` and `github.com/quic-go/quic-go` (all pulled in through Gin); they were upgraded | `make dev/audit`; CI `audit` job (which installs the newest patch of the Go line) |
+| **CWE-400** resource exhaustion (OWASP A04) | 1 MiB body cap; per-statement query timeout (`DB_QUERY_TIMEOUT`); `page_size` at most 50; bounded list inputs and batch sizes; HTTP server read/write timeouts. Rate limiting arrives in Phase 9 | `timeout_test.go`, `TestIntegration_SlowQueryIsCancelled` |
+
+### Known limitation: a shared API key lets a client act as any rider
+
+Phase 10 authenticates the **client** with one shared API key. The `rider_id` in a request body or path is trusted as
+sent, so a holder of the key can call `POST /batches/:id/accept` as any rider, read any rider's record, or move any
+rider's location. That is CWE-639 (authorization bypass through a user-controlled key), OWASP **A01 Broken Access
+Control** (an insecure direct object reference). It is acceptable for a trusted rider app talking to its own backend and
+is not acceptable for a public API.
+
+**The fix is per-rider tokens** (the Phase 10 PASETO stretch): `POST /auth/token` would issue a token whose subject is a
+`rider_id`, and every handler would require `rider_id` in the body or path to equal the token's subject (dispatcher tokens
+could act for anyone). Until then, treat the API key as a secret that grants the full rider-fleet surface.
+
+### Other things worth knowing
+
+- Idempotency keys are not secrets and are not scoped to a caller; two clients that choose the same key for the same body
+  would share a response. Use random keys (a UUID per logical operation).
+- Replayed responses are stored verbatim, including order IDs and earnings. The table inherits the database's access controls.
+- `govulncheck` needs network access and the vulnerability database; a machine whose Go toolchain is older than the newest
+  patch release of its line will (correctly) fail the audit until Go is updated.

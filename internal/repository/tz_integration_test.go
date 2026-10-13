@@ -4,7 +4,6 @@ package repository
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -13,12 +12,12 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/codercollo/zemi-fleet/internal/config"
+	"github.com/codercollo/zemi-fleet/internal/testdb"
 )
 
 func integrationPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("DATABASE_URL")
-	require.NotEmpty(t, dsn, "DATABASE_URL must be set (make exports it from app.env)")
+	dsn := testdb.URL(t)
 	pool, err := OpenPool(context.Background(), config.DBConfig{DSN: dsn, MaxConns: 5, MaxConnIdleTime: time.Minute, QueryTimeout: 3 * time.Second})
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)

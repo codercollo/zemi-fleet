@@ -18,10 +18,14 @@ const matchRidersPath = "/api/v2/orders/match-riders"
 const detailsBody = `{"order_id":"ord_new","order_details":{"category":"electronics",
 	"pickup_location":{"lat":-1.2917,"lng":36.7878},"delivery_location":{"lat":-1.2900,"lng":36.7920},"value_kes":5000}}`
 
-func candidateRow(id string, current int16, minValue int64, rate float64, lat, lng *float64, seen *time.Time) sqlc.ListMatchCandidateRidersRow {
+func candidateRow(id string, current int16, minValue int64, offers, accepted int32, lat, lng *float64, seen *time.Time) sqlc.ListMatchCandidateRidersRow {
+	rate := 0.0
+	if offers > 0 {
+		rate = float64(accepted) / float64(offers)
+	}
 	return sqlc.ListMatchCandidateRidersRow{
 		ID: id, IsAvailable: true, CurrentOrdersCount: current, MaxCapacity: 5, MinOrderValueCents: minValue,
-		AcceptanceRate: &rate, LastLat: lat, LastLng: lng, LocationUpdatedAt: seen,
+		OffersCount: offers, AcceptedCount: accepted, AcceptanceRate: &rate, LastLat: lat, LastLng: lng, LocationUpdatedAt: seen,
 	}
 }
 
@@ -33,8 +37,8 @@ func TestMatchRiders_200(t *testing.T) {
 		seen := testNow.Add(-2 * time.Minute)
 		store.EXPECT().GetCategory(gomock.Any(), "electronics").Return(sqlc.Category{Code: "electronics"}, nil)
 		store.EXPECT().ListMatchCandidateRiders(gomock.Any()).Return([]sqlc.ListMatchCandidateRidersRow{
-			candidateRow("rider_a", 2, 0, 0.8125, f64(-1.2917+0.009), f64(36.7878), &seen),
-			candidateRow("rider_b", 0, 0, 0.5, nil, nil, nil),
+			candidateRow("rider_a", 2, 0, 16, 13, f64(-1.2917+0.009), f64(36.7878), &seen),
+			candidateRow("rider_b", 0, 0, 0, 0, nil, nil, nil),
 		}, nil)
 		store.EXPECT().ListPreferredCategoriesForRiders(gomock.Any(), gomock.Any()).Return([]sqlc.RiderPreferredCategory{
 			{RiderID: "rider_a", CategoryCode: "electronics"},
@@ -56,8 +60,8 @@ func TestMatchRiders_200(t *testing.T) {
 		assert.Equal(t, []any{"electronics", "Kilimani"}, first["matching_preferences"])
 		assert.EqualValues(t, 2, first["current_orders_count"])
 		assert.Equal(t, 1.0, first["distance_to_pickup_km"])
-		assert.Equal(t, 0.813, first["acceptance_rate"], "3 decimals")
-		assert.Equal(t, 0.93, first["match_score"], "2 decimals: 0.25 + 0.20 + 0.35*0.9 + 0.20*0.8125 = 0.9275")
+		assert.Equal(t, 0.813, first["acceptance_rate"], "the raw stored rate (13/16), 3 decimals, not the smoothed one used for the score")
+		assert.Equal(t, 0.92, first["match_score"], "2 decimals: 0.25 + 0.20 + 0.35*0.9 + 0.20*(14/18 smoothed) = 0.920")
 		second := riders[1].(map[string]any)
 		assert.Equal(t, "rider_b", second["rider_id"])
 		assert.Contains(t, second, "distance_to_pickup_km")
@@ -69,7 +73,7 @@ func TestMatchRiders_200(t *testing.T) {
 	t.Run("by order_id alone", func(t *testing.T) {
 		h, store := newStoreHandler(t)
 		store.EXPECT().GetOrder(gomock.Any(), "ord_001").Return(sqlc.Order{ID: "ord_001", CategoryCode: "groceries", PickupLat: -1.2975, PickupLng: 36.786, ValueCents: 139000}, nil)
-		store.EXPECT().ListMatchCandidateRiders(gomock.Any()).Return([]sqlc.ListMatchCandidateRidersRow{candidateRow("rider_a", 0, 0, 0.5, nil, nil, nil)}, nil)
+		store.EXPECT().ListMatchCandidateRiders(gomock.Any()).Return([]sqlc.ListMatchCandidateRidersRow{candidateRow("rider_a", 0, 0, 0, 0, nil, nil, nil)}, nil)
 		store.EXPECT().ListPreferredCategoriesForRiders(gomock.Any(), gomock.Any()).Return(nil, nil)
 		store.EXPECT().ListPreferredAreasForRiders(gomock.Any(), gomock.Any()).Return(nil, nil)
 

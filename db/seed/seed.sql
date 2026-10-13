@@ -5,7 +5,7 @@
 -- (rider_004), off shift (rider_005), lower max_capacity (rider_006), brand new with no location (rider_008).
 BEGIN;
 
-TRUNCATE batch_offers, batch_stops, orders, batches, rider_preferred_areas, rider_preferred_categories,
+TRUNCATE idempotency_keys, batch_offers, batch_stops, orders, batches, rider_preferred_areas, rider_preferred_categories,
          rider_preferences, riders, vendors, areas, categories CASCADE;
 
 INSERT INTO categories (code, label) VALUES

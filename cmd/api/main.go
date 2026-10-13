@@ -13,11 +13,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/codercollo/zemi-fleet/internal/api"
+	"github.com/codercollo/zemi-fleet/internal/app"
 	"github.com/codercollo/zemi-fleet/internal/clock"
 	"github.com/codercollo/zemi-fleet/internal/config"
 	"github.com/codercollo/zemi-fleet/internal/repository"
-	"github.com/codercollo/zemi-fleet/internal/service"
 )
 
 // version is overridden at build time with
@@ -59,18 +58,11 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	store := repository.NewStore(pool, cfg.DB.QueryTimeout)
-	clk := clock.Real{}
-	orders := service.NewOrderService(store, clk, cfg.RiderPayoutBPS, cfg.OrderMinTripM)
-	riders := service.NewRiderService(store, clk)
-	matching := service.NewMatchingService(store, clk, logger, cfg.Cone)
-	batches := service.NewBatchService(store, clk, cfg.Batch)
-	preferences := service.NewPreferenceService(store, clk, cfg.Match, cfg.OrderMinTripM)
-	app := api.NewServer(cfg, logger, pool, orders, riders, matching, batches, preferences, version)
+	handler := app.Build(cfg, logger, pool, clock.Real{}, version)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
-		Handler:      app.Routes(),
+		Handler:      handler,
 		IdleTimeout:  time.Minute,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,

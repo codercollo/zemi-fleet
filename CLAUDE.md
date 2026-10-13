@@ -36,7 +36,7 @@ Code quality 30%, algorithm logic 30% (correctness and edge cases: no orders, ri
 
 ## Stack
 
-Go 1.25 (go.mod; pgx and gin require ≥1.25; the Dockerfile builder image matches) · **Gin** (its router is a fork of httprouter, so don't add httprouter) · PostgreSQL 16 · **pgx/v5** (pool) · **sqlc** · golang-migrate · **Viper** · log/slog · testify · go.uber.org/mock (mockgen) · go-faker/faker.
+Go 1.26 (go.mod says 1.26.0 because the dependencies require it; the Dockerfile builder image is `golang:1.27-alpine`, and `make dev/audit` wants a toolchain that govulncheck considers patched) · **Gin** (its router is a fork of httprouter, so don't add httprouter) · PostgreSQL 16 · **pgx/v5** (pool) · **sqlc** · golang-migrate · **Viper** · log/slog · testify · go.uber.org/mock (mockgen) · go-faker/faker.
 Module: `github.com/itscollinsmaina/zemi-fleet`.
 
 ## How the code is organised
@@ -83,11 +83,11 @@ db/query, db/seed      sqlc input SQL, Nairobi seed data                        
 - **Query timeouts:** `DB_QUERY_TIMEOUT` (default 3s) is applied per statement by a DBTX wrapper in `internal/repository/timeout.go`, so every sqlc query is covered. A timeout is an ordinary error and becomes a 500.
 - **Matching rules worth remembering (Phase 6, full write-up in `docs/DOCUMENTATION.md`):** the DB's `current_orders_count` / `max_capacity` are authoritative; the request's count is validated 0–5 and only logged when it disagrees. The cone is skipped only when the bearing is null, or a speed is reported and is below `CONE_MIN_SPEED_KMH` (full circle: `direction_filter_applied=false`, angle `null`); a bearing with no speed uses the cone. `match-orders` stores the rider's position with no version check and no version bump (telemetry never 409s). Limits and radii are inclusive, with tiny float tolerances.
 - **Batching rules worth remembering (Phase 7a, full write-up in `docs/DOCUMENTATION.md`):** pickups must be within the radius of EVERY other pickup in the batch (pairwise), trip bearings within `BATCH_DIRECTION_TOLERANCE_DEG` of the SEED's, FIFO throughout, max `BATCH_MAX_ORDERS`. Batches are created `open` with no rider; only accepting (7b) assigns one. `CreateBatchesTx` expires stale batches, locks pending orders `FOR UPDATE SKIP LOCKED`, forms and stores batches, and records one `batch_offers` row per (batch, rider). Effective size = `min(max_orders, spare capacity)`. The score is the mean per-order detour (direct trip / distance travelled pickup stop to delivery stop); `distance_saved_km` = solo trips − route.
-- **Preference matching (Phase 8, write-up in `docs/DOCUMENTATION.md`):** preferences are HARD filters (availability, capacity, min order value, category, area, fresh-and-too-far); an empty preference means accepts everything. The score (weights `MATCH_WEIGHT_*`, validated to sum to 1.0) only ranks the survivors: category/area 1.0 explicit or 0.5 neutral, proximity `1 - d/MATCH_MAX_DISTANCE_KM`, acceptance rate. A location older than `RIDER_LOCATION_STALE_AFTER` is unknown (not filtered, proximity 0, distance null). Ranking uses the ROUNDED score, then distance (unknown last), then rider_id. `order_details` wins over a stored `order_id`.
+- **Preference matching (Phase 8, write-up in `docs/DOCUMENTATION.md`):** preferences are HARD filters (availability, capacity, min order value, category, area, fresh-and-too-far); an empty preference means accepts everything. The score (weights `MATCH_WEIGHT_*`, validated to sum to 1.0) only ranks the survivors: category/area 1.0 explicit or 0.5 neutral, proximity `1 - d/MATCH_MAX_DISTANCE_KM`, acceptance rate. Acceptance in the score is smoothed (accepted+1)/(offers+2). A location older than `RIDER_LOCATION_STALE_AFTER` is unknown (not filtered, proximity 0, distance null). Ranking uses the ROUNDED score, then distance (unknown last), then rider_id. `order_details` wins over a stored `order_id`.
 - **Exclusive accept:** `AcceptBatchTx` locks the rider row FIRST, then claims with `UPDATE batches ... WHERE status='open' AND expires_at > now`; zero rows = lost (409 unless the batch is already this rider's: idempotent 200). Capacity is checked first (422). Fixed lock order (rider, then batch) prevents deadlock. `GET /batches` is read-only and only filters on `expires_at`. Orders must be at least `ORDER_MIN_TRIP_M` from their pickup (422).
 - **JSON key order:** a map encodes alphabetically. Responses whose key order matters (the brief's) are structs; `envelope` is for single-key responses. `writeJSON` takes `any`.
 - **Not-found mapping:** the repository wraps the pgx DBTX so every `:one` query returns `domain.ErrNotFound` instead of `pgx.ErrNoRows`. Services just `errors.Is(err, domain.ErrNotFound)`.
-- **Config:** every tunable is an environment variable read in `internal/config` (timezone, `CONE_*` radius/angle/min speed/max results, `BATCH_*` + `AVG_SPEED_KMH` + `STOP_DWELL_MIN` + `ORDER_MIN_TRIP_M` + `MATCH_*` + `RIDER_LOCATION_STALE_AFTER`, cone angle, payout bps, average speed, batch TTL, rate limits, weights). Add new keys to `defaults`, `validate()`, `.env.example` and `docker-compose.yml`.
+- **Config:** every tunable is an environment variable read in `internal/config` (timezone, `CONE_*` radius/angle/min speed/max results, `BATCH_*` + `AVG_SPEED_KMH` + `STOP_DWELL_MIN` + `ORDER_MIN_TRIP_M` + `MATCH_*` + `RIDER_LOCATION_STALE_AFTER` + `TEST_DATABASE_URL` (tests only) + `ORDER_MAX_VALUE_KES` / `ORDER_MAX_DELIVERY_FEE_KES` + `IDEMPOTENCY_TTL` / `IDEMPOTENCY_PROCESSING_TIMEOUT`, cone angle, payout bps, average speed, batch TTL, rate limits, weights). Add new keys to `defaults`, `validate()`, `.env.example` and `docker-compose.yml`.
 - **Errors:** wrap with `fmt.Errorf("context: %w", err)`, log once at the edge, and never leak internals in a 500.
 - **Tests:** testify (`require` for preconditions, `assert` for checks), table-driven, `t.Run` subtests; gomock Store for handler/service tests; faker for data.
 - **Comments:** explain _why_, and cite the book chapter when following a Greenlight pattern (e.g. `// Let's Go Further ch. 8.2`).
@@ -120,7 +120,9 @@ make dev/mock         # mockgen (pinned in the Makefile) -> internal/mock/store.
 make dev/run          # API natively on :4000
 make dev/audit        # what CI runs: tidy -diff, verify, gofmt, vet, staticcheck@v0.8.2, tests
 make dev/test | dev/test/race | dev/test/cover | dev/build
-make dev/test/integration   # -tags=integration against the real DATABASE_URL (concurrent PATCH -> one 200, rest 409; slow query cancelled; UTC session; seeded trips match geo)
+make dev/test/integration   # migrates TEST_DATABASE_URL, then -tags=integration against it (never DATABASE_URL)
+make dev/test/e2e           # migrates TEST_DATABASE_URL, then -tags=e2e: whole-API scenarios + SQL invariants
+make dev/test/all           # unit + integration + e2e
 make dev/db/psql | dev/db/migrations/new name=x | dev/db/migrations/down | dev/db/migrations/version
 make staging/up       # cross-compile bin/linux_amd64/api -> image (target prebuilt) -> compose on :8080 (override with STAGING_API_PORT / STAGING_DB_PORT, e.g. when 8080 or 5433 are taken)
 make staging/smoke | staging/logs | staging/seed | staging/down
@@ -131,9 +133,21 @@ make help
 - The **version** is stamped via `-ldflags "-X main.version=$(git describe --always --dirty --tags)"`. A plain `go run` reports `dev`.
 - The Dockerfile's default target `runtime` compiles inside Docker, so a reviewer can run `docker compose up --build` without Go or make.
 
+## Testing rules (details in `docs/TESTING.md`)
+
+- Unit tests (no tag): pure packages; services and handlers over a gomock `Store` with `clock.Test`.
+- Integration (`//go:build integration`) and e2e (`//go:build e2e`) tests use **`TEST_DATABASE_URL` only**, a `*_test` database. `internal/testdb` refuses any other name. Each test calls `testdb.Fresh` (or `Open`/`Reset`/`LoadReference`) so it never depends on run order; add riders with `testdb.AddRider`. Never use `DATABASE_URL` in a test.
+- Tagged packages share one database: run them with `-p 1`, never `t.Parallel` across e2e scenarios.
+- e2e scenarios arrange state through the API (fixtures only for reference data and riders) and finish with `assertInvariants` (SQL checks + every timestamp is UTC). Add a scenario only when features must work *together*.
+- The server is built by `internal/app.Build` (used by `cmd/api` and by the e2e tests), so e2e covers the real wiring.
+- `match-orders` expires stale batches before reading candidates, so a timed-out batch's orders are offered again immediately (found by the e2e expiry scenario).
+- Acceptance in `match-riders` is smoothed: `(accepted+1)/(offers+2)` in the score, raw rate in the response.
+- **Security rules (see "Security" in `docs/DOCUMENTATION.md`):** every ID in a path or body is checked with `checkID` / `pathID` against its pattern in `internal/api/ids.go` (a new ID type needs a pattern); money goes through `kesToCents` and `checkAmount` with the configured bound, never `float` arithmetic or `int64(x*100)`; sums of cents use saturating addition; `POST /orders` and `POST /orders/batch` are wrapped by `s.idempotent()`; a new route that creates something should be too. `govulncheck` is part of `make dev/audit` (pinned in the Makefile and `test.yml`); a failing run means upgrade the module or the Go toolchain, not silence it.
+- Don't leave empty files, empty directories, `.gitkeep`s in populated directories, TODOs without a phase, or commented-out code.
+
 ## Build process (follow it)
 
-The work proceeds **one phase at a time** in `docs/BUILD_PHASES.md`, in Greenlight chapter order. Phases 0 (foundation, ch. 2–5), 1 (tooling, ch. 20–21), 2 (migrations, seed, sqlc config), 3 (domain, repository, first CRUD), 4 (advanced CRUD), 5 (geo + clock) and 6 (proximity matching) are done. **Phase 7 (batching, listing, exclusive accept) and Phase 8 (rider preference matching) are done. **The next phase is Phase 9** (see `docs/BUILD_PHASES.md`).
+The work proceeds **one phase at a time** in `docs/BUILD_PHASES.md`, in Greenlight chapter order. Phases 0 (foundation, ch. 2–5), 1 (tooling, ch. 20–21), 2 (migrations, seed, sqlc config), 3 (domain, repository, first CRUD), 4 (advanced CRUD), 5 (geo + clock) and 6 (proximity matching) are done. **Phase 7 (batching, listing, exclusive accept), Phase 8 (rider preference matching) and Phase 8.5 (integration hardening: test database, e2e scenarios, invariants, dead-file audit) are done. **The next phase is Phase 9** (see `docs/BUILD_PHASES.md`).
 For each phase:
 
 1. Build only that phase's scope, on top of what already exists. Don't rewrite earlier phases unless they're broken.

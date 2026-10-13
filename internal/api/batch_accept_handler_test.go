@@ -95,7 +95,7 @@ func TestAcceptBatch_Errors(t *testing.T) {
 
 func TestAcceptBatch_BadBody(t *testing.T) {
 	t.Run("400", func(t *testing.T) {
-		for _, body := range []string{``, `{"rider_id":`, `{"rider_id":"r","extra":1}`, `{"rider_id":5}`} {
+		for _, body := range []string{``, `{"rider_id":`, `{"rider_id":"rider_001","extra":1}`, `{"rider_id":5}`} {
 			h, _ := newStoreHandler(t)
 
 			rec := send(t, h, http.MethodPost, acceptPath("batch_X1"), body)

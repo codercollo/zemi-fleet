@@ -45,7 +45,19 @@ type PrefRider struct {
 	// Location and LocationUpdatedAt are the rider's last ping; either may be nil (never reported).
 	Location          *domain.Location
 	LocationUpdatedAt *time.Time
-	AcceptanceRate    float64
+	// OffersCount and AcceptedCount are the rider's history. The score uses them (smoothed, see
+	// SmoothedAcceptance); AcceptanceRate is the raw stored accepted/offered, only echoed back for display.
+	OffersCount    int
+	AcceptedCount  int
+	AcceptanceRate float64
+}
+
+// SmoothedAcceptance is (accepted + 1) / (offers + 2), a Laplace-smoothed acceptance rate. A rider with no
+// history scores a neutral 0.5 instead of 0 (which would bury every newcomer), and as offers accumulate it
+// converges on the raw rate: 1 accepted of 1 offered is 0.67, not 1.0, so a lucky first offer cannot outrank
+// a rider who has accepted 45 of 50.
+func SmoothedAcceptance(accepted, offers int) float64 {
+	return float64(accepted+1) / float64(offers+2)
 }
 
 // Weights are the score weights. Config validates that they sum to 1.0.
@@ -71,7 +83,8 @@ type RiderMatch struct {
 	MatchingPreferences []string
 	CurrentOrders       int
 	// DistanceM is rider to pickup; nil when the rider's location is unknown (missing or stale).
-	DistanceM      *float64
+	DistanceM *float64
+	// AcceptanceRate is the rider's raw stored accepted/offered, for display. The score used the smoothed rate.
 	AcceptanceRate float64
 }
 
@@ -96,7 +109,7 @@ type RiderMatch struct {
 //	category   = 1.0 if the rider explicitly prefers this category, 0.5 if they have no category preference
 //	area       = 1.0 if the pickup is inside an explicitly preferred area, 0.5 if they have no area preference
 //	proximity  = 1 - distance / MaxDistanceM (0 when the location is unknown)
-//	acceptance = the rider's acceptance rate
+//	acceptance = the smoothed acceptance rate (accepted+1)/(offers+2); 0.5 for a newcomer
 //	score      = round2(wCategory*category + wArea*area + wProximity*proximity + wAcceptance*acceptance)
 //
 // Sorted by the (rounded) score descending, then distance ascending with unknown distances last, then
@@ -146,7 +159,7 @@ func MatchRiders(order PrefOrder, riders []PrefRider, p PrefParams, now time.Tim
 		}
 
 		w := p.Weights
-		score := w.Category*categoryScore + w.Area*areaScore + w.Proximity*proximity + w.Acceptance*r.AcceptanceRate
+		score := w.Category*categoryScore + w.Area*areaScore + w.Proximity*proximity + w.Acceptance*SmoothedAcceptance(r.AcceptedCount, r.OffersCount)
 		matches = append(matches, RiderMatch{
 			RiderID:             r.ID,
 			Score:               math.Round(score*scoreDecimals) / scoreDecimals,

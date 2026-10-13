@@ -4,7 +4,7 @@ package service
 
 import (
 	"context"
-	"os"
+	"fmt"
 	"testing"
 	"time"
 
@@ -17,15 +17,16 @@ import (
 	"github.com/codercollo/zemi-fleet/internal/domain"
 	"github.com/codercollo/zemi-fleet/internal/geo"
 	"github.com/codercollo/zemi-fleet/internal/repository"
+	"github.com/codercollo/zemi-fleet/internal/testdb"
 )
 
 func integrationPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("DATABASE_URL")
-	require.NotEmpty(t, dsn, "DATABASE_URL must be set (make exports it from app.env)")
-	pool, err := repository.OpenPool(context.Background(), config.DBConfig{DSN: dsn, MaxConns: 5, MaxConnIdleTime: time.Minute, QueryTimeout: 3 * time.Second})
+	pool, err := repository.OpenPool(context.Background(), config.DBConfig{DSN: testdb.URL(t), MaxConns: 5, MaxConnIdleTime: time.Minute, QueryTimeout: 3 * time.Second})
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
+	testdb.Reset(t, pool)
+	testdb.LoadReference(t, pool) // categories, areas, vendors; each test adds the riders and orders it needs
 	return pool
 }
 
@@ -34,6 +35,7 @@ func integrationPool(t *testing.T) *pgxpool.Pool {
 // the temporary helper for the geo package changed nothing observable.
 func TestIntegration_SeededTripsMatchGeo(t *testing.T) {
 	pool := integrationPool(t)
+	testdb.LoadSeed(t, pool) // the development seed, into the TEST database
 	rows, err := pool.Query(context.Background(),
 		`SELECT id, pickup_lat, pickup_lng, delivery_lat, delivery_lng, trip_distance_m, trip_bearing_deg
 		   FROM orders WHERE id ~ '^ord_[0-9]{3}$' ORDER BY id`)
@@ -53,9 +55,7 @@ func TestIntegration_SeededTripsMatchGeo(t *testing.T) {
 		checked++
 	}
 	require.NoError(t, rows.Err())
-	if checked == 0 {
-		t.Skip("no seeded orders (run make dev/db/seed)")
-	}
+	require.Equal(t, 40, checked, "the seed has 40 orders")
 	t.Logf("compared %d seeded orders", checked)
 }
 
@@ -67,9 +67,7 @@ func TestIntegration_OrderCreatedAtComesFromClock(t *testing.T) {
 	ctx := context.Background()
 	var vendorID, category string
 	err := pool.QueryRow(ctx, `SELECT v.id, c.code FROM vendors v, categories c ORDER BY v.id, c.code LIMIT 1`).Scan(&vendorID, &category)
-	if err != nil {
-		t.Skip("no vendors/categories (run make dev/db/seed)")
-	}
+	require.NoError(t, err, "reference data (vendors, categories) should be loaded")
 
 	fixed := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC) // years in the past: now() could never produce it
 	svc := NewOrderService(repository.NewStore(pool, 3*time.Second), clock.NewTest(fixed), 9000, 50)
@@ -89,4 +87,44 @@ func TestIntegration_OrderCreatedAtComesFromClock(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, reread.CreatedAt.Equal(fixed))
 	assert.Equal(t, time.UTC, reread.CreatedAt.Location())
+}
+
+// db/testdata/reference.sql is a copy of the reference tables in db/seed/seed.sql. If the two ever differ,
+// tests built on the reference data would be testing something other than the seed users see.
+func TestIntegration_ReferenceDataMatchesSeed(t *testing.T) {
+	pool := integrationPool(t) // reset + the reference data
+	ctx := context.Background()
+
+	// The seeded columns only: created_at and friends differ between any two loads.
+	queries := map[string]string{
+		"categories": `SELECT code, label FROM categories ORDER BY code`,
+		"areas":      `SELECT id, name, center_lat, center_lng, radius_m FROM areas ORDER BY id`,
+		"vendors":    `SELECT id, name, phone, lat, lng FROM vendors ORDER BY id`,
+	}
+	dump := func() map[string]string {
+		out := map[string]string{}
+		for table, q := range queries {
+			rows, err := pool.Query(ctx, q)
+			require.NoError(t, err)
+			var lines []string
+			for rows.Next() {
+				vals, err := rows.Values()
+				require.NoError(t, err)
+				lines = append(lines, fmt.Sprint(vals...))
+			}
+			require.NoError(t, rows.Err())
+			rows.Close()
+			out[table] = fmt.Sprint(lines)
+		}
+		return out
+	}
+
+	fromReference := dump()
+	testdb.LoadSeed(t, pool)
+	fromSeed := dump()
+
+	for table := range queries {
+		assert.NotEmpty(t, fromReference[table], table)
+		assert.Equal(t, fromSeed[table], fromReference[table], "%s differ between db/testdata/reference.sql and db/seed/seed.sql", table)
+	}
 }

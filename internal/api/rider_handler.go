@@ -42,7 +42,11 @@ func (s *Server) writeRider(c *gin.Context, rider domain.Rider) {
 
 // showRiderHandler handles GET /api/v2/riders/:id (preferences included).
 func (s *Server) showRiderHandler(c *gin.Context) {
-	rider, err := s.riders.Get(c.Request.Context(), c.Param("id"))
+	id, ok := s.pathID(c, riderID)
+	if !ok {
+		return
+	}
+	rider, err := s.riders.Get(c.Request.Context(), id)
 	if err != nil {
 		s.handleServiceError(c, err)
 		return
@@ -60,6 +64,10 @@ type updatePreferencesRequest struct {
 
 // updatePreferencesHandler handles PUT /api/v2/riders/:id/preferences.
 func (s *Server) updatePreferencesHandler(c *gin.Context) {
+	id, ok := s.pathID(c, riderID)
+	if !ok {
+		return
+	}
 	var req updatePreferencesRequest
 	if err := readJSON(c, &req); err != nil {
 		s.badRequestResponse(c, err)
@@ -76,21 +84,23 @@ func (s *Server) updatePreferencesHandler(c *gin.Context) {
 	if req.MinValueKES != nil {
 		cents, ok := kesToCents(*req.MinValueKES)
 		switch {
-		case !ok || *req.MinValueKES > maxAmountKES:
+		case !ok:
 			v.AddError("min_order_value_kes", "must be a valid amount with at most 2 decimal places")
+		case *req.MinValueKES > s.cfg.OrderMaxValueKES:
+			v.AddError("min_order_value_kes", "must not be more than "+strconv.FormatFloat(s.cfg.OrderMaxValueKES, 'f', -1, 64)+" KES")
 		case cents < 0:
 			v.AddError("min_order_value_kes", "must not be negative")
 		}
 		minCents = cents
 	}
-	checkIDList(v, "preferred_categories", req.PreferredCategories)
-	checkIDList(v, "preferred_areas", req.PreferredAreas)
+	checkIDList(v, "preferred_categories", req.PreferredCategories, categoryID)
+	checkIDList(v, "preferred_areas", req.PreferredAreas, areaID)
 	if !v.Valid() {
 		s.failedValidationResponse(c, v.Errors)
 		return
 	}
 
-	rider, err := s.riders.UpdatePreferences(c.Request.Context(), c.Param("id"), domain.Preferences{
+	rider, err := s.riders.UpdatePreferences(c.Request.Context(), id, domain.Preferences{
 		MinOrderValueCents: minCents,
 		Categories:         req.PreferredCategories,
 		AreaIDs:            req.PreferredAreas,
@@ -113,6 +123,10 @@ type updateLocationRequest struct {
 
 // updateLocationHandler handles PATCH /api/v2/riders/:id/location.
 func (s *Server) updateLocationHandler(c *gin.Context) {
+	id, ok := s.pathID(c, riderID)
+	if !ok {
+		return
+	}
 	var req updateLocationRequest
 	if err := readJSON(c, &req); err != nil {
 		s.badRequestResponse(c, err)
@@ -145,7 +159,7 @@ func (s *Server) updateLocationHandler(c *gin.Context) {
 		return
 	}
 
-	rider, err := s.riders.UpdateLocation(c.Request.Context(), c.Param("id"), service.LocationUpdate{
+	rider, err := s.riders.UpdateLocation(c.Request.Context(), id, service.LocationUpdate{
 		Lat:        *req.Latitude,
 		Lng:        *req.Longitude,
 		BearingDeg: req.BearingDegrees,
@@ -165,6 +179,10 @@ type updateAvailabilityRequest struct {
 
 // updateAvailabilityHandler handles PATCH /api/v2/riders/:id/availability.
 func (s *Server) updateAvailabilityHandler(c *gin.Context) {
+	id, ok := s.pathID(c, riderID)
+	if !ok {
+		return
+	}
 	var req updateAvailabilityRequest
 	if err := readJSON(c, &req); err != nil {
 		s.badRequestResponse(c, err)
@@ -183,7 +201,7 @@ func (s *Server) updateAvailabilityHandler(c *gin.Context) {
 		return
 	}
 
-	rider, err := s.riders.UpdateAvailability(c.Request.Context(), c.Param("id"), *req.IsAvailable, expected)
+	rider, err := s.riders.UpdateAvailability(c.Request.Context(), id, *req.IsAvailable, expected)
 	if err != nil {
 		s.handleServiceError(c, err)
 		return
@@ -191,11 +209,16 @@ func (s *Server) updateAvailabilityHandler(c *gin.Context) {
 	s.writeRider(c, rider)
 }
 
-// checkIDList rejects blank, over-long and duplicate entries; existence is checked by the service.
-func checkIDList(v *validator.Validator, field string, values []string) {
+// checkIDList validates a list of IDs or codes: a bounded count, each in the right format, no duplicates.
+// Existence is checked by the service.
+func checkIDList(v *validator.Validator, field string, values []string, f idFormat) {
+	if len(values) > maxListItems {
+		v.AddError(field, "must not contain more than "+strconv.Itoa(maxListItems)+" values")
+		return
+	}
 	for _, val := range values {
-		if val == "" || len(val) > maxIDLength {
-			v.AddError(field, "must only contain non-empty values of at most 64 characters")
+		if val == "" || len(val) > maxIDLength || !f.pattern.MatchString(val) {
+			v.AddError(field, "every value must be a valid code, expected something like "+f.example)
 			return
 		}
 	}

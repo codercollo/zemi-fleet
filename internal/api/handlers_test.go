@@ -44,17 +44,36 @@ var testBatchCfg = config.BatchConfig{MaxOrders: 5, PickupRadiusKM: 2, Direction
 // testCone mirrors the default CONE_* settings.
 var testCone = config.ConeConfig{RadiusKM: 1, HalfAngleDeg: 30, MinSpeedKMH: 3, MaxResults: 20}
 
+// Settings the handler tests run with (the defaults).
+const (
+	testMaxValueKES           = 10_000_000.0
+	testIdempotencyTTL        = 24 * time.Hour
+	testIdempotencyProcessing = 2 * time.Minute
+)
+
+func testConfig() config.Config {
+	return config.Config{
+		Env: config.EnvDevelopment, RiderPayoutBPS: testPayoutBPS, Batch: testBatchCfg, Match: testMatchCfg, Cone: testCone,
+		OrderMinTripM: testMinTripM, OrderMaxValueKES: testMaxValueKES, OrderMaxDeliveryFeeKES: testMaxValueKES,
+		IdempotencyTTL: testIdempotencyTTL, IdempotencyProcessingTimeout: testIdempotencyProcessing,
+	}
+}
+
 // newStoreHandler builds the real router and services on top of a gomock Store.
 func newStoreHandler(t *testing.T) (http.Handler, *mock.MockStore) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	store := mock.NewMockStore(gomock.NewController(t))
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := NewServer(config.Config{Env: config.EnvDevelopment, RiderPayoutBPS: testPayoutBPS, Batch: testBatchCfg}, logger,
-		fakeDB{}, service.NewOrderService(store, clock.NewTest(testNow), testPayoutBPS, testMinTripM), service.NewRiderService(store, clock.NewTest(testNow)),
-		service.NewMatchingService(store, clock.NewTest(testNow), logger, testCone),
-		service.NewBatchService(store, clock.NewTest(testNow), testBatchCfg),
-		service.NewPreferenceService(store, clock.NewTest(testNow), testMatchCfg, testMinTripM), "test")
+	clk := clock.NewTest(testNow)
+	srv := NewServer(testConfig(), logger, fakeDB{}, Services{
+		Orders:      service.NewOrderService(store, clk, testPayoutBPS, testMinTripM),
+		Riders:      service.NewRiderService(store, clk),
+		Matching:    service.NewMatchingService(store, clk, logger, testCone),
+		Batches:     service.NewBatchService(store, clk, testBatchCfg),
+		Preferences: service.NewPreferenceService(store, clk, testMatchCfg, testMinTripM),
+		Idempotency: service.NewIdempotencyService(store, clk, testIdempotencyTTL, testIdempotencyProcessing),
+	}, "test")
 	return srv.Routes(), store
 }
 

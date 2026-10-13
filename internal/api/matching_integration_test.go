@@ -49,12 +49,10 @@ const (
 // Rider standing between the Sarit and Westlands Bites pickup clusters (about 160 m from each),
 // against the seeded data: heading towards one cluster excludes the other, speed 0 shows both.
 func TestIntegration_MatchOrdersAgainstSeededClusters(t *testing.T) {
-	h, riderID, pool := integrationEnv(t)
+	h, riderID, pool := integrationEnvWith(t, true) // the development seed, loaded into the TEST database
 	var pending int
 	require.NoError(t, pool.QueryRow(context.Background(), `SELECT count(*) FROM orders WHERE status = 'pending' AND vendor_id IN ('ven_001','ven_002')`).Scan(&pending))
-	if pending == 0 {
-		t.Skip("seeded orders not loaded (run make dev/db/seed)")
-	}
+	require.Positive(t, pending, "the seed should provide pending orders at the Sarit and Westlands Bites vendors")
 
 	towardsWestlands := postMatch(t, h, riderID, "150", "25")
 	towardsSarit := postMatch(t, h, riderID, "330", "25")
@@ -105,8 +103,10 @@ func TestIntegration_MatchOrdersTelemetryNeverConflicts(t *testing.T) {
 
 // The candidate query must be able to use the partial index on pending pickups.
 func TestIntegration_CandidateQueryUsesPendingPickupIndex(t *testing.T) {
-	_, _, pool := integrationEnv(t)
+	_, _, pool := integrationEnvWith(t, true) // real rows, so the planner has something to choose between
 	ctx := context.Background()
+	_, err := pool.Exec(ctx, `ANALYZE orders`)
+	require.NoError(t, err)
 	tx, err := pool.Begin(ctx)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback(ctx) }()

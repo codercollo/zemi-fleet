@@ -13,7 +13,7 @@ import (
 const listMatchCandidateRiders = `-- name: ListMatchCandidateRiders :many
 
 SELECT r.id, r.is_available, r.current_orders_count, r.max_capacity, r.last_lat, r.last_lng,
-       r.location_updated_at, r.acceptance_rate,
+       r.location_updated_at, r.acceptance_rate, r.offers_count, r.accepted_count,
        COALESCE(p.min_order_value_cents, 0)::bigint AS min_order_value_cents
 FROM riders r
 LEFT JOIN rider_preferences p ON p.rider_id = r.id
@@ -30,6 +30,8 @@ type ListMatchCandidateRidersRow struct {
 	LastLng            *float64   `json:"last_lng"`
 	LocationUpdatedAt  *time.Time `json:"location_updated_at"`
 	AcceptanceRate     *float64   `json:"acceptance_rate"`
+	OffersCount        int32      `json:"offers_count"`
+	AcceptedCount      int32      `json:"accepted_count"`
 	MinOrderValueCents int64      `json:"min_order_value_cents"`
 }
 
@@ -54,6 +56,8 @@ func (q *Queries) ListMatchCandidateRiders(ctx context.Context) ([]ListMatchCand
 			&i.LastLng,
 			&i.LocationUpdatedAt,
 			&i.AcceptanceRate,
+			&i.OffersCount,
+			&i.AcceptedCount,
 			&i.MinOrderValueCents,
 		); err != nil {
 			return nil, err

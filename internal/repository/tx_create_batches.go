@@ -56,14 +56,8 @@ func (s *SQLStore) CreateBatchesTx(ctx context.Context, arg CreateBatchesParams)
 // createBatches is the body of the transaction, split out so it runs against any Querier.
 func createBatches(ctx context.Context, q sqlc.Querier, arg CreateBatchesParams) ([]domain.Batch, error) {
 	// 1. expiry
-	expired, err := q.ExpireStaleBatches(ctx, arg.Now)
-	if err != nil {
-		return nil, fmt.Errorf("expire stale batches: %w", err)
-	}
-	if len(expired) > 0 {
-		if err := q.ReleaseOrdersFromBatches(ctx, expired); err != nil {
-			return nil, fmt.Errorf("release orders of expired batches: %w", err)
-		}
+	if _, err := expireStale(ctx, q, arg.Now); err != nil {
+		return nil, err
 	}
 
 	// 2. candidates: bounding box in SQL (row-locked), exact distance in Go

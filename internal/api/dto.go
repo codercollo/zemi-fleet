@@ -16,11 +16,18 @@ const (
 // centsToKES converts for output only; never do arithmetic on the result.
 func centsToKES(cents int64) float64 { return float64(cents) / centsPerKES }
 
-// kesToCents converts a JSON amount to cents. ok is false when the amount has
-// more than two decimal places or is too large to hold, so no fraction of a cent is silently lost.
+// maxScaledKES is the largest value (in cents, as a float) kesToCents will convert. Far below float64's 2^53
+// exact-integer range and int64's maximum, so the conversion can neither lose cents nor overflow.
+const maxScaledKES = 1e15
+
+// kesToCents converts a JSON amount in KES to int64 cents. The conversion rounds with math.Round (never
+// truncates: 19.99 * 100 is 1998.9999999999998 in float64, and int64() of that would lose a cent). ok is false when
+// the amount has more than two decimal places (10.005), is not finite, or is too large to convert: a fraction of
+// a cent is rejected instead of silently rounded. Float noise of up to a millionth of a cent is tolerated, so
+// 0.1 + 0.2 (0.30000000000000004) is 30 cents.
 func kesToCents(kes float64) (cents int64, ok bool) {
 	scaled := kes * centsPerKES
-	if math.IsNaN(scaled) || math.IsInf(scaled, 0) || math.Abs(scaled) > math.MaxInt64/2 {
+	if math.IsNaN(scaled) || math.IsInf(scaled, 0) || math.Abs(scaled) > maxScaledKES {
 		return 0, false
 	}
 	rounded := math.Round(scaled)

@@ -155,6 +155,10 @@ type acceptedBatchDTO struct {
 
 // acceptBatchHandler handles POST /api/v2/batches/:id/accept.
 func (s *Server) acceptBatchHandler(c *gin.Context) {
+	id, ok := s.pathID(c, batchID)
+	if !ok {
+		return
+	}
 	var req acceptBatchRequest
 	if err := readJSON(c, &req); err != nil {
 		s.badRequestResponse(c, err)
@@ -163,14 +167,13 @@ func (s *Server) acceptBatchHandler(c *gin.Context) {
 
 	v := validator.New()
 	req.RiderID = strings.TrimSpace(req.RiderID)
-	v.Check(req.RiderID != "", "rider_id", "must be provided")
-	v.Check(len(req.RiderID) <= maxIDLength, "rider_id", "must not be more than 64 characters long")
+	checkID(v, "rider_id", req.RiderID, riderID)
 	if !v.Valid() {
 		s.failedValidationResponse(c, v.Errors)
 		return
 	}
 
-	batch, err := s.batches.Accept(c.Request.Context(), c.Param("id"), req.RiderID)
+	batch, err := s.batches.Accept(c.Request.Context(), id, req.RiderID)
 	if err != nil {
 		s.handleServiceError(c, err)
 		return

@@ -41,8 +41,7 @@ func (s *Server) matchOrdersHandler(c *gin.Context) {
 
 	v := validator.New()
 	req.RiderID = strings.TrimSpace(req.RiderID)
-	v.Check(req.RiderID != "", "rider_id", "must be provided")
-	v.Check(len(req.RiderID) <= maxIDLength, "rider_id", "must not be more than 64 characters long")
+	checkID(v, "rider_id", req.RiderID, riderID)
 
 	var position domain.Location
 	if req.CurrentLocation == nil {

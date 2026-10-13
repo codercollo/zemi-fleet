@@ -38,9 +38,7 @@ func newBatchEnv(t *testing.T, n int) *batchEnv {
 
 	var vendors int
 	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM vendors WHERE id = 'ven_001'`).Scan(&vendors))
-	if vendors == 0 {
-		t.Skip("seeded vendor ven_001 not found (run make dev/db/seed)")
-	}
+	require.Equal(t, 1, vendors, "reference data should provide vendor ven_001")
 
 	clk := clock.NewTest(time.Date(2026, 10, 13, 9, 0, 0, 0, time.UTC))
 	env := &batchEnv{pool: pool, clk: clk, svc: NewBatchService(repository.NewStore(pool, 3*time.Second), clk, batchCfg)}

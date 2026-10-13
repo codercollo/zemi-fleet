@@ -26,9 +26,7 @@ func TestIntegration_MatchRidersFiltersAndRanksFromTheDatabase(t *testing.T) {
 	ctx := context.Background()
 	var areas int
 	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM areas WHERE id = 'area_001'`).Scan(&areas))
-	if areas == 0 {
-		t.Skip("seeded areas not found (run make dev/db/seed)")
-	}
+	require.Equal(t, 1, areas, "reference data should provide area_001")
 
 	now := time.Date(2026, 10, 13, 9, 0, 0, 0, time.UTC)
 	clk := clock.NewTest(now)
@@ -116,9 +114,10 @@ func TestIntegration_MatchRidersFiltersAndRanksFromTheDatabase(t *testing.T) {
 	}
 	require.NotNil(t, bestMatch)
 	assert.Equal(t, []string{"electronics", "Kilimani"}, bestMatch.prefs, "category code, then area name")
-	// 0.25*1 + 0.20*1 + 0.35*(1-0.5/10) + 0.20*0.8 = 0.9425
-	assert.Equal(t, 0.94, byID[best])
-	assert.Equal(t, 0.23, byID[plain], "0.25*0.5 + 0.20*0.5 + 0 + 0 = 0.225")
+	// 0.25*1 + 0.20*1 + 0.35*(1-0.5/10) + 0.20*(9/12 smoothed from 8 accepted of 10 offered) = 0.9325
+	assert.InDelta(t, 0.93, byID[best], 0.0051)
+	// 0.25*0.5 + 0.20*0.5 + 0 (unknown location) + 0.20*0.5 (a newcomer is neutral) = 0.325
+	assert.InDelta(t, 0.325, byID[plain], 0.0051)
 
 	// Move the clock past the freshness window: best's location becomes unknown but it still matches.
 	clk.Advance(time.Hour)

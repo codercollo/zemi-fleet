@@ -50,7 +50,15 @@ func atAge(distM float64, age time.Duration) func(*PrefRider) {
 	}
 }
 
-func rate(v float64) func(*PrefRider)      { return func(r *PrefRider) { r.AcceptanceRate = v } }
+// history gives the rider offers/accepted counts (and the raw rate that goes with them).
+func history(offers, accepted int) func(*PrefRider) {
+	return func(r *PrefRider) {
+		r.OffersCount, r.AcceptedCount = offers, accepted
+		if offers > 0 {
+			r.AcceptanceRate = float64(accepted) / float64(offers)
+		}
+	}
+}
 func cats(c ...string) func(*PrefRider)    { return func(r *PrefRider) { r.Categories = c } }
 func areas(a ...PrefArea) func(*PrefRider) { return func(r *PrefRider) { r.Areas = a } }
 func minValue(cents int64) func(*PrefRider) {
@@ -123,7 +131,7 @@ func TestMatchRiders_NoPreferencesMatchesEverythingAtNeutral(t *testing.T) {
 		assert.Empty(t, got[0].MatchingPreferences)
 		assert.NotNil(t, got[0].MatchingPreferences, "an empty array, not null")
 		// neutral category and area (0.5 each), unknown location (0), acceptance 0:
-		assert.Equal(t, 0.23, got[0].Score, "0.225 rounds to 0.23")
+		assert.InDelta(t, 0.325, got[0].Score, 0.0051, "neutral category, area and a neutral newcomer acceptance of 0.5")
 		assert.Nil(t, got[0].DistanceM)
 	}
 }
@@ -162,10 +170,10 @@ func TestMatchRiders_StaleAndMissingLocationsAreUnknown(t *testing.T) {
 			if tc.wantKnown {
 				require.NotNil(t, got[0].DistanceM)
 				assert.InDelta(t, 2000, *got[0].DistanceM, 5)
-				assert.InDelta(t, 0.25*0.5+0.20*0.5+0.35*0.8, got[0].Score, 0.0051)
+				assert.InDelta(t, 0.25*0.5+0.20*0.5+0.20*0.5+0.35*0.8, got[0].Score, 0.0051)
 			} else {
 				assert.Nil(t, got[0].DistanceM, "distance is null when unknown")
-				assert.Equal(t, 0.23, got[0].Score, "0.225 rounds to 0.23, and proximity scores 0")
+				assert.InDelta(t, 0.325, got[0].Score, 0.0051, "proximity scores 0; the rest is neutral")
 			}
 		})
 	}
@@ -178,15 +186,17 @@ func TestMatchRiders_ScoreComponents(t *testing.T) {
 		want  float64
 		prefs []string
 	}{
-		{"nothing known: neutral category and area only", rider("r"), 0.225, []string{}},
-		{"explicit category", rider("r", cats("electronics")), 0.25 + 0.10, []string{"electronics"}},
-		{"explicit area", rider("r", areas(kilimani)), 0.125 + 0.20, []string{"Kilimani"}},
-		{"explicit category and area", rider("r", cats("electronics"), areas(kilimani)), 0.25 + 0.20, []string{"electronics", "Kilimani"}},
-		{"acceptance rate only", rider("r", rate(0.8)), 0.225 + 0.16, []string{}},
-		{"at the pickup: full proximity", rider("r", at(0)), 0.225 + 0.35, []string{}},
-		{"half the max distance: half proximity", rider("r", at(5000)), 0.225 + 0.175, []string{}},
-		{"at the max distance: no proximity", rider("r", at(10_000)), 0.225, []string{}},
-		{"everything", rider("r", cats("electronics"), areas(kilimani), at(0), rate(1)), 1.0, []string{"electronics", "Kilimani"}},
+		{"nothing known: neutral category, area and newcomer acceptance", rider("r"), 0.325, []string{}},
+		{"explicit category", rider("r", cats("electronics")), 0.25 + 0.10 + 0.10, []string{"electronics"}},
+		{"explicit area", rider("r", areas(kilimani)), 0.125 + 0.20 + 0.10, []string{"Kilimani"}},
+		{"explicit category and area", rider("r", cats("electronics"), areas(kilimani)), 0.25 + 0.20 + 0.10, []string{"electronics", "Kilimani"}},
+		{"strong history: 45 of 50 accepted is 46/52", rider("r", history(50, 45)), 0.225 + 0.20*46.0/52, []string{}},
+		{"poor history: 1 of 20 accepted is 2/22", rider("r", history(20, 1)), 0.225 + 0.20*2.0/22, []string{}},
+		{"one lucky offer is not a perfect score: 1 of 1 is 2/3", rider("r", history(1, 1)), 0.225 + 0.20*2.0/3, []string{}},
+		{"at the pickup: full proximity", rider("r", at(0)), 0.325 + 0.35, []string{}},
+		{"half the max distance: half proximity", rider("r", at(5000)), 0.325 + 0.175, []string{}},
+		{"at the max distance: no proximity", rider("r", at(10_000)), 0.325, []string{}},
+		{"everything: explicit, at the pickup, a long perfect record (998/1000 smoothed)", rider("r", cats("electronics"), areas(kilimani), at(0), history(1000, 1000)), 0.25 + 0.20 + 0.35 + 0.20*1001.0/1002, []string{"electronics", "Kilimani"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -214,7 +224,7 @@ func TestMatchRiders_Ranking(t *testing.T) {
 	t.Run("higher score first", func(t *testing.T) {
 		riders := []PrefRider{
 			rider("plain"),
-			rider("best", cats("electronics"), areas(kilimani), at(500), rate(0.9)),
+			rider("best", cats("electronics"), areas(kilimani), at(500), history(100, 90)),
 			rider("mid", cats("electronics"), at(4000)),
 		}
 
@@ -252,7 +262,7 @@ func TestMatchRiders_Ranking(t *testing.T) {
 		// 0.801 and 0.804 both display as 0.80, so the nearer rider wins even with the lower raw score.
 		p := prefParams
 		p.Weights = Weights{Category: 0, Area: 0, Proximity: 0, Acceptance: 1}
-		riders := []PrefRider{rider("far_higher_raw", at(8000), rate(0.804)), rider("near_lower_raw", at(100), rate(0.801))}
+		riders := []PrefRider{rider("far_higher_raw", at(8000), history(998, 803)), rider("near_lower_raw", at(100), history(998, 800))} // smoothed 0.804 and 0.801
 
 		got := MatchRiders(elecOrder, riders, p, now)
 
@@ -265,7 +275,7 @@ func TestMatchRiders_Ranking(t *testing.T) {
 func TestMatchRiders_CapAndEmpty(t *testing.T) {
 	var riders []PrefRider
 	for i := range 15 {
-		riders = append(riders, rider(fmt.Sprintf("r%02d", i), rate(float64(i)/20)))
+		riders = append(riders, rider(fmt.Sprintf("r%02d", i), history(20, i)))
 	}
 	p := prefParams
 	p.MaxResults = 10
@@ -288,11 +298,43 @@ func TestMatchRiders_CapAndEmpty(t *testing.T) {
 }
 
 func TestMatchRiders_CarriesRiderFields(t *testing.T) {
-	got := MatchRiders(elecOrder, []PrefRider{rider("rider_007", busy(3, 5), rate(0.62), at(1234))}, prefParams, now)
+	got := MatchRiders(elecOrder, []PrefRider{rider("rider_007", busy(3, 5), history(50, 31), at(1234))}, prefParams, now)
 
 	require.Len(t, got, 1)
 	assert.Equal(t, "rider_007", got[0].RiderID)
 	assert.Equal(t, 3, got[0].CurrentOrders)
-	assert.Equal(t, 0.62, got[0].AcceptanceRate)
+	assert.Equal(t, 0.62, got[0].AcceptanceRate, "the raw stored rate is echoed back, not the smoothed one")
 	assert.InDelta(t, 1234, *got[0].DistanceM, 3)
+}
+
+func TestSmoothedAcceptance(t *testing.T) {
+	tests := []struct {
+		name              string
+		accepted, offered int
+		want              float64
+	}{
+		{"a newcomer is neutral", 0, 0, 0.5},
+		{"one offer accepted", 1, 1, 2.0 / 3},
+		{"one offer declined", 0, 1, 1.0 / 3},
+		{"45 of 50", 45, 50, 46.0 / 52},
+		{"never accepts", 0, 100, 1.0 / 102},
+		{"always accepts", 100, 100, 101.0 / 102},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.InDelta(t, tc.want, SmoothedAcceptance(tc.accepted, tc.offered), 1e-12)
+		})
+	}
+
+	t.Run("a newcomer outranks a rider with a bad record, and loses to a good one", func(t *testing.T) {
+		riders := []PrefRider{
+			rider("newcomer"),
+			rider("bad", history(40, 4)),
+			rider("good", history(40, 36)),
+		}
+
+		got := MatchRiders(elecOrder, riders, prefParams, now)
+
+		assert.Equal(t, []string{"good", "newcomer", "bad"}, riderIDs(got))
+	})
 }

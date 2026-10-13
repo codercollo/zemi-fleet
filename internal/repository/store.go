@@ -30,6 +30,9 @@ type Store interface {
 	// AcceptBatchTx lets a rider claim an open batch exclusively (tx_accept_batch.go).
 	AcceptBatchTx(ctx context.Context, arg AcceptBatchParams) (domain.Batch, error)
 
+	// ExpireBatchesTx expires stale open batches and releases their orders (tx_expire_batches.go).
+	ExpireBatchesTx(ctx context.Context, now time.Time) (int, error)
+
 	// ListOpenBatches pages through open, unexpired batches near a point, read-only (batch_listing.go).
 	ListOpenBatches(ctx context.Context, arg ListOpenBatchesParams) ([]domain.Batch, int, error)
 }

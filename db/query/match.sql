@@ -4,7 +4,7 @@
 -- Riders who could take another order at all: on shift and with spare capacity. Everything else
 -- (preferences, minimum value, distance) is applied by internal/matching, which has no SQL.
 SELECT r.id, r.is_available, r.current_orders_count, r.max_capacity, r.last_lat, r.last_lng,
-       r.location_updated_at, r.acceptance_rate,
+       r.location_updated_at, r.acceptance_rate, r.offers_count, r.accepted_count,
        COALESCE(p.min_order_value_cents, 0)::bigint AS min_order_value_cents
 FROM riders r
 LEFT JOIN rider_preferences p ON p.rider_id = r.id

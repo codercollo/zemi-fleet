@@ -21,6 +21,8 @@ VERSION         := $(shell git describe --always --dirty --tags 2>/dev/null || e
 LDFLAGS         := -s -X main.version=$(VERSION)
 
 MOCKGEN_VERSION := v0.6.0
+# govulncheck, pinned. It must be a release built for the Go toolchain in use (v1.1.x crashes on Go 1.27).
+GOVULNCHECK_VERSION := v1.9.0
 EXE             := $(shell go env GOEXE)
 STAGING_COMPOSE := docker compose -p zemi-staging -f docker-compose.yml
 STAGING_URL     := http://localhost:$(or $(STAGING_API_PORT),8080)
@@ -97,7 +99,7 @@ dev/tidy:
 	go mod tidy
 	go fmt ./...
 
-## dev/audit: tidy check, verify, gofmt, vet, staticcheck, tests
+## dev/audit: tidy check, verify, gofmt, vet, staticcheck, tests, govulncheck (known vulnerabilities in dependencies AND the Go toolchain in use)
 .PHONY: dev/audit
 dev/audit:
 	go mod tidy -diff
@@ -105,7 +107,10 @@ dev/audit:
 	test -z "$$(gofmt -l .)"
 	go vet ./...
 	go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
+	go vet -tags=integration,e2e ./...
+	go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 -tags=integration,e2e ./...
 	go test -vet=off -count=1 ./...
+	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
 ## dev/mock: regenerate the gomock Store in internal/mock (mockgen is pinned, nothing to install)
 .PHONY: dev/mock
@@ -117,10 +122,25 @@ dev/mock:
 dev/test:
 	go test -count=1 ./...
 
-## dev/test/integration: run tests that need the real database in DATABASE_URL (build tag: integration)
+## dev/test/integration: migrate TEST_DATABASE_URL, then run the integration tests (build tag: integration)
 .PHONY: dev/test/integration
-dev/test/integration:
-	go test -tags=integration -count=1 -run Integration ./...
+dev/test/integration: test/db/migrate
+	go test -tags=integration -count=1 -p 1 -run Integration ./...
+
+## dev/test/e2e: migrate TEST_DATABASE_URL, then run the whole-API scenarios (build tag: e2e)
+.PHONY: dev/test/e2e
+dev/test/e2e: test/db/migrate
+	go test -tags=e2e -count=1 -p 1 ./internal/e2e/...
+
+## dev/test/all: unit, integration and e2e tests
+.PHONY: dev/test/all
+dev/test/all: dev/test dev/test/integration dev/test/e2e
+
+# Bring the throwaway test database to the latest schema. Never touches DATABASE_URL.
+.PHONY: test/db/migrate
+test/db/migrate:
+	@test -n "$(TEST_DATABASE_URL)" || (echo 'TEST_DATABASE_URL is not set (see .env.example)' && exit 1)
+	migrate -path ./db/migrations -database "$(TEST_DATABASE_URL)" up
 
 ## dev/test/race: run tests with the race detector (needs cgo/gcc; CI always runs it)
 .PHONY: dev/test/race

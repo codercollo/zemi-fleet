@@ -101,6 +101,12 @@ func (s *MatchingService) MatchOrders(ctx context.Context, in MatchOrdersInput) 
 		return MatchOrdersResult{Matches: []matching.Match{}}, nil
 	}
 
+	// A batch nobody accepted in time still holds its orders as 'batched'. Release them now, so the
+	// rider is offered them instead of them staying invisible until someone next asks for batches.
+	if _, err := s.store.ExpireBatchesTx(ctx, s.clock.Now()); err != nil {
+		return MatchOrdersResult{}, fmt.Errorf("expire stale batches: %w", err)
+	}
+
 	minLat, maxLat, minLng, maxLng := geo.BoundingBox(in.Position, s.params.RadiusM)
 	rows, err := s.store.ListPendingOrdersInBox(ctx, sqlc.ListPendingOrdersInBoxParams{
 		MinLat: minLat, MaxLat: maxLat, MinLng: minLng, MaxLng: maxLng,

@@ -1,6 +1,7 @@
 //go:build integration
 
-// Integration tests run against the real PostgreSQL in DATABASE_URL (migrated, seeded or not):
+// Integration tests run against the real PostgreSQL in TEST_DATABASE_URL (never the dev database; each test
+// resets it and loads its own fixtures):
 //
 //	make dev/test/integration
 package api
@@ -13,7 +14,6 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,6 +29,7 @@ import (
 	"github.com/codercollo/zemi-fleet/internal/config"
 	"github.com/codercollo/zemi-fleet/internal/repository"
 	"github.com/codercollo/zemi-fleet/internal/service"
+	"github.com/codercollo/zemi-fleet/internal/testdb"
 	"github.com/codercollo/zemi-fleet/internal/util"
 )
 
@@ -45,14 +46,26 @@ var integrationBatchCfg = config.BatchConfig{MaxOrders: 5, PickupRadiusKM: 2, Di
 // test never touches seeded data.
 func integrationEnv(t *testing.T) (h http.Handler, riderID string, pool *pgxpool.Pool) {
 	t.Helper()
-	dsn := os.Getenv("DATABASE_URL")
-	require.NotEmpty(t, dsn, "DATABASE_URL must point at a migrated database (make exports it from app.env)")
+	return integrationEnvWith(t, false)
+}
+
+// integrationEnvWith is integrationEnv; with withSeed it loads the full development seed (db/seed/seed.sql)
+// into the test database instead of just the reference data.
+func integrationEnvWith(t *testing.T, withSeed bool) (h http.Handler, riderID string, pool *pgxpool.Pool) {
+	t.Helper()
+	dsn := testdb.URL(t)
 
 	ctx := context.Background()
 	dbCfg := config.DBConfig{DSN: dsn, MaxConns: 25, MinConns: 0, MaxConnIdleTime: time.Minute, QueryTimeout: 3 * time.Second}
 	pool, err := repository.OpenPool(ctx, dbCfg)
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
+	testdb.Reset(t, pool)
+	if withSeed {
+		testdb.LoadSeed(t, pool)
+	} else {
+		testdb.LoadReference(t, pool)
+	}
 
 	clk := clock.Real{}
 	riderID = util.NewRiderID(clk.Now())
@@ -66,11 +79,16 @@ func integrationEnv(t *testing.T) (h http.Handler, riderID string, pool *pgxpool
 	gin.SetMode(gin.TestMode)
 	store := repository.NewStore(pool, dbCfg.QueryTimeout)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := NewServer(config.Config{Env: config.EnvDevelopment, RiderPayoutBPS: 9000, DB: dbCfg, Batch: integrationBatchCfg}, logger, pool,
-		service.NewOrderService(store, clk, 9000, 50), service.NewRiderService(store, clk),
-		service.NewMatchingService(store, clk, logger, config.ConeConfig{RadiusKM: 1, HalfAngleDeg: 30, MinSpeedKMH: 3, MaxResults: 20}),
-		service.NewBatchService(store, clk, integrationBatchCfg),
-		service.NewPreferenceService(store, clk, integrationMatchCfg, 50), "integration")
+	cfg := testConfig()
+	cfg.DB = dbCfg
+	srv := NewServer(cfg, logger, pool, Services{
+		Orders:      service.NewOrderService(store, clk, 9000, 50),
+		Riders:      service.NewRiderService(store, clk),
+		Matching:    service.NewMatchingService(store, clk, logger, config.ConeConfig{RadiusKM: 1, HalfAngleDeg: 30, MinSpeedKMH: 3, MaxResults: 20}),
+		Batches:     service.NewBatchService(store, clk, integrationBatchCfg),
+		Preferences: service.NewPreferenceService(store, clk, integrationMatchCfg, 50),
+		Idempotency: service.NewIdempotencyService(store, clk, testIdempotencyTTL, testIdempotencyProcessing),
+	}, "integration")
 	return srv.Routes(), riderID, pool
 }
 

@@ -105,6 +105,8 @@ func (s *PreferenceService) MatchRiders(ctx context.Context, in MatchRidersInput
 			Categories:         categories[r.ID],
 			Areas:              areas[r.ID],
 			LocationUpdatedAt:  r.LocationUpdatedAt,
+			OffersCount:        int(r.OffersCount),
+			AcceptedCount:      int(r.AcceptedCount),
 			AcceptanceRate:     deref(r.AcceptanceRate),
 		}
 		// The riders table CHECKs that lat and lng are both set or both NULL.

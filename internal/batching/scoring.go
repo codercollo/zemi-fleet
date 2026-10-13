@@ -86,8 +86,8 @@ func build(members []Order, p Params) Batch {
 	var latSum, lngSum float64
 	for _, o := range members {
 		b.TripDistanceM += geo.Haversine(o.Pickup, o.Delivery)
-		b.EarningsCents += o.RiderEarningsCents
-		b.FeeCents += o.DeliveryFeeCents
+		b.EarningsCents = addCents(b.EarningsCents, o.RiderEarningsCents)
+		b.FeeCents = addCents(b.FeeCents, o.DeliveryFeeCents)
 		latSum += o.Pickup.Lat
 		lngSum += o.Pickup.Lng
 	}
@@ -144,4 +144,19 @@ func detourScore(members []Order, stops []Stop) float64 {
 		sum += math.Min(1, direct/along)
 	}
 	return sum / float64(len(members))
+}
+
+// addCents adds two amounts of cents without wrapping around. On overflow it saturates at the int64 limit instead
+// of silently turning a huge total into a negative one. The configured per-order maximums (ORDER_MAX_VALUE_KES and
+// ORDER_MAX_DELIVERY_FEE_KES) keep real totals many orders of magnitude below that limit, so this is a guard,
+// not a code path that normal data takes. Saturating both the fee total and the earnings total keeps
+// earnings <= fees, which the batches table CHECKs.
+func addCents(a, b int64) int64 {
+	switch {
+	case b > 0 && a > math.MaxInt64-b:
+		return math.MaxInt64
+	case b < 0 && a < math.MinInt64-b:
+		return math.MinInt64
+	}
+	return a + b
 }

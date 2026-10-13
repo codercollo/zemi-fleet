@@ -15,6 +15,16 @@ type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
+// Services are the business-logic services the handlers call.
+type Services struct {
+	Orders      *service.OrderService
+	Riders      *service.RiderService
+	Matching    *service.MatchingService
+	Batches     *service.BatchService
+	Preferences *service.PreferenceService
+	Idempotency *service.IdempotencyService
+}
+
 // Server holds the HTTP layer's dependencies (the book's `application` struct).
 // Let's Go Further ch. 2.3.
 type Server struct {
@@ -26,10 +36,15 @@ type Server struct {
 	matching    *service.MatchingService
 	batches     *service.BatchService
 	preferences *service.PreferenceService
+	idempotency *service.IdempotencyService
 	version     string
 }
 
 // NewServer wires the dependencies together.
-func NewServer(cfg config.Config, logger *slog.Logger, db Pinger, orders *service.OrderService, riders *service.RiderService, matching *service.MatchingService, batches *service.BatchService, preferences *service.PreferenceService, version string) *Server {
-	return &Server{cfg: cfg, logger: logger, db: db, orders: orders, riders: riders, matching: matching, batches: batches, preferences: preferences, version: version}
+func NewServer(cfg config.Config, logger *slog.Logger, db Pinger, svc Services, version string) *Server {
+	return &Server{
+		cfg: cfg, logger: logger, db: db, version: version,
+		orders: svc.Orders, riders: svc.Riders, matching: svc.Matching, batches: svc.Batches,
+		preferences: svc.Preferences, idempotency: svc.Idempotency,
+	}
 }

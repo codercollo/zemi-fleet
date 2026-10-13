@@ -138,7 +138,7 @@ func assertInOrder(t *testing.T, body string, needles ...string) {
 }
 
 func TestCreateBatches_400(t *testing.T) {
-	for _, body := range []string{``, `{"rider_id":`, `{"rider_id":"r","colour":1}`, `{"rider_id":7}`, `{"max_orders":"five"}`, validBatchBody + validBatchBody} {
+	for _, body := range []string{``, `{"rider_id":`, `{"rider_id":"rider_001","colour":1}`, `{"rider_id":7}`, `{"max_orders":"five"}`, validBatchBody + validBatchBody} {
 		h, _ := newStoreHandler(t)
 
 		rec := send(t, h, http.MethodPost, batchPath, body)
@@ -160,19 +160,19 @@ func TestCreateBatches_404(t *testing.T) {
 func TestCreateBatches_422(t *testing.T) {
 	loc := `"rider_location":{"latitude":-1.26,"longitude":36.8}`
 	tests := []struct{ name, body, wantField string }{
-		{"max_orders 6", `{"rider_id":"r",` + loc + `,"max_orders":6,"radius_km":2}`, "max_orders"},
-		{"max_orders 0", `{"rider_id":"r",` + loc + `,"max_orders":0,"radius_km":2}`, "max_orders"},
-		{"max_orders negative", `{"rider_id":"r",` + loc + `,"max_orders":-1,"radius_km":2}`, "max_orders"},
-		{"max_orders missing", `{"rider_id":"r",` + loc + `,"radius_km":2}`, "max_orders"},
-		{"radius 0", `{"rider_id":"r",` + loc + `,"max_orders":5,"radius_km":0}`, "radius_km"},
-		{"radius negative", `{"rider_id":"r",` + loc + `,"max_orders":5,"radius_km":-1}`, "radius_km"},
-		{"radius above the configured 2 km", `{"rider_id":"r",` + loc + `,"max_orders":5,"radius_km":2.5}`, "radius_km"},
-		{"radius missing", `{"rider_id":"r",` + loc + `,"max_orders":5}`, "radius_km"},
+		{"max_orders 6", `{"rider_id":"rider_001",` + loc + `,"max_orders":6,"radius_km":2}`, "max_orders"},
+		{"max_orders 0", `{"rider_id":"rider_001",` + loc + `,"max_orders":0,"radius_km":2}`, "max_orders"},
+		{"max_orders negative", `{"rider_id":"rider_001",` + loc + `,"max_orders":-1,"radius_km":2}`, "max_orders"},
+		{"max_orders missing", `{"rider_id":"rider_001",` + loc + `,"radius_km":2}`, "max_orders"},
+		{"radius 0", `{"rider_id":"rider_001",` + loc + `,"max_orders":5,"radius_km":0}`, "radius_km"},
+		{"radius negative", `{"rider_id":"rider_001",` + loc + `,"max_orders":5,"radius_km":-1}`, "radius_km"},
+		{"radius above the configured 2 km", `{"rider_id":"rider_001",` + loc + `,"max_orders":5,"radius_km":2.5}`, "radius_km"},
+		{"radius missing", `{"rider_id":"rider_001",` + loc + `,"max_orders":5}`, "radius_km"},
 		{"rider_id missing", `{` + loc + `,"max_orders":5,"radius_km":2}`, "rider_id"},
-		{"location missing", `{"rider_id":"r","max_orders":5,"radius_km":2}`, "rider_location"},
-		{"latitude out of range", `{"rider_id":"r","rider_location":{"latitude":91,"longitude":36.8},"max_orders":5,"radius_km":2}`, "rider_location.latitude"},
-		{"longitude out of range", `{"rider_id":"r","rider_location":{"latitude":-1.2,"longitude":-181},"max_orders":5,"radius_km":2}`, "rider_location.longitude"},
-		{"longitude missing", `{"rider_id":"r","rider_location":{"latitude":-1.2},"max_orders":5,"radius_km":2}`, "rider_location.longitude"},
+		{"location missing", `{"rider_id":"rider_001","max_orders":5,"radius_km":2}`, "rider_location"},
+		{"latitude out of range", `{"rider_id":"rider_001","rider_location":{"latitude":91,"longitude":36.8},"max_orders":5,"radius_km":2}`, "rider_location.latitude"},
+		{"longitude out of range", `{"rider_id":"rider_001","rider_location":{"latitude":-1.2,"longitude":-181},"max_orders":5,"radius_km":2}`, "rider_location.longitude"},
+		{"longitude missing", `{"rider_id":"rider_001","rider_location":{"latitude":-1.2},"max_orders":5,"radius_km":2}`, "rider_location.longitude"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -187,8 +187,8 @@ func TestCreateBatches_422(t *testing.T) {
 
 	t.Run("boundaries 1 and the configured maximum are accepted", func(t *testing.T) {
 		for _, body := range []string{
-			`{"rider_id":"r",` + loc + `,"max_orders":1,"radius_km":0.01}`,
-			`{"rider_id":"r",` + loc + `,"max_orders":5,"radius_km":2}`,
+			`{"rider_id":"rider_001",` + loc + `,"max_orders":1,"radius_km":0.01}`,
+			`{"rider_id":"rider_001",` + loc + `,"max_orders":5,"radius_km":2}`,
 		} {
 			h, store := newStoreHandler(t)
 			store.EXPECT().GetRider(gomock.Any(), gomock.Any()).Return(matchRiderRow(5, 5, true), nil)
@@ -216,6 +216,7 @@ func TestMatchOrders_KeyOrder(t *testing.T) {
 	h, store := newStoreHandler(t)
 	store.EXPECT().GetRider(gomock.Any(), gomock.Any()).Return(matchRiderRow(0, 5, true), nil)
 	store.EXPECT().UpdateRiderTelemetry(gomock.Any(), gomock.Any()).Return(nil)
+	store.EXPECT().ExpireBatchesTx(gomock.Any(), gomock.Any()).Return(0, nil)
 	store.EXPECT().ListPendingOrdersInBox(gomock.Any(), gomock.Any()).Return(
 		[]sqlc.ListPendingOrdersInBoxRow{pendingRow("ord_a", 0.002, time.Minute, 100)}, nil)
 

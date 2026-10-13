@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -16,8 +17,6 @@ import (
 const (
 	maxLatitude  = 90.0
 	maxLongitude = 180.0
-	maxAmountKES = 100_000_000.0
-	maxIDLength  = 64
 )
 
 type locationInput struct {
@@ -65,14 +64,12 @@ func (s *Server) createOrderHandler(c *gin.Context) {
 	v := validator.New()
 	req.VendorID = strings.TrimSpace(req.VendorID)
 	req.Category = strings.TrimSpace(req.Category)
-	v.Check(req.VendorID != "", "vendor_id", "must be provided")
-	v.Check(len(req.VendorID) <= maxIDLength, "vendor_id", "must not be more than 64 characters long")
-	v.Check(req.Category != "", "category", "must be provided")
-	v.Check(len(req.Category) <= maxIDLength, "category", "must not be more than 64 characters long")
+	checkID(v, "vendor_id", req.VendorID, vendorID)
+	checkID(v, "category", req.Category, categoryID)
 	delivery := checkLocation(v, "delivery_location", req.DeliveryLocation)
 
-	valueCents := checkAmount(v, "value_kes", req.ValueKES, true)
-	feeCents := checkAmount(v, "delivery_fee_kes", req.DeliveryFeeKES, false)
+	valueCents := checkAmount(v, "value_kes", req.ValueKES, true, s.cfg.OrderMaxValueKES)
+	feeCents := checkAmount(v, "delivery_fee_kes", req.DeliveryFeeKES, false, s.cfg.OrderMaxDeliveryFeeKES)
 	if !v.Valid() {
 		s.failedValidationResponse(c, v.Errors)
 		return
@@ -97,16 +94,18 @@ func (s *Server) createOrderHandler(c *gin.Context) {
 }
 
 // checkAmount validates a required KES amount and converts it to cents.
-// positive means zero is rejected (order value); otherwise zero is allowed (fee).
-func checkAmount(v *validator.Validator, field string, kes *float64, positive bool) int64 {
+// positive means zero is rejected (order value); otherwise zero is allowed (fee). max is the configured upper bound in KES.
+func checkAmount(v *validator.Validator, field string, kes *float64, positive bool, max float64) int64 {
 	if kes == nil {
 		v.AddError(field, "must be provided")
 		return 0
 	}
 	cents, ok := kesToCents(*kes)
 	switch {
-	case !ok || *kes > maxAmountKES:
+	case !ok:
 		v.AddError(field, "must be a valid amount with at most 2 decimal places")
+	case *kes > max:
+		v.AddError(field, "must not be more than "+strconv.FormatFloat(max, 'f', -1, 64)+" KES")
 	case positive && cents <= 0:
 		v.AddError(field, "must be greater than zero")
 	case cents < 0:
@@ -117,7 +116,11 @@ func checkAmount(v *validator.Validator, field string, kes *float64, positive bo
 
 // showOrderHandler handles GET /api/v2/orders/:id.
 func (s *Server) showOrderHandler(c *gin.Context) {
-	order, err := s.orders.Get(c.Request.Context(), c.Param("id"))
+	id, ok := s.pathID(c, orderID)
+	if !ok {
+		return
+	}
+	order, err := s.orders.Get(c.Request.Context(), id)
 	if err != nil {
 		s.handleServiceError(c, err)
 		return

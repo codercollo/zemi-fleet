@@ -20,6 +20,7 @@ func TestE2E_RateLimitHeadersAndRequestID(t *testing.T) {
 	do := func(path string, headers ...string) (*http.Response, string) {
 		req, err := http.NewRequest(http.MethodGet, e.server.URL+path, nil)
 		require.NoError(t, err)
+		req.Header.Set("X-API-Key", testAPIKey)
 		for i := 0; i+1 < len(headers); i += 2 {
 			req.Header.Set(headers[i], headers[i+1])
 		}

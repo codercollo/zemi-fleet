@@ -17,6 +17,8 @@ func clearEnv(t *testing.T) {
 	for key := range defaults {
 		t.Setenv(key, "")
 	}
+	// API_KEYS is required, so every test that is not about keys gets a valid one; apikeys_test.go overrides it.
+	t.Setenv("API_KEYS", "tests=config-test-key-0123456789abcdef0123")
 }
 
 // Helper to write env file for tests

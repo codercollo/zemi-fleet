@@ -552,6 +552,79 @@ first computed, which may have since been accepted or expired; send a new key fo
 
 ---
 
+## Authentication
+
+Phase 10 (Let's Go Further ch. 16, adapted: API keys, not tokens issued to users). Every route except `GET /api/v2/healthz`
+requires an `X-API-Key` header.
+
+### Key format and configuration
+
+`API_KEYS` is a comma-separated list of `name=key` pairs, e.g. `postman=<key>,ops=<key>`. It is validated at startup (the process
+refuses to start otherwise, and the message never echoes a key):
+
+| Rule | Detail |
+|---|---|
+| At least one key | an empty or missing `API_KEYS` is an error |
+| Name | 1-32 characters of `[a-z0-9_-]`; it identifies the client in logs |
+| Key length | at least **16** characters in `development`, at least **32** in `staging` and `production` |
+| Unique | no duplicate names and no duplicate keys |
+| Demo key | in `production`, a key equal to the published demo key (`zemi-demo-key-not-for-production-0001`) is refused |
+
+A key may contain any character except `,`; only the first `=` of a pair separates the name. Generate one with
+`openssl rand -hex 32` (64 hex characters, 256 bits).
+
+### Hashing and constant-time comparison
+
+After loading, **only SHA-256 hashes** are kept (`config.APIKey{Name, Hash}`); the raw `API_KEYS` string is cleared. On each
+request the middleware hashes the `X-API-Key` value and compares that hash with **every** stored hash using
+`subtle.ConstantTimeCompare`, without stopping at the first match. Two properties follow: the comparison time does not depend on
+how many leading bytes were right (no byte-by-byte timing oracle), and it does not depend on *which* key matched or how many
+keys exist. Hashing first also gives both sides a fixed 32-byte length, so the key's length cannot leak through the comparison
+either. (Keys are random and long, so a plain unsalted SHA-256 is the right tool; a slow password hash such as bcrypt would only
+cost every request CPU.)
+
+### Middleware order and what it does
+
+```
+recoverPanic -> requestID -> securityHeaders -> accessLog -> rateLimit -> requireAPIKey -> [idempotent] -> handler
+```
+
+- After `rateLimit`: guessing keys is rate-limited per IP, and an unauthenticated flood is limited before any hashing.
+- Before idempotency and the handlers: an unauthenticated request cannot reserve an `Idempotency-Key` or reach a service or the
+  database. The e2e test `TestE2E_UnauthenticatedRequestsChangeNothing` fires every write route without a key and checks that
+  row counts, idempotency records and rider versions are unchanged.
+- After `accessLog`, so a 401 is access-logged too. The same goes for unknown paths: an unauthenticated request to a route
+  that does not exist is a `401`, not a `404`, so routes cannot be probed.
+- Exempt: `GET /api/v2/healthz` only (load balancers and the Docker healthcheck call it without a key). Any other method on that
+  path needs a key.
+- On success the client's name is put in the request context, and the access log line gets `client=<name>`.
+
+### Failures: one message, and a log line with a fingerprint
+
+A missing key and a wrong key get the **identical** response: `401 {"error":"invalid or missing API key"}` with
+`WWW-Authenticate: ApiKey realm="zemi-fleet"`. If the messages differed ("no key" vs "unknown key"), a probing client would learn
+whether a header it sent was even well-formed, and which of its guesses to refine. One message tells it nothing; an honest client
+sees `WWW-Authenticate` and knows what to send.
+
+Each failed attempt logs one `WARN` line, `authentication failed`, with `key_fingerprint` (the first 8 hex characters of the
+presented key's SHA-256, or `none` when no key was sent), `client_ip`, `method` and `route`. The fingerprint lets an operator see
+that the same wrong key keeps being retried, or recognise a stale key in a client's configuration, and 32 bits of a hash reveal
+nothing usable about the key. **The raw key is never logged**: `TestRequireAPIKey_FailedAttemptsLogAFingerprintAndNeverTheKey`
+captures the logs and asserts that no presented key appears in them. A hostile header value cannot forge a log line either
+(it is an attribute, never the message: CWE-117).
+
+### Decisions beyond the brief
+
+- **Fail closed:** a server built with no keys at all (possible only in a hand-built test config, since `Load` refuses it)
+  answers 401 on every route except healthz.
+- **`STAGING_API_KEYS`, not `API_KEYS`, in `docker-compose.yml`.** `make` exports `app.env`, so `API_KEYS` from a developer's
+  `app.env` (a short development key) would override the compose fallback, and the staging stack, which demands 32 characters,
+  would refuse to start. The compose file maps `STAGING_API_KEYS` (default: the demo key) onto the container's `API_KEYS`.
+- **Key rotation:** add the new `name=key`, restart, move the clients over, remove the old pair, restart. Several keys can be
+  valid at once for exactly this reason.
+- **No key expiry, scopes or revocation list.** A key is valid until it is removed from the configuration.
+- `X-API-Key` is read from the header only, never from the query string (URLs end up in logs and browser history).
+
 ## Security
 
 How the code maps to the usual weakness lists. "Proof" is the test or check that fails if the protection is removed.
@@ -564,21 +637,26 @@ How the code maps to the usual weakness lists. "Proof" is the test or check that
 | **CWE-20** improper input validation (OWASP A03) | JSON is decoded strictly (unknown fields, trailing data and bodies over 1 MiB are `400`). Every ID in a path or body must match its format (`^rider_[0-9A-Za-z]{1,40}$`, `^ord_...`, `^batch_...`, `^ven_...`, `^area_...`, category `^[a-z][a-z_]{1,39}$`); malformed path IDs are `404` without a query. Coordinates, bearings, speeds, amounts, `page`, `page_size`, `radius_km` and `max_orders` are range-checked; list inputs are capped at 50 entries; `Idempotency-Key` and `X-Expected-Version` are validated. There are **no free-text fields**: every string a client sends is an ID, a code or a header value, each length-capped | handler tests for each rule (`ids_test.go`, `*_422` tables) |
 | **CWE-209** information exposure through error messages (OWASP A05) | Every unexpected error is logged once, server side, and the client gets a fixed message: *"the server encountered a problem and could not process your request"*. Domain errors map to fixed 404/409/422 messages. A malformed or unknown ID is the same `404` | handler tests assert a 500 never contains the internal error text (hosts, SQL, driver messages) |
 | **A06** vulnerable and outdated components | **`govulncheck`** (pinned, `v1.9.0`) runs in `make dev/audit` and in CI, and covers the dependencies we actually call *and* the Go standard library of the toolchain in use. Its first run found real issues in `golang.org/x/text`, `golang.org/x/net` and `github.com/quic-go/quic-go` (all pulled in through Gin); they were upgraded | `make dev/audit`; CI `audit` job (which installs the newest patch of the Go line) |
-| **CWE-400** resource exhaustion (OWASP A04) | 1 MiB body cap; per-statement query timeout (`DB_QUERY_TIMEOUT`); `page_size` at most 50; bounded list inputs and batch sizes; HTTP server read/write timeouts. Rate limiting arrives in Phase 9 | `timeout_test.go`, `TestIntegration_SlowQueryIsCancelled` |
+| **A07** identification and authentication failures | Every route except `GET /healthz` needs an API key. Keys come from configuration, are held only as **SHA-256 hashes**, and are compared with `subtle.ConstantTimeCompare` against all of them, so timing leaks nothing. A missing and a wrong key get the same `401` (with `WWW-Authenticate`); guessing is rate-limited (the limiter runs first) and logged with a fingerprint, never the key | `internal/api/auth_test.go` (rejections, indistinguishable 401s, healthz-only exemption, every route protected, logs never contain a key), e2e `TestE2E_UnauthenticatedRequestsChangeNothing` |
+| **CWE-798** hard-coded credentials | No key is in the code: they come from `API_KEYS` (environment or `app.env`, which is git-ignored). The one published key, the demo key in the README, compose file and Postman environment, is **refused when `APP_ENV=production`**, and staging and production demand 32+ characters. `.env.example` holds a development-only placeholder | `internal/config/apikeys_test.go` (each rule, the demo key in production, errors never echo a key) |
+| **CWE-400** resource exhaustion (OWASP A04) | 1 MiB body cap; per-statement query timeout (`DB_QUERY_TIMEOUT`); `page_size` at most 50; bounded list inputs and batch sizes; HTTP server read/write timeouts. Per-IP rate limiting (Phase 9), which also limits key guessing | `timeout_test.go`, `TestIntegration_SlowQueryIsCancelled` |
 
 **Production binaries are built in CI and Docker with the latest Go 1.27 patch; govulncheck is enforced there.** (`go.mod` states only the minimum, 1.26.0; a developer machine on an older patch gets a warning from `make dev/vulncheck`, CI does not.)
 
 ### Known limitation: a shared API key lets a client act as any rider
 
-Phase 10 authenticates the **client** with one shared API key. The `rider_id` in a request body or path is trusted as
-sent, so a holder of the key can call `POST /batches/:id/accept` as any rider, read any rider's record, or move any
-rider's location. That is CWE-639 (authorization bypass through a user-controlled key), OWASP **A01 Broken Access
-Control** (an insecure direct object reference). It is acceptable for a trusted rider app talking to its own backend and
-is not acceptable for a public API.
+Phase 10 authenticates the **client application** with an API key (one named key per client, so two clients can be told apart and
+one revoked without the other). It does **not** identify a rider. The `rider_id` in a request body or path is trusted as sent, so a
+holder of a key can call `POST /batches/:id/accept` as any rider, read any rider's record, or move any rider's location. That is
+CWE-639 (authorization bypass through a user-controlled key), OWASP **A01 Broken Access Control** (an insecure direct object
+reference). It is acceptable for a trusted rider app talking to its own backend and is not acceptable for a public API; a key
+shipped inside a mobile app can also be extracted from it.
 
-**The fix is per-rider tokens** (the Phase 10 PASETO stretch): `POST /auth/token` would issue a token whose subject is a
-`rider_id`, and every handler would require `rider_id` in the body or path to equal the token's subject (dispatcher tokens
-could act for anyone). Until then, treat the API key as a secret that grants the full rider-fleet surface.
+**The fix is per-rider tokens** (PASETO; an Improvement, not built): `POST /auth/token` would issue a short-lived token whose subject
+is a `rider_id`, and every handler would take `rider_id` from the token instead of the request (or require the two to be equal).
+Let's Go Further ch. 17-style **permission scopes** would limit what a token may do, for example `batches:accept`, `riders:write`,
+`orders:create`, and a dispatcher scope for tokens that may act for anyone. Until then, treat each API key as a secret that grants
+the full rider-fleet surface, give every client its own, and rotate it if it leaks.
 
 ### Other things worth knowing
 
@@ -595,14 +673,14 @@ could act for anyone). Until then, treat the API key as a secret that grants the
 ### Middleware order
 
 ```
-request -> recoverPanic -> requestID -> securityHeaders -> accessLog -> rateLimit -> (auth: Phase 10) -> handler
-                                                                                          (idempotency: POST /orders, /orders/batch only)
+request -> recoverPanic -> requestID -> securityHeaders -> accessLog -> rateLimit -> requireAPIKey -> handler
+                                                                                                 (idempotency: POST /orders, /orders/batch only)
 ```
 
 `recoverPanic` is outermost so a panic anywhere below becomes a logged 500. `requestID` comes next so every later log line
 can carry the ID. `securityHeaders` runs before anything can answer, so even a 429 or a 404 has the headers. `accessLog` wraps
 the limiter and the handlers, so it records the final status of every request, rate-limited and panicked ones included.
-`rateLimit` runs before any work is done for the client. The router is built with `gin.New()`, never `gin.Default()`, so there
+`rateLimit` runs before any work is done for the client. `requireAPIKey` comes right after it (see "Authentication"). The router is built with `gin.New()`, never `gin.Default()`, so there
 is exactly one logger and one recovery.
 
 ### Structured logging
@@ -612,7 +690,7 @@ is exactly one logger and one recovery.
   the request context; a context-aware slog handler adds `request_id` to every record logged with that context.
 - **Access log**, one `INFO` line per request, message `request`: `method`, `route` (the template such as `/api/v2/riders/:id`,
   or `unmatched`; never the raw path, which carries IDs), `status`, `duration_ms` (from the injected clock), `bytes`, `client_ip`,
-  `request_id`. Example (text handler in development):
+  `request_id` and, for an authenticated request, `client` (the API key's name). Example (text handler in development):
   `level=INFO msg=request method=GET route=/api/v2/riders/:id status=200 duration_ms=2 bytes=412 client_ip=127.0.0.1 request_id=...`
 - **Errors** are logged once, at the edge (`request failed`, with the error, method, route and request ID).
 - **Log injection (CWE-117).** A log *message* is always a fixed string in the code. Everything a client controls (headers, IDs,
@@ -672,4 +750,4 @@ If in-flight requests outlast the timeout the server gives up and exits with an 
   would be needed to limit across instances).
 - Limiter state is keyed by IP only. Clients behind one NAT share a bucket.
 - The idle-client timeout (3 minutes) and cleanup interval (1 minute) are constants; the rest is configuration.
-- Because requests are limited per IP and before authentication, an unauthenticated flood is limited too (auth arrives after the limiter in Phase 10).
+- Because requests are limited per IP and before authentication, an unauthenticated flood, and a client guessing keys, is limited too (`requireAPIKey` sits after the limiter).

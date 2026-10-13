@@ -65,7 +65,8 @@ func (s *Server) securityHeaders() gin.HandlerFunc {
 }
 
 // accessLog writes one line per request, after it has been answered: method, route TEMPLATE (/riders/:id, never
-// the raw path, which carries IDs and could carry anything), status, duration, bytes written, request ID and client IP.
+// the raw path, which carries IDs and could carry anything), status, duration, bytes written, request ID, client IP and,
+// once authenticated, the API client's name.
 // The message is fixed; every value is an attribute. The line is written from a deferred call so a request that
 // panics (and is turned into a 500 by recoverPanic, which sits outside this middleware) is logged too, as a 500.
 func (s *Server) accessLog() gin.HandlerFunc {
@@ -77,14 +78,19 @@ func (s *Server) accessLog() gin.HandlerFunc {
 			if !completed {
 				status = http.StatusInternalServerError
 			}
-			s.logger.LogAttrs(c.Request.Context(), slog.LevelInfo, "request",
+			attrs := []slog.Attr{
 				slog.String("method", c.Request.Method),
 				slog.String("route", routeOf(c)),
 				slog.Int("status", status),
 				slog.Int64("duration_ms", s.clock.Now().Sub(start).Milliseconds()),
 				slog.Int("bytes", max(c.Writer.Size(), 0)),
 				slog.String("client_ip", c.ClientIP()),
-			)
+			}
+			// c.Request now carries the client name set by requireAPIKey; it is absent on /healthz and on a 401.
+			if client := clientFromContext(c.Request.Context()); client != "" {
+				attrs = append(attrs, slog.String("client", client))
+			}
+			s.logger.LogAttrs(c.Request.Context(), slog.LevelInfo, "request", attrs...)
 		}()
 		c.Next()
 		completed = true

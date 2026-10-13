@@ -31,7 +31,7 @@ type observed struct {
 func newObserved(t *testing.T, mutate ...func(*config.Config)) observed {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	cfg := config.Config{Env: config.EnvDevelopment}
+	cfg := config.Config{Env: config.EnvDevelopment, APIKeys: testAPIKeys}
 	for _, m := range mutate {
 		m(&cfg)
 	}
@@ -84,7 +84,7 @@ func (o observed) byMsg(t *testing.T, msg string) []map[string]any {
 }
 
 func get(h http.Handler, path string, headers ...string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req := authed(httptest.NewRequest(http.MethodGet, path, nil))
 	for i := 0; i+1 < len(headers); i += 2 {
 		req.Header.Set(headers[i], headers[i+1])
 	}
@@ -146,7 +146,7 @@ func TestRequestID(t *testing.T) {
 func TestAccessLog_OneLineWithTheRightFields(t *testing.T) {
 	o := newObserved(t)
 	h := o.handler()
-	req := httptest.NewRequest(http.MethodGet, "/api/v2/things/ord_SECRET123", nil)
+	req := authed(httptest.NewRequest(http.MethodGet, "/api/v2/things/ord_SECRET123", nil))
 	req.Header.Set("X-Request-ID", "trace-me-1")
 	req.RemoteAddr = "203.0.113.9:5555"
 	rec := httptest.NewRecorder()
@@ -183,7 +183,7 @@ func TestAccessLog_CoversEveryOutcome(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			o := newObserved(t)
-			req := httptest.NewRequest(tc.method, tc.path, nil)
+			req := authed(httptest.NewRequest(tc.method, tc.path, nil))
 
 			o.handler().ServeHTTP(httptest.NewRecorder(), req)
 
@@ -308,7 +308,7 @@ func TestSecurityHeaders(t *testing.T) {
 		{"404", func() *httptest.ResponseRecorder { return get(h, "/nowhere") }},
 		{"405", func() *httptest.ResponseRecorder {
 			rec := httptest.NewRecorder()
-			h.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/v2/healthz", nil))
+			h.ServeHTTP(rec, authed(httptest.NewRequest(http.MethodDelete, "/api/v2/healthz", nil)))
 			return rec
 		}},
 		{"a recovered panic", func() *httptest.ResponseRecorder { return get(newObserved(t).handler(), "/api/v2/boom") }},
@@ -330,7 +330,7 @@ func TestSecurityHeadersOverTheWire(t *testing.T) {
 	ts := httptest.NewServer(o.handler())
 	defer ts.Close()
 
-	res, err := http.Get(ts.URL + "/api/v2/ping")
+	res, err := getAuthed(ts.URL + "/api/v2/ping")
 	require.NoError(t, err)
 	defer res.Body.Close()
 	_, _ = io.Copy(io.Discard, res.Body)

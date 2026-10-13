@@ -114,6 +114,11 @@ services:
       LIMITER_BURST: ${LIMITER_BURST:-20}
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
       SHUTDOWN_TIMEOUT: ${SHUTDOWN_TIMEOUT:-30s}
+      # name=key pairs. The fallback is the PUBLISHED demo key (README, Postman environment), so the reviewer path
+      # works out of the box; it is >= 32 characters (staging's minimum) and production refuses it. Set
+      # STAGING_API_KEYS to real keys for anything that is not a demo. The variable is not called API_KEYS on
+      # purpose: `make` exports app.env (a short development key), which must not leak into the staging stack.
+      API_KEYS: ${STAGING_API_KEYS:-demo=zemi-demo-key-not-for-production-0001}
     ports:
       - "${STAGING_API_PORT:-8080}:4000"
     depends_on:

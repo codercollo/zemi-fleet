@@ -300,7 +300,7 @@ func TestSlowQueryBecomes500(t *testing.T) {
 		})
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	req := httptest.NewRequest(http.MethodGet, "/api/v2/riders/rider_003", nil).WithContext(ctx)
+	req := authed(httptest.NewRequest(http.MethodGet, "/api/v2/riders/rider_003", nil)).WithContext(ctx)
 	rec := httptest.NewRecorder()
 
 	clk := clock.Real{}

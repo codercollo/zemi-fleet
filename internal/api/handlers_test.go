@@ -54,7 +54,7 @@ const (
 
 func testConfig() config.Config {
 	return config.Config{
-		Env: config.EnvDevelopment, RiderPayoutBPS: testPayoutBPS, Batch: testBatchCfg, Match: testMatchCfg, Cone: testCone,
+		Env: config.EnvDevelopment, APIKeys: testAPIKeys, RiderPayoutBPS: testPayoutBPS, Batch: testBatchCfg, Match: testMatchCfg, Cone: testCone,
 		OrderMinTripM: testMinTripM, OrderMaxValueKES: testMaxValueKES, OrderMaxDeliveryFeeKES: testMaxValueKES,
 		IdempotencyTTL: testIdempotencyTTL, IdempotencyProcessingTimeout: testIdempotencyProcessing,
 	}
@@ -89,7 +89,7 @@ func newStoreHandlerWithLogs(t *testing.T) (http.Handler, *mock.MockStore, *byte
 // send performs a request; headers are name, value pairs.
 func send(t *testing.T, h http.Handler, method, path, body string, headers ...string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req := authed(httptest.NewRequest(method, path, strings.NewReader(body)))
 	for i := 0; i+1 < len(headers); i += 2 {
 		req.Header.Set(headers[i], headers[i+1])
 	}

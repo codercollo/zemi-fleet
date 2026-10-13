@@ -12,9 +12,10 @@ This builds the API, starts PostgreSQL, applies the migrations, loads the demo d
 preferences, 40 pending orders in four pickup clusters) and serves the API on <http://localhost:8080/api/v2>. In a second terminal:
 
 ```bash
-curl -s localhost:8080/api/v2/healthz
-curl -s localhost:8080/api/v2/riders/rider_001            # a seeded rider
-curl -s -X POST localhost:8080/api/v2/orders/batch -d '{"rider_id":"rider_001","rider_location":{"latitude":-1.2650,"longitude":36.8038},"max_orders":5,"radius_km":2}'
+KEY=zemi-demo-key-not-for-production-0001      # the demo key (see "Authentication" below)
+curl -s localhost:8080/api/v2/healthz           # the only route that needs no key
+curl -s -H "X-API-Key: $KEY" localhost:8080/api/v2/riders/rider_001            # a seeded rider
+curl -s -H "X-API-Key: $KEY" -X POST localhost:8080/api/v2/orders/batch -d '{"rider_id":"rider_001","rider_location":{"latitude":-1.2650,"longitude":36.8038},"max_orders":5,"radius_km":2}'
 ```
 
 **Seeded riders' locations go stale.** The demo data stamps each rider's last location a few minutes before the moment it
@@ -22,7 +23,7 @@ was loaded, and `match-riders` only trusts a location for `RIDER_LOCATION_STALE_
 `distance_to_pickup_km` is `null` and their proximity score is 0. Send a location ping first (see "Try it" below):
 
 ```bash
-curl -s -X PATCH localhost:8080/api/v2/riders/rider_002/location -d '{"latitude":-1.2890,"longitude":36.7900}'
+curl -s -H "X-API-Key: $KEY" -X PATCH localhost:8080/api/v2/riders/rider_002/location -d '{"latitude":-1.2890,"longitude":36.7900}'
 ```
 
 `docker compose down -v` stops everything and deletes the database. Plain `docker compose up --build` (no `--profile demo`)
@@ -30,6 +31,27 @@ starts the same stack with an empty database. PostgreSQL is not published on you
 one you already run; use `make staging/psql` (or `docker compose exec postgres psql -U zemi zemi_fleet`) to look inside.
 
 A plain Docker build labels the binary `"version":"docker"` in `/healthz`; `make staging/up` and the CI build stamp the git version.
+
+## Authentication
+
+Every route except `GET /api/v2/healthz` needs an API key in the `X-API-Key` header:
+
+```bash
+curl -s -H "X-API-Key: $KEY" localhost:8080/api/v2/riders/rider_001
+```
+
+A missing or wrong key gets `401 {"error":"invalid or missing API key"}` with `WWW-Authenticate: ApiKey realm="zemi-fleet"`.
+The Postman environment file (`docs/postman/zemi-fleet.postman_environment.json`) already holds the demo key.
+
+- **Demo key (`docker compose --profile demo up --build`):** `zemi-demo-key-not-for-production-0001`. It is published in
+  this README, so it is for demos only: **production refuses to start with it**.
+- **Real keys:** set `API_KEYS` to comma-separated `name=key` pairs. The name (1-32 characters of `a-z 0-9 _ -`) appears in the
+  access log as `client=<name>`; the key is at least 16 characters in development and 32 in staging and production. Make one with
+  `openssl rand -hex 32`. For development put it in `app.env` (`API_KEYS=postman=<key>,ops=<key>`); for the Docker stack export
+  `STAGING_API_KEYS` before `docker compose up` / `make staging/up` (the compose file falls back to the demo key when it is unset).
+  It is a different variable from `API_KEYS` because `make` exports `app.env`, and a short development key must not leak into
+  the staging containers. `make staging/smoke` sends the first key of `STAGING_API_KEYS`, or the demo key.
+- Keys are never stored or logged in clear: see "Authentication" in [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md).
 
 ## Prerequisites (local development)
 
@@ -106,12 +128,13 @@ See [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md) for the algorithms (proximity
 
 ## Try it
 
-After `make dev/db/seed` and `make dev/run`:
+After `make dev/db/seed` and `make dev/run` (`KEY` is your `API_KEYS` value from `app.env`, the part after `postman=`):
 
 ```bash
+KEY=dev-key-change-me-0123456789
 curl -s localhost:4000/api/v2/healthz
-curl -s localhost:4000/api/v2/riders/rider_002          # a seeded rider with preferences
-curl -s -X POST localhost:4000/api/v2/orders/batch -d '{"rider_id":"rider_001","rider_location":{"latitude":-1.2650,"longitude":36.8038},"max_orders":5,"radius_km":2}'
+curl -s -H "X-API-Key: $KEY" localhost:4000/api/v2/riders/rider_002          # a seeded rider with preferences
+curl -s -H "X-API-Key: $KEY" -X POST localhost:4000/api/v2/orders/batch -d '{"rider_id":"rider_001","rider_location":{"latitude":-1.2650,"longitude":36.8038},"max_orders":5,"radius_km":2}'
 ```
 
 **Seeded rider locations go stale.** The seed stamps each rider's last location a few minutes before the moment you
@@ -120,19 +143,19 @@ than that, every rider's distance is `null` and their proximity score is 0, so r
 location first, either with a location ping:
 
 ```bash
-curl -s -X PATCH localhost:4000/api/v2/riders/rider_002/location -d '{"latitude":-1.2890,"longitude":36.7900}'
+curl -s -H "X-API-Key: $KEY" -X PATCH localhost:4000/api/v2/riders/rider_002/location -d '{"latitude":-1.2890,"longitude":36.7900}'
 ```
 
 or by calling `match-orders` for that rider (it records the rider's position too):
 
 ```bash
-curl -s -X POST localhost:4000/api/v2/riders/match-orders -d '{"rider_id":"rider_002","current_location":{"latitude":-1.2890,"longitude":36.7900},"current_orders_count":2}'
+curl -s -H "X-API-Key: $KEY" -X POST localhost:4000/api/v2/riders/match-orders -d '{"rider_id":"rider_002","current_location":{"latitude":-1.2890,"longitude":36.7900},"current_orders_count":2}'
 ```
 
 then rank riders for an order (an unsaved electronics order picked up at Yaya Centre, Kilimani):
 
 ```bash
-curl -s -X POST localhost:4000/api/v2/orders/match-riders -d '{"order_id":"ord_new","order_details":{"category":"electronics","pickup_location":{"lat":-1.2917,"lng":36.7878},"delivery_location":{"lat":-1.2900,"lng":36.7920},"value_kes":5000}}'
+curl -s -H "X-API-Key: $KEY" -X POST localhost:4000/api/v2/orders/match-riders -d '{"order_id":"ord_new","order_details":{"category":"electronics","pickup_location":{"lat":-1.2917,"lng":36.7878},"delivery_location":{"lat":-1.2900,"lng":36.7920},"value_kes":5000}}'
 ```
 
 `distance_to_pickup_km` is a number for riders with a fresh location and `null` for the rest. Re-run `make dev/db/seed`

@@ -35,6 +35,9 @@ import (
 // startOfDay is the instant every scenario begins at.
 var startOfDay = time.Date(2026, 10, 13, 9, 0, 0, 0, time.UTC)
 
+// testAPIKey is the key every scenario sends (API_KEYS=e2e=<key>); long enough for any APP_ENV.
+const testAPIKey = "e2e-test-api-key-0123456789abcdef0123"
+
 // Seeded reference locations (db/testdata/reference.sql).
 var (
 	yayaLat, yayaLng       = -1.2917, 36.7878 // ven_004 Yaya Fashion House, Kilimani
@@ -64,6 +67,7 @@ func newEnv(t *testing.T, settings ...string) *env {
 	t.Setenv("DATABASE_URL", testdb.URL(t))
 	// Scenarios fire many requests from one address: the limiter is off unless a scenario turns it on.
 	t.Setenv("LIMITER_ENABLED", "false")
+	t.Setenv("API_KEYS", "e2e="+testAPIKey)
 	for i := 0; i+1 < len(settings); i += 2 {
 		t.Setenv(settings[i], settings[i+1])
 	}
@@ -111,7 +115,12 @@ func (e *env) call(method, path string, body any, headers ...string) response {
 	}
 	req, err := http.NewRequest(method, e.server.URL+"/api/v2"+path, reader)
 	require.NoError(e.t, err)
+	req.Header.Set("X-API-Key", testAPIKey)
 	for i := 0; i+1 < len(headers); i += 2 {
+		if headers[i+1] == "" { // an empty value removes the header, so a scenario can send no key at all
+			req.Header.Del(headers[i])
+			continue
+		}
 		req.Header.Set(headers[i], headers[i+1])
 	}
 	res, err := http.DefaultClient.Do(req)

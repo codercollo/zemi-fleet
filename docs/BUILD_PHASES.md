@@ -292,10 +292,16 @@ Target pace (deadline Fri 16 Oct, 22:00): Mon 0–2 · Tue 3–5 · Wed 6–7 ·
 
 ---
 
-## Phase 10 — Authentication
+## Phase 10 — Authentication ✅
 **Book:** 16 Authentication · 17 Permission-based Authorization. Chapters 13–15 (registration, emails, activation) are skipped because the brief asks for "simple API key or JWT".
 
 **Scope:** `requireAPIKey` middleware (keys from `API_KEYS`, compared in constant time, 401 with `WWW-Authenticate`) applied to every route except `/healthz`. Stretch: `internal/token` with PASETO, and `POST /auth/token`.
+
+**Notes (as built)**
+- `API_KEYS` (`name=key,...`) validated at startup; only SHA-256 hashes are kept. `requireAPIKey` sits after `rateLimit`, compares against every hash with `subtle.ConstantTimeCompare`, and returns one identical 401 (with `WWW-Authenticate`) for a missing or wrong key. Failures log at Warn with a key fingerprint, never the key; the access log carries `client=<name>`. Only `GET /healthz` is exempt. No PASETO, no migration.
+- Compose reads `STAGING_API_KEYS` (default: the published demo key), not `API_KEYS`, because `make` exports `app.env`. `make staging/smoke` checks healthz, a 401 without a key and acceptance with the key.
+- `docs/postman/zemi-fleet.postman_environment.json` holds the demo key (the collection is Phase 12). Per-rider tokens and permission scopes are documented under "Known limitation" in `docs/DOCUMENTATION.md`.
+- Verified: `make dev/audit`, `make dev/test/all`, `make dev/run` curls, `make staging/up && smoke && down`, and `docker compose --profile demo up --build` with the demo key.
 
 > **Prompt:** Build Phase 10 from docs/BUILD_PHASES.md (Let's Go Further ch. 16–17): API-key authentication middleware on all routes except healthz, with tests. Add PASETO only if I say so.
 

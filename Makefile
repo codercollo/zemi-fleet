@@ -27,6 +27,12 @@ GOVULNCHECK_VERSION := v1.9.0
 EXE             := $(shell go env GOEXE)
 STAGING_COMPOSE := docker compose -p zemi-staging -f docker-compose.yml
 STAGING_URL     := http://localhost:$(or $(STAGING_API_PORT),8080)
+# The staging stack's API keys come from STAGING_API_KEYS (name=key,...), falling back to the published demo key that
+# docker-compose.yml also falls back to. It is not API_KEYS: this Makefile exports app.env, whose short development
+# key must not reach the staging containers. The smoke test sends the first key in the list.
+comma           := ,
+STAGING_API_KEYS_OR_DEMO := $(or $(STAGING_API_KEYS),demo=zemi-demo-key-not-for-production-0001)
+STAGING_API_KEY := $(word 2,$(subst =, ,$(firstword $(subst $(comma), ,$(STAGING_API_KEYS_OR_DEMO)))))
 
 # ==================================================================================== #
 # HELPERS
@@ -190,10 +196,14 @@ staging/up: staging/build
 	API_BUILD_TARGET=prebuilt $(STAGING_COMPOSE) up -d --wait
 	@echo 'Staging API $(VERSION): $(STAGING_URL)/api/v2/healthz'
 
-## staging/smoke: check that the staging API answers its healthcheck
+## staging/smoke: check the healthcheck, that a missing key is refused (401) and that the key is accepted (200)
 .PHONY: staging/smoke
 staging/smoke:
 	curl --fail --silent --show-error $(STAGING_URL)/api/v2/healthz
+	@echo
+	@test "$$(curl --silent --output /dev/null --write-out '%{http_code}' $(STAGING_URL)/api/v2/batches)" = 401 		|| (echo 'smoke: a request without a key was not refused with 401' && exit 1)
+	@test "$$(curl --silent --output /dev/null --write-out '%{http_code}' -H 'X-API-Key: $(STAGING_API_KEY)' $(STAGING_URL)/api/v2/riders/rider_nobody)" = 404 		|| (echo 'smoke: the API key was not accepted (expected the request to reach the handler: 404 for an unknown rider)' && exit 1)
+	@echo 'smoke: ok (healthz 200, no key 401, key accepted)'
 
 ## staging/logs: follow the API container logs
 .PHONY: staging/logs

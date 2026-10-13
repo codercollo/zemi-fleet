@@ -23,7 +23,8 @@ func (s *Server) Routes() http.Handler { return s.router() }
 //	securityHeaders  before anything can answer, so even a 429 or a 404 carries nosniff and no-store
 //	accessLog        wraps the rest, so the line records the final status (rate-limited and panicked requests too)
 //	rateLimit        before any work is done for the client; /healthz is exempt
-//	(auth)           Phase 10: after the limiter, so unauthenticated floods are limited too
+//	requireAPIKey    after the limiter, so guessing keys is rate-limited; only GET /healthz is exempt; before any handler
+//	                 or idempotency, so an unauthenticated request never reaches a service
 //	handlers         the idempotency middleware sits on its two POST routes only, after everything above
 //
 // The engine comes from gin.New(), never gin.Default(): Default adds Gin's own Logger and Recovery, and we have
@@ -42,7 +43,7 @@ func (s *Server) router(extra ...func(*gin.Engine)) *gin.Engine {
 	r.NoRoute(s.notFoundResponse)
 	r.NoMethod(s.methodNotAllowedResponse)
 
-	r.Use(s.recoverPanic(), s.requestID(), s.securityHeaders(), s.accessLog(), s.rateLimit())
+	r.Use(s.recoverPanic(), s.requestID(), s.securityHeaders(), s.accessLog(), s.rateLimit(), s.requireAPIKey())
 
 	v2 := r.Group(apiPrefix)
 	v2.GET("/healthz", s.healthzHandler)

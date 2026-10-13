@@ -47,6 +47,12 @@ type Config struct {
 	// IdempotencyProcessingTimeout is how long a claimed key may stay unfinished before a retry may take it over.
 	IdempotencyProcessingTimeout time.Duration `mapstructure:"IDEMPOTENCY_PROCESSING_TIMEOUT"`
 
+	// APIKeysRaw is API_KEYS ("name=key,name=key") exactly as configured. Load parses it into APIKeys and clears it,
+	// so after loading only hashes are held in memory.
+	APIKeysRaw string `mapstructure:"API_KEYS"`
+	// APIKeys are the clients allowed to call the API (every route except /healthz), as name + SHA-256 of the key.
+	APIKeys []APIKey `mapstructure:"-"`
+
 	Limiter LimiterConfig `mapstructure:",squash"`
 
 	// ShutdownTimeout is how long SIGINT/SIGTERM waits for in-flight requests to finish before the server gives up.
@@ -179,6 +185,7 @@ var defaults = map[string]any{
 	"LIMITER_RPS":           10,
 	"LIMITER_BURST":         20,
 	"TRUSTED_PROXIES":       "",
+	"API_KEYS":              "",
 	"SHUTDOWN_TIMEOUT":      "30s",
 	"CONE_RADIUS_KM":        1,
 	"CONE_HALF_ANGLE_DEG":   30,
@@ -233,6 +240,8 @@ func Load(path string) (Config, error) {
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
 	}
+	cfg.APIKeys, _ = parseAPIKeys(cfg.APIKeysRaw, cfg.Env) // validate() has already reported any problem
+	cfg.APIKeysRaw = ""
 	return cfg, nil
 }
 
@@ -275,6 +284,8 @@ func (c Config) validate() error {
 	if c.DB.QueryTimeout <= 0 {
 		errs = append(errs, fmt.Errorf("DB_QUERY_TIMEOUT must be greater than zero (got %s)", c.DB.QueryTimeout))
 	}
+	_, keyErrs := parseAPIKeys(c.APIKeysRaw, c.Env)
+	errs = append(errs, keyErrs...)
 	errs = append(errs, c.Limiter.validate()...)
 	if c.ShutdownTimeout <= 0 {
 		errs = append(errs, fmt.Errorf("SHUTDOWN_TIMEOUT must be greater than zero (got %s)", c.ShutdownTimeout))

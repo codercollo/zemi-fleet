@@ -131,7 +131,7 @@ func riderVersion(t *testing.T, pool *pgxpool.Pool, id string) int {
 }
 
 func newPatch(path, body, version string) *http.Request {
-	req := httptest.NewRequest(http.MethodPatch, path, strings.NewReader(body))
+	req := authed(httptest.NewRequest(http.MethodPatch, path, strings.NewReader(body)))
 	if version != "" {
 		req.Header.Set("X-Expected-Version", version)
 	}
@@ -153,8 +153,8 @@ func TestIntegration_ConcurrentPatchSameExpectedVersion(t *testing.T) {
 			return newPatch("/api/v2/riders/"+id+"/availability", fmt.Sprintf(`{"is_available":%t}`, i%2 == 0), "1")
 		}},
 		{"preferences", func(id string, i int) *http.Request {
-			req := httptest.NewRequest(http.MethodPut, "/api/v2/riders/"+id+"/preferences",
-				strings.NewReader(fmt.Sprintf(`{"min_order_value_kes":%d,"preferred_categories":["food"]}`, i)))
+			req := authed(httptest.NewRequest(http.MethodPut, "/api/v2/riders/"+id+"/preferences",
+				strings.NewReader(fmt.Sprintf(`{"min_order_value_kes":%d,"preferred_categories":["food"]}`, i))))
 			req.Header.Set("X-Expected-Version", "1")
 			return req
 		}},

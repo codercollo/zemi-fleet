@@ -34,7 +34,7 @@ func postMatch(t *testing.T, h http.Handler, riderID string, bearing, speed stri
 	body := fmt.Sprintf(`{"rider_id":%q,"current_location":{"latitude":-1.2650,"longitude":36.8038},"bearing_degrees":%s,"speed_kmh":%s,"current_orders_count":0}`,
 		riderID, bearing, speed)
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v2/riders/match-orders", strings.NewReader(body)))
+	h.ServeHTTP(rec, authed(httptest.NewRequest(http.MethodPost, "/api/v2/riders/match-orders", strings.NewReader(body))))
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var out matchResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
@@ -86,7 +86,7 @@ func TestIntegration_MatchOrdersTelemetryNeverConflicts(t *testing.T) {
 
 	statuses := fireConcurrently(t, h, concurrentRequests, func(i int) *http.Request {
 		body := fmt.Sprintf(`{"rider_id":%q,"current_location":{"latitude":-1.26%02d,"longitude":36.8038},"speed_kmh":10,"current_orders_count":0}`, riderID, i)
-		return httptest.NewRequest(http.MethodPost, "/api/v2/riders/match-orders", strings.NewReader(body))
+		return authed(httptest.NewRequest(http.MethodPost, "/api/v2/riders/match-orders", strings.NewReader(body)))
 	})
 
 	assert.Equal(t, concurrentRequests, count(statuses, http.StatusOK), "%v", statuses)

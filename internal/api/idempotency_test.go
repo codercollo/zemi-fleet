@@ -176,7 +176,7 @@ func TestIdempotency_BadKeysAreRejectedBeforeAnyWork(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			h, _ := newStoreHandler(t) // no store call may happen
-			req := httptest.NewRequest(http.MethodPost, orderPath, strings.NewReader(orderJSON))
+			req := authed(httptest.NewRequest(http.MethodPost, orderPath, strings.NewReader(orderJSON)))
 			req.Header.Set("Idempotency-Key", key)
 			rec := httptest.NewRecorder()
 

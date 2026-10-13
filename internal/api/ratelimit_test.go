@@ -26,7 +26,7 @@ func limited(rps float64, burst int, proxies ...string) func(*config.Config) {
 
 // from sends GET path as if it came from the given TCP peer.
 func from(h http.Handler, remote, path string, headers ...string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req := authed(httptest.NewRequest(http.MethodGet, path, nil))
 	req.RemoteAddr = remote
 	for i := 0; i+1 < len(headers); i += 2 {
 		req.Header.Set(headers[i], headers[i+1])
@@ -271,7 +271,7 @@ func TestServe_AnInFlightRequestFinishesDuringShutdownAndNewConnectionsAreRefuse
 	}
 	resp := make(chan result, 1)
 	go func() {
-		res, err := http.Get("http://" + ln.Addr().String() + "/api/v2/slow")
+		res, err := getAuthed("http://" + ln.Addr().String() + "/api/v2/slow")
 		if err != nil {
 			resp <- result{err: err}
 			return
@@ -324,7 +324,7 @@ func TestServe_GivesUpWhenInFlightRequestsOutlastTheTimeout(t *testing.T) {
 	ctx, shutdown := context.WithCancel(context.Background())
 	served := make(chan error, 1)
 	go func() { served <- o.srv.Serve(ctx, srv, ln, 100*time.Millisecond) }()
-	go func() { _, _ = http.Get("http://" + ln.Addr().String() + "/api/v2/stuck") }()
+	go func() { _, _ = getAuthed("http://" + ln.Addr().String() + "/api/v2/stuck") }()
 	<-started
 
 	shutdown()
@@ -360,7 +360,7 @@ func TestServe_ShutsDownCleanlyWithNothingInFlight(t *testing.T) {
 	served := make(chan error, 1)
 	go func() { served <- o.srv.Serve(ctx, srv, ln, time.Second) }()
 
-	res, err := http.Get("http://" + ln.Addr().String() + "/api/v2/ping")
+	res, err := getAuthed("http://" + ln.Addr().String() + "/api/v2/ping")
 	require.NoError(t, err)
 	_ = res.Body.Close()
 	shutdown()

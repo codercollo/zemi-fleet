@@ -6,8 +6,11 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 	_ "time/tzdata" // embed the IANA database so APP_TIMEZONE works in scratch/minimal images
 
@@ -16,6 +19,7 @@ import (
 	"github.com/codercollo/zemi-fleet/internal/app"
 	"github.com/codercollo/zemi-fleet/internal/clock"
 	"github.com/codercollo/zemi-fleet/internal/config"
+	"github.com/codercollo/zemi-fleet/internal/logging"
 	"github.com/codercollo/zemi-fleet/internal/repository"
 )
 
@@ -50,7 +54,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-
+	// Closed last: Serve returns only after the HTTP server has drained and the background tasks have stopped.
 	defer pool.Close()
 	logger.Info("database connection pool established")
 
@@ -58,28 +62,43 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	handler := app.Build(cfg, logger, pool, clock.Real{}, version)
+	server := app.New(cfg, logger, pool, clock.Real{}, version)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
-		Handler:      handler,
+		Handler:      server.Routes(),
 		IdleTimeout:  time.Minute,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		ErrorLog:     slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}
+	ln, err := net.Listen("tcp", srv.Addr)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", srv.Addr, err)
+	}
+
+	// SIGINT (Ctrl+C) and SIGTERM (what Docker and systemd send) start a graceful shutdown. Windows delivers only
+	// the interrupt; it has no SIGTERM.
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		sig := <-quit
+		logger.Info("shutting down server", "signal", sig.String(), "timeout", cfg.ShutdownTimeout.String())
+		cancel()
+	}()
 
 	logger.Info("starting server", "addr", srv.Addr, "env", cfg.Env, "version", version, "timezone", cfg.Timezone)
-
-	// Start server
-	return srv.ListenAndServe()
+	return server.Serve(ctx, srv, ln, cfg.ShutdownTimeout)
 }
 
 // Create logger based on environment
 func newLogger(env string) *slog.Logger {
 	opts := &slog.HandlerOptions{Level: slog.LevelInfo}
+	// The context handler stamps request_id on every record logged with a request's context.
 	if env == config.EnvDevelopment {
-		return slog.New(slog.NewTextHandler(os.Stdout, opts))
+		return slog.New(logging.NewContextHandler(slog.NewTextHandler(os.Stdout, opts)))
 	}
-	return slog.New(slog.NewJSONHandler(os.Stdout, opts))
+	return slog.New(logging.NewContextHandler(slog.NewJSONHandler(os.Stdout, opts)))
 }

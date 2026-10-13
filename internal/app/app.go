@@ -15,9 +15,14 @@ import (
 	"github.com/codercollo/zemi-fleet/internal/service"
 )
 
-// Build returns the HTTP handler for the whole API on top of an open pool. The clock is injected so tests can
-// control time; production passes clock.Real{}.
+// Build returns the HTTP handler for the whole API on top of an open pool (tests serve it with httptest). The clock
+// is injected so tests can control time; production passes clock.Real{}.
 func Build(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, clk clock.Clock, version string) http.Handler {
+	return New(cfg, logger, pool, clk, version).Routes()
+}
+
+// New returns the API server itself, which cmd/api runs with Serve so it can shut down gracefully.
+func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, clk clock.Clock, version string) *api.Server {
 	store := repository.NewStore(pool, cfg.DB.QueryTimeout)
 
 	server := api.NewServer(cfg, logger, pool, api.Services{
@@ -27,6 +32,7 @@ func Build(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, clk clock
 		Batches:     service.NewBatchService(store, clk, cfg.Batch),
 		Preferences: service.NewPreferenceService(store, clk, cfg.Match, cfg.OrderMinTripM),
 		Idempotency: service.NewIdempotencyService(store, clk, cfg.IdempotencyTTL, cfg.IdempotencyProcessingTimeout),
+		Clock:       clk,
 	}, version)
-	return server.Routes()
+	return server
 }

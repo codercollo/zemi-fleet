@@ -22,6 +22,7 @@ LDFLAGS         := -s -X main.version=$(VERSION)
 
 MOCKGEN_VERSION := v0.6.0
 # govulncheck, pinned. It must be a release built for the Go toolchain in use (v1.1.x crashes on Go 1.27).
+# CI runs the same version as a BLOCKING step (.github/workflows/test.yml).
 GOVULNCHECK_VERSION := v1.9.0
 EXE             := $(shell go env GOEXE)
 STAGING_COMPOSE := docker compose -p zemi-staging -f docker-compose.yml
@@ -99,7 +100,7 @@ dev/tidy:
 	go mod tidy
 	go fmt ./...
 
-## dev/audit: tidy check, verify, gofmt, vet, staticcheck, tests, govulncheck (known vulnerabilities in dependencies AND the Go toolchain in use)
+## dev/audit: tidy check, verify, gofmt, vet, staticcheck, tests (vulnerabilities: see dev/vulncheck)
 .PHONY: dev/audit
 dev/audit:
 	go mod tidy -diff
@@ -110,12 +111,19 @@ dev/audit:
 	go vet -tags=integration,e2e ./...
 	go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 -tags=integration,e2e ./...
 	go test -vet=off -count=1 ./...
-	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
 ## dev/mock: regenerate the gomock Store in internal/mock (mockgen is pinned, nothing to install)
 .PHONY: dev/mock
 dev/mock:
 	go run go.uber.org/mock/mockgen@$(MOCKGEN_VERSION) -destination=internal/mock/store.go -package=mock github.com/codercollo/zemi-fleet/internal/repository Store
+
+## dev/vulncheck: known vulnerabilities in the dependencies we call and in the Go toolchain in use
+# CI ENFORCES this check (a blocking step in .github/workflows/test.yml, on the newest Go 1.27 patch). Here it only
+# WARNS (exit 0) when every finding is in the Go standard library and is fixed by a newer Go patch release, because
+# fixing that means installing a newer Go. A finding in a module we depend on still fails: upgrade the module.
+.PHONY: dev/vulncheck
+dev/vulncheck:
+	@sh scripts/vulncheck.sh $(GOVULNCHECK_VERSION)
 
 ## dev/test: run all unit tests
 .PHONY: dev/test
@@ -207,10 +215,10 @@ staging/migrate:
 staging/psql:
 	$(STAGING_COMPOSE) exec postgres psql -U $(or $(DB_USER),zemi) -d $(or $(DB_NAME),zemi_fleet)
 
-## staging/seed: reload the seed data into the staging Postgres container (TRUNCATES first)
+## staging/seed: reload the seed data using the compose `seed` service (TRUNCATES first)
 .PHONY: staging/seed
 staging/seed: confirm
-	$(STAGING_COMPOSE) exec -T postgres psql -U $(or $(DB_USER),zemi) -d $(or $(DB_NAME),zemi_fleet) -v ON_ERROR_STOP=1 < db/seed/seed.sql
+	$(STAGING_COMPOSE) run --rm seed
 
 ## staging/down: stop staging containers (data is kept)
 .PHONY: staging/down

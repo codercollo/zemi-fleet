@@ -2,21 +2,57 @@
 
 REST API for order batching, proximity (60° cone) matching and rider preference matching.
 
+## Quick start (Docker: no Go, make or PostgreSQL needed)
+
+```bash
+docker compose --profile demo up --build
+```
+
+This builds the API, starts PostgreSQL, applies the migrations, loads the demo data (6 Nairobi vendors, 10 riders with
+preferences, 40 pending orders in four pickup clusters) and serves the API on <http://localhost:8080/api/v2>. In a second terminal:
+
+```bash
+curl -s localhost:8080/api/v2/healthz
+curl -s localhost:8080/api/v2/riders/rider_001            # a seeded rider
+curl -s -X POST localhost:8080/api/v2/orders/batch -d '{"rider_id":"rider_001","rider_location":{"latitude":-1.2650,"longitude":36.8038},"max_orders":5,"radius_km":2}'
+```
+
+**Seeded riders' locations go stale.** The demo data stamps each rider's last location a few minutes before the moment it
+was loaded, and `match-riders` only trusts a location for `RIDER_LOCATION_STALE_AFTER` (30 minutes). After that every rider's
+`distance_to_pickup_km` is `null` and their proximity score is 0. Send a location ping first (see "Try it" below):
+
+```bash
+curl -s -X PATCH localhost:8080/api/v2/riders/rider_002/location -d '{"latitude":-1.2890,"longitude":36.7900}'
+```
+
+`docker compose down -v` stops everything and deletes the database. Plain `docker compose up --build` (no `--profile demo`)
+starts the same stack with an empty database. PostgreSQL is not published on your machine's network, so it cannot clash with
+one you already run; use `make staging/psql` (or `docker compose exec postgres psql -U zemi zemi_fleet`) to look inside.
+
+A plain Docker build labels the binary `"version":"docker"` in `/healthz`; `make staging/up` and the CI build stamp the git version.
+
+## Prerequisites (local development)
+
+- **Go 1.26+** to build locally (`go.mod` says 1.26.0). CI and the Docker image build with the **latest Go 1.27 patch**, so the shipped binary always has the newest standard-library fixes.
+- PostgreSQL, `make` and the [`migrate`](https://github.com/golang-migrate/migrate) CLI. Docker Desktop is only needed for the staging targets and the Quick start.
+
 ## Stack
-- Go 1.25, Gin
+- Go 1.26+, Gin
 - PostgreSQL, pgx/v5, sqlc, golang-migrate, Viper
 - testify, go.uber.org/mock, faker
 
 ## Local setup (no Docker)
 1. Create the database and role in your local PostgreSQL (`zemi_fleet`, owned by `zemi`).
 2. `cp .env.example app.env` and set `DATABASE_URL`.
-3. Install Go 1.25+, `make` and the `migrate` CLI.
+3. Install the prerequisites above.
 4. `make dev/db/migrations/up` (re-run it after pulling: `000002_idempotency` adds a table)
 5. `make dev/db/seed` (optional: Nairobi sample data; truncates first, safe to re-run)
 6. `make dev/run`
 7. Check `http://localhost:4000/api/v2/healthz`
 
-`make dev/sqlc` regenerates the sqlc code and `make dev/mock` regenerates the gomock `Store` (run both after changing `db/query` or the `Store` interface). On staging, `make staging/seed` loads the same data into the Postgres container.
+`make dev/sqlc` regenerates the sqlc code and `make dev/mock` regenerates the gomock `Store` (run both after changing `db/query` or the `Store` interface). On staging, `make staging/seed` loads the same data through the compose `seed` service.
+
+`make dev/vulncheck` runs `govulncheck`. On your machine it only warns when every finding is in the Go standard library and is fixed by a newer Go patch; CI enforces it on the newest patch.
 
 ## Tests
 
@@ -25,7 +61,8 @@ make dev/test              # unit tests: pure packages, services and handlers wi
 make dev/test/integration  # real PostgreSQL: the Store, SQL, transactions, time handling
 make dev/test/e2e          # the whole API over HTTP on a real database, 5 scenarios + SQL invariants
 make dev/test/all          # all three
-make dev/audit             # formatting, vet, staticcheck (including the tagged tests), unit tests and govulncheck
+make dev/audit             # formatting, vet, staticcheck (including the tagged tests) and unit tests
+make dev/vulncheck         # govulncheck: dependencies and the Go toolchain (warns only, locally, for stdlib findings; CI enforces)
 ```
 
 Integration and e2e tests use **`TEST_DATABASE_URL`**, a separate database (`zemi_fleet_test`) that they truncate
@@ -56,6 +93,8 @@ All under `/api/v2`. Money is KES in JSON (cents in the database).
 **Retries.** `POST /orders` and `POST /orders/batch` accept an `Idempotency-Key` header (1 to 64 visible ASCII characters): a retry with the same key and body replays the first response (`Idempotent-Replay: true`) instead of creating a second order or batch; the same key with a different body is `422`. See "Idempotency" in [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md).
 
 **Limits.** Every ID must match its format (`rider_...`, `ord_...`, `batch_...`, `ven_...`, `area_...`), money is KES with at most 2 decimals and at most `ORDER_MAX_VALUE_KES` / `ORDER_MAX_DELIVERY_FEE_KES` (10,000,000), and the "Security" section of the documentation maps all of this to CWE/OWASP and lists the known limitation (a shared API key can act as any rider).
+
+**Operations.** Every response carries an `X-Request-ID` (your own is kept if it is 1 to 64 letters, digits, `.`, `_` or `-`; otherwise a fresh one is generated), `X-Content-Type-Options: nosniff` and `Cache-Control: no-store`, and no `Server` header. Each client IP is limited to `LIMITER_RPS` requests per second with a burst of `LIMITER_BURST` (defaults 10 and 20): over it you get `429` with `Retry-After` (`/healthz` is exempt). Behind a reverse proxy, list its address in `TRUSTED_PROXIES` or every client will look like the proxy. `SIGINT`/`SIGTERM` stops the server gracefully (`SHUTDOWN_TIMEOUT`, 30s). See "Logging, rate limiting and shutdown" in [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md).
 
 **Time.** Everything is UTC: the database session, stored values and JSON (`"created_at": "2026-10-13T09:30:15Z"`). `APP_TIMEZONE` (default `Africa/Nairobi`) only names the business zone for presentation and day boundaries. The location PATCH stores an omitted `bearing_degrees` / `speed_kmh` as `null` (unknown) because they describe that one reading.
 

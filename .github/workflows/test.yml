@@ -27,10 +27,11 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
-          cache: true
-          # Newest patch release of that Go line: govulncheck also reports vulnerabilities in the standard library.
+          # Always the newest Go 1.27 patch (go.mod only states the minimum, 1.26.0): govulncheck also reports
+          # vulnerabilities in the standard library, and the shipped binary is built with this same toolchain.
+          go-version: '1.27.x'
           check-latest: true
+          cache: true
 
       - name: Tidy check
         run: go mod tidy -diff
@@ -63,8 +64,9 @@ jobs:
       - name: Coverage summary
         run: go tool cover -func=coverage.out | tail -1
 
-      # Known vulnerabilities (OWASP A06) in the dependencies we call and in the Go toolchain. Version pinned.
-      - name: govulncheck
+      # Known vulnerabilities (OWASP A06) in the dependencies we call and in the Go toolchain: BLOCKING here.
+      # (`make dev/vulncheck` only warns on a developer machine whose Go is a patch behind.) Version pinned.
+      - name: govulncheck (blocking)
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
   migrations:
@@ -125,7 +127,8 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: '1.27.x'
+          check-latest: true
           cache: true
 
       - name: Migrate the test database

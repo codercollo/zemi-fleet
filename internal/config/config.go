@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net"
 	"os"
 	"time"
 
@@ -45,6 +46,11 @@ type Config struct {
 	IdempotencyTTL time.Duration `mapstructure:"IDEMPOTENCY_TTL"`
 	// IdempotencyProcessingTimeout is how long a claimed key may stay unfinished before a retry may take it over.
 	IdempotencyProcessingTimeout time.Duration `mapstructure:"IDEMPOTENCY_PROCESSING_TIMEOUT"`
+
+	Limiter LimiterConfig `mapstructure:",squash"`
+
+	// ShutdownTimeout is how long SIGINT/SIGTERM waits for in-flight requests to finish before the server gives up.
+	ShutdownTimeout time.Duration `mapstructure:"SHUTDOWN_TIMEOUT"`
 
 	Cone  ConeConfig  `mapstructure:",squash"`
 	Batch BatchConfig `mapstructure:",squash"`
@@ -125,6 +131,25 @@ const (
 	maxConeMaxResults = 1000
 )
 
+// LimiterConfig holds the per-client-IP rate limiter settings (Let's Go Further ch. 11).
+type LimiterConfig struct {
+	// Enabled switches the limiter on. When false no request is ever limited.
+	Enabled bool `mapstructure:"LIMITER_ENABLED"`
+	// RPS is the sustained requests per second allowed per client IP.
+	RPS float64 `mapstructure:"LIMITER_RPS"`
+	// Burst is how many requests one IP may make at once before the sustained rate applies.
+	Burst int `mapstructure:"LIMITER_BURST"`
+	// TrustedProxies lists the IPs or CIDRs of reverse proxies whose X-Forwarded-For header is believed.
+	// Empty (the default) trusts none, so the client IP is always the TCP peer and cannot be spoofed.
+	TrustedProxies []string `mapstructure:"TRUSTED_PROXIES"`
+}
+
+// Limits for validating the limiter settings.
+const (
+	maxLimiterRPS   = 100_000.0
+	maxLimiterBurst = 1_000_000
+)
+
 // MaxPayoutBPS is 100% in basis points.
 const MaxPayoutBPS = 10000
 
@@ -150,6 +175,11 @@ var defaults = map[string]any{
 	"DB_MAX_CONN_IDLE_TIME": "15m",
 	"DB_QUERY_TIMEOUT":      "3s",
 	"RIDER_PAYOUT_BPS":      9000,
+	"LIMITER_ENABLED":       true,
+	"LIMITER_RPS":           10,
+	"LIMITER_BURST":         20,
+	"TRUSTED_PROXIES":       "",
+	"SHUTDOWN_TIMEOUT":      "30s",
 	"CONE_RADIUS_KM":        1,
 	"CONE_HALF_ANGLE_DEG":   30,
 	"CONE_MIN_SPEED_KMH":    3,
@@ -245,6 +275,10 @@ func (c Config) validate() error {
 	if c.DB.QueryTimeout <= 0 {
 		errs = append(errs, fmt.Errorf("DB_QUERY_TIMEOUT must be greater than zero (got %s)", c.DB.QueryTimeout))
 	}
+	errs = append(errs, c.Limiter.validate()...)
+	if c.ShutdownTimeout <= 0 {
+		errs = append(errs, fmt.Errorf("SHUTDOWN_TIMEOUT must be greater than zero (got %s)", c.ShutdownTimeout))
+	}
 	errs = append(errs, c.Cone.validate()...)
 	errs = append(errs, c.Batch.validate()...)
 	errs = append(errs, c.Match.validate()...)
@@ -331,6 +365,25 @@ func (m MatchConfig) validate() []error {
 	}
 	if sum := m.WeightCategory + m.WeightArea + m.WeightProximity + m.WeightAcceptance; !negative && math.Abs(sum-1) > weightSumTolerance {
 		errs = append(errs, fmt.Errorf("the MATCH_WEIGHT_* values must sum to 1.0 (got %v)", sum))
+	}
+	return errs
+}
+
+func (l LimiterConfig) validate() []error {
+	var errs []error
+	if l.RPS <= 0 || l.RPS > maxLimiterRPS {
+		errs = append(errs, fmt.Errorf("LIMITER_RPS must be greater than 0 and at most %v (got %v)", maxLimiterRPS, l.RPS))
+	}
+	if l.Burst < 1 || l.Burst > maxLimiterBurst {
+		errs = append(errs, fmt.Errorf("LIMITER_BURST must be between 1 and %d (got %d)", maxLimiterBurst, l.Burst))
+	}
+	for _, p := range l.TrustedProxies {
+		if _, _, err := net.ParseCIDR(p); err == nil {
+			continue
+		}
+		if net.ParseIP(p) == nil {
+			errs = append(errs, fmt.Errorf("TRUSTED_PROXIES entry %q is not an IP address or a CIDR range", p))
+		}
 	}
 	return errs
 }

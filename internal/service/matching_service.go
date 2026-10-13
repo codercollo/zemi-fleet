@@ -77,7 +77,7 @@ func (s *MatchingService) MatchOrders(ctx context.Context, in MatchOrdersInput) 
 	}
 
 	if in.ReportedOrdersCount != int(rider.CurrentOrdersCount) {
-		s.logger.Warn("rider reported a different order count than the server holds; using the server's",
+		s.logger.WarnContext(ctx, "rider reported a different order count than the server holds; using the server's",
 			"rider_id", rider.ID, "reported", in.ReportedOrdersCount, "server", rider.CurrentOrdersCount)
 	}
 

@@ -3,16 +3,24 @@ package api
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/codercollo/zemi-fleet/internal/domain"
+	"github.com/codercollo/zemi-fleet/internal/logging"
 )
 
-// logError logs the failure once, at the edge, with enough request context to trace it.
+// logError logs the failure once, at the edge. The message is fixed text; the error, which may contain anything
+// (a driver message, a value the client sent), goes into an attribute, where the handler encodes it (CWE-117). The
+// request ID is added by the logger's context handler. Phone numbers are masked first.
 func (s *Server) logError(c *gin.Context, err error) {
-	s.logger.Error(err.Error(), "method", c.Request.Method, "uri", c.Request.URL.RequestURI())
+	s.logger.LogAttrs(c.Request.Context(), slog.LevelError, "request failed",
+		slog.String("error", logging.ScrubPhones(err.Error())),
+		slog.String("method", c.Request.Method),
+		slog.String("route", routeOf(c)),
+	)
 }
 
 // errorResponse is the single place error JSON is written.

@@ -1,6 +1,8 @@
 package api
 
 import (
+	"errors"
+	"log/slog"
 	"math"
 	"net/http"
 	"strconv"
@@ -153,6 +155,19 @@ type acceptedBatchDTO struct {
 	ExpiresAt              time.Time       `json:"expires_at"`
 }
 
+// auditAcceptFailure records the two accept outcomes worth an audit line: losing the race (409) and being refused
+// for capacity (422). Other failures are logged by the normal error path.
+func (s *Server) auditAcceptFailure(c *gin.Context, batchID, riderID string, err error) {
+	switch {
+	case errors.Is(err, domain.ErrBatchTaken):
+		s.logger.InfoContext(c.Request.Context(), "batch accept conflict",
+			slog.String("batch_id", batchID), slog.String("rider_id", riderID))
+	case errors.Is(err, domain.ErrRiderAtCapacity):
+		s.logger.InfoContext(c.Request.Context(), "batch accept rejected, rider at capacity",
+			slog.String("batch_id", batchID), slog.String("rider_id", riderID))
+	}
+}
+
 // acceptBatchHandler handles POST /api/v2/batches/:id/accept.
 func (s *Server) acceptBatchHandler(c *gin.Context) {
 	id, ok := s.pathID(c, batchID)
@@ -175,9 +190,13 @@ func (s *Server) acceptBatchHandler(c *gin.Context) {
 
 	batch, err := s.batches.Accept(c.Request.Context(), id, req.RiderID)
 	if err != nil {
+		s.auditAcceptFailure(c, id, req.RiderID, err)
 		s.handleServiceError(c, err)
 		return
 	}
+	// Audit trail: who took which batch. Fixed message, values as attributes.
+	s.logger.InfoContext(c.Request.Context(), "batch accepted",
+		slog.String("batch_id", batch.ID), slog.String("rider_id", req.RiderID), slog.Int("orders", len(batch.Orders)))
 
 	// The same shape as the offer, minus the rider-specific distance, plus who holds it and since when.
 	base := newBatchDTO(service.BatchOffer{Batch: batch})

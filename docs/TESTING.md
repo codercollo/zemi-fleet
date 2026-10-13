@@ -46,15 +46,19 @@ CREATE DATABASE zemi_fleet_test OWNER zemi;
   7. open/expired batches have no rider, accepted ones have a rider and a time, and no idempotency key is left claimed but unfinished;
   8. every timestamp in every captured JSON response is RFC 3339 in UTC (ends in `Z`).
 
-The seven tests (five scenarios plus two for retries): **order lifecycle** (create, match-riders, match-orders, batch, list, accept, lose the race), **capacity across features** (3/5 then 5/5: batches shrink, match-orders, batch, match-riders and accept all agree), **expiry and release** (time passes, orders come back, the old batch cannot be accepted), **concurrent load** (five riders batch and race to accept every visible batch), **location freshness** (a ping makes the distance known; a stale ping makes it null), **idempotent retries** (a retried `POST /orders` creates exactly one order, however it arrives: sequentially, ten at once, after a failure, after the TTL), and **idempotent batch request**.
+The eight tests (five scenarios, two for retries, one for the middleware chain): **order lifecycle** (create, match-riders, match-orders, batch, list, accept, lose the race), **capacity across features** (3/5 then 5/5: batches shrink, match-orders, batch, match-riders and accept all agree), **expiry and release** (time passes, orders come back, the old batch cannot be accepted), **concurrent load** (five riders batch and race to accept every visible batch), **location freshness** (a ping makes the distance known; a stale ping makes it null), **idempotent retries** (a retried `POST /orders` creates exactly one order, however it arrives: sequentially, ten at once, after a failure, after the TTL), **idempotent batch request**, and **rate limit, headers and request ID** (a burst is served, the next request is a 429 whatever `X-Forwarded-For` claims, `/healthz` is exempt, every response carries the security headers). The scenarios switch the limiter off (`LIMITER_ENABLED=false`) because they fire many requests from one address; the limiter has its own tests.
 
 ## Timestamps and time in tests
 
 Only `internal/clock` reads the system clock (`TestNoTimeNowOutsideClockPackage` enforces it). Service, handler and e2e tests inject a `clock.Test`, so "ten minutes later" is `clk.Advance(...)`, never a sleep.
 
+## Logging, middleware and shutdown tests
+
+`internal/api/middleware_test.go`, `ratelimit_test.go` and `audit_log_test.go` run the REAL middleware chain (`s.router(extra...)` adds test-only routes behind it, for example one that panics) with a `clock.Test`, so a "250 ms" request, a token refill and the 3-minute idle cleanup are exact and nothing sleeps. They prove: one access line per request with the route template and no raw path; request-ID acceptance and replacement; hostile values never reach a log message (CWE-117) or forge a second line; phone numbers are masked; exactly one panic recovery with `Connection: close`; the security headers on 200, 404, 405, 429 and 500; per-IP buckets, `Retry-After`, `/healthz` exemption and the spoofed `X-Forwarded-For` being ignored without trusted proxies. The shutdown tests start a real listener: an in-flight slow request finishes while new connections are refused, `Serve` gives up at `SHUTDOWN_TIMEOUT`, and the limiter's background task stops.
+
 ## Static checks
 
-`make dev/audit` runs `go mod tidy -diff`, `go mod verify`, gofmt, `go vet`, staticcheck, the tests, and `govulncheck` (pinned) for known vulnerabilities in dependencies and in the Go toolchain. It also vets and staticchecks the files behind the `integration` and `e2e` build tags, which a plain `go vet ./...` never looks at.
+`make dev/audit` runs `go mod tidy -diff`, `go mod verify`, gofmt, `go vet`, staticcheck and the tests. `make dev/vulncheck` runs `govulncheck` (pinned): locally it only warns when every finding is in the Go standard library, because the fix is a newer Go; CI runs it as a blocking step on the newest Go 1.27 patch. It also vets and staticchecks the files behind the `integration` and `e2e` build tags, which a plain `go vet ./...` never looks at.
 
 ## Known gaps
 
@@ -63,7 +67,8 @@ Only `internal/clock` reads the system clock (`TestNoTimeNowOutsideClockPackage`
 - **No fault injection.** Nothing kills the database mid-request, drops connections, or fills the pool; only the query timeout path is exercised (a real `pg_sleep`).
 - **No load or performance tests.** Matching and batching load all eligible riders/orders in memory; their behaviour at tens of thousands of rows is untested.
 - **No black-box contract tests yet.** The OpenAPI spec and Postman collection arrive in Phase 12 and are not yet checked against the handlers.
-- **govulncheck depends on the installed Go.** A local toolchain older than the newest patch of its line fails the audit on standard-library findings; CI installs the latest patch (`check-latest`).
+- **govulncheck depends on the installed Go.** Locally a toolchain older than the newest patch only warns (`make dev/vulncheck`); CI installs the newest 1.27 patch and enforces it.
+- **Signals.** The graceful-shutdown test triggers shutdown by cancelling a context, not by sending SIGTERM (Windows has no SIGTERM); the signal-to-context hop in `main` is checked by hand (see the Phase 9 verification).
 - **Not yet covered:** request logging, rate limiting and graceful shutdown (Phase 9), API-key authentication (Phase 10), CORS and metrics (Phase 11).
 - **End to end does not cover every endpoint.** `PUT /riders/:id/preferences`, `PATCH /riders/:id/availability` and `GET /orders/:id` are covered by handler and integration tests, not by an e2e scenario.
 - **The seeded `now()` timestamps** (`db/seed/seed.sql`) are relative to real time, so tests that load the seed and depend on location freshness must run within `RIDER_LOCATION_STALE_AFTER` of loading it. The scenarios that depend on freshness use the test clock and fixtures instead.

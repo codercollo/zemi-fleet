@@ -54,13 +54,19 @@ type env struct {
 
 // newEnv builds the real application on the test database and registers assertInvariants to run when the
 // scenario ends.
-func newEnv(t *testing.T) *env {
+// settings are extra environment variables as name, value pairs (the scenarios that exercise the rate limiter use them).
+func newEnv(t *testing.T, settings ...string) *env {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
 	// Real configuration loading: environment over defaults, with DATABASE_URL pointed at the TEST database
 	// (make exports the dev DATABASE_URL, which we override here so the app can never see it).
 	t.Setenv("DATABASE_URL", testdb.URL(t))
+	// Scenarios fire many requests from one address: the limiter is off unless a scenario turns it on.
+	t.Setenv("LIMITER_ENABLED", "false")
+	for i := 0; i+1 < len(settings); i += 2 {
+		t.Setenv(settings[i], settings[i+1])
+	}
 	cfg, err := config.Load("")
 	require.NoError(t, err)
 

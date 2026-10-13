@@ -566,6 +566,8 @@ How the code maps to the usual weakness lists. "Proof" is the test or check that
 | **A06** vulnerable and outdated components | **`govulncheck`** (pinned, `v1.9.0`) runs in `make dev/audit` and in CI, and covers the dependencies we actually call *and* the Go standard library of the toolchain in use. Its first run found real issues in `golang.org/x/text`, `golang.org/x/net` and `github.com/quic-go/quic-go` (all pulled in through Gin); they were upgraded | `make dev/audit`; CI `audit` job (which installs the newest patch of the Go line) |
 | **CWE-400** resource exhaustion (OWASP A04) | 1 MiB body cap; per-statement query timeout (`DB_QUERY_TIMEOUT`); `page_size` at most 50; bounded list inputs and batch sizes; HTTP server read/write timeouts. Rate limiting arrives in Phase 9 | `timeout_test.go`, `TestIntegration_SlowQueryIsCancelled` |
 
+**Production binaries are built in CI and Docker with the latest Go 1.27 patch; govulncheck is enforced there.** (`go.mod` states only the minimum, 1.26.0; a developer machine on an older patch gets a warning from `make dev/vulncheck`, CI does not.)
+
 ### Known limitation: a shared API key lets a client act as any rider
 
 Phase 10 authenticates the **client** with one shared API key. The `rider_id` in a request body or path is trusted as
@@ -585,3 +587,89 @@ could act for anyone). Until then, treat the API key as a secret that grants the
 - Replayed responses are stored verbatim, including order IDs and earnings. The table inherits the database's access controls.
 - `govulncheck` needs network access and the vulnerability database; a machine whose Go toolchain is older than the newest
   patch release of its line will (correctly) fail the audit until Go is updated.
+
+---
+
+## Logging, rate limiting and shutdown
+
+### Middleware order
+
+```
+request -> recoverPanic -> requestID -> securityHeaders -> accessLog -> rateLimit -> (auth: Phase 10) -> handler
+                                                                                          (idempotency: POST /orders, /orders/batch only)
+```
+
+`recoverPanic` is outermost so a panic anywhere below becomes a logged 500. `requestID` comes next so every later log line
+can carry the ID. `securityHeaders` runs before anything can answer, so even a 429 or a 404 has the headers. `accessLog` wraps
+the limiter and the handlers, so it records the final status of every request, rate-limited and panicked ones included.
+`rateLimit` runs before any work is done for the client. The router is built with `gin.New()`, never `gin.Default()`, so there
+is exactly one logger and one recovery.
+
+### Structured logging
+
+- **Request ID.** An incoming `X-Request-ID` is kept only if it is 1 to 64 characters from `A-Z a-z 0-9 . _ -`; anything else is
+  replaced by a random 32-character hex ID (the bad value is never echoed). The ID is returned in the response header and carried in
+  the request context; a context-aware slog handler adds `request_id` to every record logged with that context.
+- **Access log**, one `INFO` line per request, message `request`: `method`, `route` (the template such as `/api/v2/riders/:id`,
+  or `unmatched`; never the raw path, which carries IDs), `status`, `duration_ms` (from the injected clock), `bytes`, `client_ip`,
+  `request_id`. Example (text handler in development):
+  `level=INFO msg=request method=GET route=/api/v2/riders/:id status=200 duration_ms=2 bytes=412 client_ip=127.0.0.1 request_id=...`
+- **Errors** are logged once, at the edge (`request failed`, with the error, method, route and request ID).
+- **Log injection (CWE-117).** A log *message* is always a fixed string in the code. Everything a client controls (headers, IDs,
+  paths, error text) goes into an attribute, and the JSON/text handler escapes quotes, newlines and control characters inside it, so a
+  value cannot start a second log line. `TestHostileValuesCannotForgeALogLine` and `TestLogging_UserInputIsNeverInTheMessage` check this.
+- **Phone numbers** are masked in logs: `+254712345678` becomes `+2547****5678` (`logging.MaskPhone`), and error text is scrubbed
+  of any phone number before it is logged (`logging.ScrubPhones`), because a database error can quote one.
+- **Audit-level `INFO` lines** (fixed message, IDs as attributes): `batch accepted` (`batch_id`, `rider_id`, `orders`),
+  `batch accept conflict` (the 409), `batch accept rejected, rider at capacity` (the 422).
+
+### Panic recovery
+
+A panic in any handler or middleware is recovered by `recoverPanic`: it sets `Connection: close` (the connection may be in a bad
+state), logs `panic recovered` with the panic value, the stack and the request ID, and answers the generic 500 JSON. The client never
+sees the panic value. Background goroutines are started with `Server.background`, which recovers and logs panics too.
+
+### Rate limiting
+
+A per-client-IP token bucket (`golang.org/x/time/rate`): each IP's bucket holds `LIMITER_BURST` tokens and refills at `LIMITER_RPS`
+per second. A request over the limit gets `429` `{"error":"rate limit exceeded"}` with `Retry-After` (whole seconds, rounded up, at
+least 1); a rejected request does not use a token. `/healthz` is exempt. Idle clients (not seen for 3 minutes) are removed by a
+background task, using the injected clock; it stops at shutdown.
+
+**Client IP and spoofing.** The limiter uses `c.ClientIP()`. With `TRUSTED_PROXIES` empty (the default) that is always the TCP peer, so a
+client that sends `X-Forwarded-For` or `X-Real-IP` cannot choose its own address, and cannot escape or share a bucket. Behind a reverse
+proxy, list the proxy's IP or CIDR in `TRUSTED_PROXIES`; then the header is believed *only* when the TCP peer is one of them.
+Forgetting to do so makes all traffic look like one client (the proxy), which is limited as one; setting it too wide lets clients lie.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `LIMITER_ENABLED` | true | Switch the limiter off entirely |
+| `LIMITER_RPS` | 10 | Sustained requests per second per IP |
+| `LIMITER_BURST` | 20 | Requests one IP may make at once |
+| `TRUSTED_PROXIES` | empty | Comma-separated IPs/CIDRs whose `X-Forwarded-For` is believed; empty trusts none |
+| `SHUTDOWN_TIMEOUT` | 30s | How long shutdown waits for in-flight requests |
+
+### Security headers
+
+Every response, including errors, 404/405 and 429, carries `X-Content-Type-Options: nosniff` and `Cache-Control: no-store`, and no
+`Server` header.
+
+### Graceful shutdown
+
+On `SIGINT` or `SIGTERM` the server logs `shutting down server` (with the signal), then:
+1. stops accepting new connections and waits up to `SHUTDOWN_TIMEOUT` for requests already in flight to finish;
+2. stops the background tasks (the limiter cleanup) and waits for them;
+3. closes the database pool;
+4. logs `stopped server`.
+If in-flight requests outlast the timeout the server gives up and exits with an error. Windows has only the interrupt (Ctrl+C), not
+`SIGTERM`; Docker and systemd send `SIGTERM` to the process.
+
+### Decisions beyond the brief
+
+- The access line is `INFO` for every status; `request failed` and `panic recovered` are the `ERROR` lines. A 429 or 404 is not an error.
+- A request that panics is access-logged as status 500 (the line is written from a deferred call because the recovery sits outside it).
+- Rate limiter buckets are in memory, per process: with several API instances each has its own limits (a shared store, such as Redis,
+  would be needed to limit across instances).
+- Limiter state is keyed by IP only. Clients behind one NAT share a bucket.
+- The idle-client timeout (3 minutes) and cleanup interval (1 minute) are constants; the rest is configuration.
+- Because requests are limited per IP and before authentication, an unauthenticated flood is limited too (auth arrives after the limiter in Phase 10).

@@ -1,11 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -22,6 +22,7 @@ import (
 	"github.com/codercollo/zemi-fleet/internal/clock"
 	"github.com/codercollo/zemi-fleet/internal/config"
 	"github.com/codercollo/zemi-fleet/internal/domain"
+	"github.com/codercollo/zemi-fleet/internal/logging"
 	"github.com/codercollo/zemi-fleet/internal/mock"
 	"github.com/codercollo/zemi-fleet/internal/repository/sqlc"
 	"github.com/codercollo/zemi-fleet/internal/service"
@@ -62,9 +63,17 @@ func testConfig() config.Config {
 // newStoreHandler builds the real router and services on top of a gomock Store.
 func newStoreHandler(t *testing.T) (http.Handler, *mock.MockStore) {
 	t.Helper()
+	h, store, _ := newStoreHandlerWithLogs(t)
+	return h, store
+}
+
+// newStoreHandlerWithLogs is newStoreHandler plus the JSON log output the server wrote, for tests of what is logged.
+func newStoreHandlerWithLogs(t *testing.T) (http.Handler, *mock.MockStore, *bytes.Buffer) {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	store := mock.NewMockStore(gomock.NewController(t))
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logs := &bytes.Buffer{}
+	logger := slog.New(logging.NewContextHandler(slog.NewJSONHandler(logs, nil)))
 	clk := clock.NewTest(testNow)
 	srv := NewServer(testConfig(), logger, fakeDB{}, Services{
 		Orders:      service.NewOrderService(store, clk, testPayoutBPS, testMinTripM),
@@ -74,7 +83,7 @@ func newStoreHandler(t *testing.T) (http.Handler, *mock.MockStore) {
 		Preferences: service.NewPreferenceService(store, clk, testMatchCfg, testMinTripM),
 		Idempotency: service.NewIdempotencyService(store, clk, testIdempotencyTTL, testIdempotencyProcessing),
 	}, "test")
-	return srv.Routes(), store
+	return srv.Routes(), store, logs
 }
 
 // send performs a request; headers are name, value pairs.

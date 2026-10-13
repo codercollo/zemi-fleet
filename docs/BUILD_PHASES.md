@@ -39,7 +39,7 @@ The algorithm packages (`geo`, `batching`, `matching`) are pure Go and are calle
 | 7 | Batching: clustering, sequencing, scoring, batch endpoints, exclusive accept | 8, 9 | ✅ done |
 | 8 | Preference matching: `POST /orders/match-riders` | 9 | ✅ done |
 | 8.5 | Integration hardening: separate test database, e2e scenarios with SQL invariants, CI job, dead-file audit | — | ✅ done |
-| 9 | Structured logging, panic recovery, rate limiting, graceful shutdown | 10, 11, 12 | |
+| 9 | Structured logging, panic recovery, rate limiting, graceful shutdown | 10, 11, 12 | ✅ done |
 | 10 | Authentication: API key (+ PASETO stretch) | 16, 17 (13–15 skipped) | |
 | 11 | CORS and metrics | 18, 19 | |
 | 12 | Deliverables: OpenAPI, Postman, DOCUMENTATION.md, README, final audit | 20, 21 | |
@@ -75,7 +75,7 @@ Target pace (deadline Fri 16 Oct, 22:00): Mon 0–2 · Tue 3–5 · Wed 6–7 ·
 - **Go 1.25:** `go.mod` says `go 1.25.0` because pgx/v5 and gin both require ≥ 1.25. The Dockerfile builder image (`golang:1.25-alpine`) and CI (`go-version-file: go.mod`) follow it.
 - **staticcheck is pinned to `v0.8.2`** in the Makefile and `test.yml` (the newest release; it runs on Go 1.27 locally and 1.25 in CI).
 - **Compose healthcheck:** Postgres uses `pg_isready -h 127.0.0.1` (TCP). During first-run init Postgres listens only on a unix socket, so a socket check reports healthy too early and `migrate` fails with "connection refused".
-- If a port is taken on Docker Desktop, override it: `STAGING_API_PORT` (default 8080) and `STAGING_DB_PORT` (default 5433).
+- If port 8080 is taken on Docker Desktop, override it with `STAGING_API_PORT`. Postgres is not published on the host at all (Phase 9 change), so there is no database port to clash.
 
 **Done when:** `make dev/audit` passes; `make staging/up && make staging/smoke` returns 200; `./bin/api -version` prints the git version.
 
@@ -275,10 +275,18 @@ Target pace (deadline Fri 16 Oct, 22:00): Mon 0–2 · Tue 3–5 · Wed 6–7 ·
 
 ---
 
-## Phase 9 — Logging, rate limiting, graceful shutdown
+## Phase 9 — Logging, rate limiting, graceful shutdown ✅
 **Book:** 10 Structured Logging and Error Handling · 11 Rate Limiting · 12 Graceful Shutdown
 
 **Scope:** request ID + slog access-log middleware, `recoverPanic`, per-IP token bucket (`x/time/rate`, configurable, 429 response), SIGINT/SIGTERM shutdown with a 30-second drain (`SHUTDOWN_TIMEOUT`).
+
+**Notes (as built)**
+- **Toolchain, compose, demo fixes first:** `go.mod` stays `go 1.26.0` with no `toolchain` line; `make dev/vulncheck` replaces govulncheck in `dev/audit` and only warns for stdlib-only findings (CI enforces); CI and deploy use `go-version: '1.27.x'` with `check-latest`; compose no longer publishes Postgres, its credential fallbacks match `.env.example`, and a `seed` service under the `demo` profile loads `db/seed/seed.sql` (`docker compose --profile demo up --build`; `make staging/seed` runs the same service).
+- **Logging:** `internal/logging` (request ID in the context, a context-aware slog handler that stamps `request_id`, `MaskPhone`/`ScrubPhones`); middleware `requestID`, `accessLog` (one line: method, route template, status, duration_ms from the injected clock, bytes, client_ip, request_id), `recoverPanic` (Connection: close, stack, generic 500; panicked requests are access-logged as 500), `securityHeaders`; audit `Info` lines for batch accepted, accept conflict and capacity rejection; messages are fixed strings (CWE-117).
+- **Rate limiting:** per-IP token bucket on `x/time/rate` driven by the injected clock, `LIMITER_ENABLED/RPS/BURST`, `TRUSTED_PROXIES` (empty = trust none, so X-Forwarded-For cannot be spoofed), 429 with `Retry-After`, `/healthz` exempt, idle clients (3 min) removed by a background cleanup.
+- **Graceful shutdown:** `Server.Serve` drains in-flight requests up to `SHUTDOWN_TIMEOUT`, stops background tasks (`s.background` recovers panics), and `main` closes the pool last; logs "shutting down server" (with the signal) then "stopped server".
+- Middleware order is documented in `routes.go`.
+- Decisions the brief did not fix: see "Logging, rate limiting and shutdown" in `docs/DOCUMENTATION.md`.
 
 > **Prompt:** Build Phase 9 from docs/BUILD_PHASES.md (Let's Go Further ch. 10–12): logging middleware with request IDs, panic recovery, per-IP rate limiting with config, and graceful shutdown.
 

@@ -37,7 +37,7 @@ Code quality 30%, algorithm logic 30% (correctness and edge cases: no orders, ri
 ## Stack
 
 Go 1.26 (go.mod says 1.26.0 because the dependencies require it; the Dockerfile builder image is `golang:1.27-alpine`, and `make dev/audit` wants a toolchain that govulncheck considers patched) · **Gin** (its router is a fork of httprouter, so don't add httprouter) · PostgreSQL 16 · **pgx/v5** (pool) · **sqlc** · golang-migrate · **Viper** · log/slog · testify · go.uber.org/mock (mockgen) · go-faker/faker.
-Module: `github.com/itscollinsmaina/zemi-fleet`.
+Module: `github.com/codercollo/zemi-fleet`.
 
 ## How the code is organised
 
@@ -100,7 +100,7 @@ One standard from the database to the API: **UTC everywhere, in code and on the 
 - **Only `internal/clock` reads the system clock.** No other code calls `time.Now()` (enforced by `TestNoTimeNowOutsideClockPackage`); logging and `http.Server` setup need no timestamps from us. Services take a `clock.Clock` through their constructors, wired in `main.go` with `clock.Real{}` (returns `time.Now().UTC()`). Tests use `clock.NewTest(t)` with `Set` / `Advance`. ID generation takes the time as an argument for the same reason.
 - **Business timestamps come from the clock and are passed as query parameters**, not from `now()` in SQL: `orders.created_at`, `riders.location_updated_at`, and later `batches.expires_at` / `accepted_at`. The column `DEFAULT now()` is only a fallback. (`updated_at` is the one exception: the `set_updated_at` trigger owns it.) The seed file uses SQL `now()` because it is not application code.
 - **Normalise to UTC at the edges.** Reading: the repository wraps DBTX so every scanned `time.Time` / `*time.Time` is `.UTC()` (pgx otherwise returns the process's local zone), and the mappers repeat it. Writing: every DTO calls `.UTC()` before encoding, so JSON is RFC 3339 with a `Z` suffix (`2026-10-13T09:30:15Z`).
-- **`APP_TIMEZONE`** (default `Africa/Nairobi`, validated with `time.LoadLocation` at startup; `time/tzdata` is embedded) is the *business* zone for presentation and "today" boundaries. It never changes what is stored or serialised. Use `cfg.Location()` when a local wall-clock day is needed, and convert at the last moment.
+- **`APP_TIMEZONE`** (default `Africa/Nairobi`, validated with `time.LoadLocation` at startup; `time/tzdata` is embedded) is the _business_ zone for presentation and "today" boundaries. It never changes what is stored or serialised. Use `cfg.Location()` when a local wall-clock day is needed, and convert at the last moment.
 - Compare instants with `Equal`/`Before`/`After`, never `==`. Durations (timeouts, TTLs) are plain `time.Duration` from config.
 
 ## Schema (db/migrations/000001_init_schema)
@@ -124,8 +124,10 @@ make dev/test/integration   # migrates TEST_DATABASE_URL, then -tags=integration
 make dev/test/e2e           # migrates TEST_DATABASE_URL, then -tags=e2e: whole-API scenarios + SQL invariants
 make dev/test/all           # unit + integration + e2e
 make dev/db/psql | dev/db/migrations/new name=x | dev/db/migrations/down | dev/db/migrations/version
-make staging/up       # cross-compile bin/linux_amd64/api -> image (target prebuilt) -> compose on :8080 (override with STAGING_API_PORT / STAGING_DB_PORT, e.g. when 8080 or 5433 are taken)
-make staging/smoke | staging/logs | staging/seed | staging/down
+make staging/up       # cross-compile bin/linux_amd64/api -> image (target prebuilt) -> compose on :8080 (override with STAGING_API_PORT if 8080 is taken). Postgres is NOT published on the host.
+docker compose --profile demo up --build   # reviewers: builds in Docker and seeds db/seed/seed.sql through the `seed` service (plain `docker compose up` is unseeded)
+make dev/vulncheck    # govulncheck, pinned; warns (exit 0) for stdlib-only findings locally, CI enforces
+make staging/smoke | staging/logs | staging/seed (compose `seed` service) | staging/down
 make help
 ```
 
@@ -138,16 +140,20 @@ make help
 - Unit tests (no tag): pure packages; services and handlers over a gomock `Store` with `clock.Test`.
 - Integration (`//go:build integration`) and e2e (`//go:build e2e`) tests use **`TEST_DATABASE_URL` only**, a `*_test` database. `internal/testdb` refuses any other name. Each test calls `testdb.Fresh` (or `Open`/`Reset`/`LoadReference`) so it never depends on run order; add riders with `testdb.AddRider`. Never use `DATABASE_URL` in a test.
 - Tagged packages share one database: run them with `-p 1`, never `t.Parallel` across e2e scenarios.
-- e2e scenarios arrange state through the API (fixtures only for reference data and riders) and finish with `assertInvariants` (SQL checks + every timestamp is UTC). Add a scenario only when features must work *together*.
+- e2e scenarios arrange state through the API (fixtures only for reference data and riders) and finish with `assertInvariants` (SQL checks + every timestamp is UTC). Add a scenario only when features must work _together_.
 - The server is built by `internal/app.Build` (used by `cmd/api` and by the e2e tests), so e2e covers the real wiring.
 - `match-orders` expires stale batches before reading candidates, so a timed-out batch's orders are offered again immediately (found by the e2e expiry scenario).
 - Acceptance in `match-riders` is smoothed: `(accepted+1)/(offers+2)` in the score, raw rate in the response.
-- **Security rules (see "Security" in `docs/DOCUMENTATION.md`):** every ID in a path or body is checked with `checkID` / `pathID` against its pattern in `internal/api/ids.go` (a new ID type needs a pattern); money goes through `kesToCents` and `checkAmount` with the configured bound, never `float` arithmetic or `int64(x*100)`; sums of cents use saturating addition; `POST /orders` and `POST /orders/batch` are wrapped by `s.idempotent()`; a new route that creates something should be too. `govulncheck` is part of `make dev/audit` (pinned in the Makefile and `test.yml`); a failing run means upgrade the module or the Go toolchain, not silence it.
+- **Security rules (see "Security" in `docs/DOCUMENTATION.md`):** every ID in a path or body is checked with `checkID` / `pathID` against its pattern in `internal/api/ids.go` (a new ID type needs a pattern); money goes through `kesToCents` and `checkAmount` with the configured bound, never `float` arithmetic or `int64(x*100)`; sums of cents use saturating addition; `POST /orders` and `POST /orders/batch` are wrapped by `s.idempotent()`; a new route that creates something should be too. `govulncheck` is `make dev/vulncheck` (pinned in the Makefile and `test.yml`) and is BLOCKING in CI, which builds with the newest Go 1.27 patch; a finding in a module means upgrade the module, never silence it. Locally a stdlib-only finding is just a warning (install a newer Go).
+- **HTTP middleware order (routes.go):** recoverPanic -> requestID -> securityHeaders -> accessLog -> rateLimit -> (auth, Phase 10) -> handlers; `idempotent()` only on its two POST routes, after all of those. The router is `gin.New()`, never `gin.Default()` (exactly one recovery, one logger). A test route goes behind the real chain with `s.router(extra...)`.
+- **Logging (CWE-117):** a log message is a fixed string; every value (IDs, paths, error text, headers) is an slog attribute. Log with the request's context (`InfoContext(c.Request.Context(), ...)`) and the context handler adds `request_id`; `logError` scrubs phone numbers (`logging.ScrubPhones`). The access log records the route TEMPLATE, never the raw path. Time in the HTTP layer comes from the injected clock.
+- **Client IP:** `c.ClientIP()` only; `TRUSTED_PROXIES` (empty = none) decides whether X-Forwarded-For is believed. Never read the header yourself.
+- **Shutdown:** `Server.Serve(ctx, srv, ln, timeout)` drains in-flight requests, stops background tasks (started with `s.background`, which recovers panics), then `main` closes the pool. Background goroutines must go through `s.background`.
 - Don't leave empty files, empty directories, `.gitkeep`s in populated directories, TODOs without a phase, or commented-out code.
 
 ## Build process (follow it)
 
-The work proceeds **one phase at a time** in `docs/BUILD_PHASES.md`, in Greenlight chapter order. Phases 0 (foundation, ch. 2–5), 1 (tooling, ch. 20–21), 2 (migrations, seed, sqlc config), 3 (domain, repository, first CRUD), 4 (advanced CRUD), 5 (geo + clock) and 6 (proximity matching) are done. **Phase 7 (batching, listing, exclusive accept), Phase 8 (rider preference matching) and Phase 8.5 (integration hardening: test database, e2e scenarios, invariants, dead-file audit) are done. **The next phase is Phase 9** (see `docs/BUILD_PHASES.md`).
+The work proceeds **one phase at a time** in `docs/BUILD_PHASES.md`, in Greenlight chapter order. Phases 0 (foundation, ch. 2–5), 1 (tooling, ch. 20–21), 2 (migrations, seed, sqlc config), 3 (domain, repository, first CRUD), 4 (advanced CRUD), 5 (geo + clock) and 6 (proximity matching) are done. **Phase 7 (batching, listing, exclusive accept), Phase 8 (rider preference matching) and Phase 8.5 (integration hardening: test database, e2e scenarios, invariants, dead-file audit) are done. **The next phase is Phase 9\*\* (see `docs/BUILD_PHASES.md`).
 For each phase:
 
 1. Build only that phase's scope, on top of what already exists. Don't rewrite earlier phases unless they're broken.

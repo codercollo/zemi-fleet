@@ -48,7 +48,9 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # The shipped binary is built with the newest Go 1.27 patch, the same toolchain test.yml vets it with.
+          go-version: '1.27.x'
+          check-latest: true
           cache: true
 
       - name: Version and image name

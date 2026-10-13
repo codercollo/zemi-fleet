@@ -11,13 +11,38 @@ const apiPrefix = "/api/v2"
 
 // Routes builds the router. Gin's router is a fork of httprouter, so the
 // book's httprouter patterns carry over. Let's Go Further ch. 2.5.
-func (s *Server) Routes() http.Handler {
+func (s *Server) Routes() http.Handler { return s.router() }
+
+// router builds the engine. extra lets a test register routes (one that panics, one that is slow) that sit behind
+// the real middleware chain; production passes none.
+//
+// MIDDLEWARE ORDER (outermost first), and why:
+//
+//	recoverPanic     outermost, so a panic in ANY later middleware or handler becomes a logged 500, not a dropped connection
+//	requestID        next, so everything after (logs, errors) can carry the ID
+//	securityHeaders  before anything can answer, so even a 429 or a 404 carries nosniff and no-store
+//	accessLog        wraps the rest, so the line records the final status (rate-limited and panicked requests too)
+//	rateLimit        before any work is done for the client; /healthz is exempt
+//	(auth)           Phase 10: after the limiter, so unauthenticated floods are limited too
+//	handlers         the idempotency middleware sits on its two POST routes only, after everything above
+//
+// The engine comes from gin.New(), never gin.Default(): Default adds Gin's own Logger and Recovery, and we have
+// exactly one of each, ours.
+func (s *Server) router(extra ...func(*gin.Engine)) *gin.Engine {
 	r := gin.New()
+
+	// Trust X-Forwarded-For only from configured proxies. Empty (the default) trusts none, so ClientIP() is the TCP
+	// peer and cannot be forged: no spoofed address, no choosing your own rate-limit bucket.
+	if err := r.SetTrustedProxies(append([]string{}, s.cfg.Limiter.TrustedProxies...)); err != nil {
+		panic(err) // config validation already rejected unparsable entries
+	}
 
 	// Return JSON 405s instead of falling through to 404.
 	r.HandleMethodNotAllowed = true
 	r.NoRoute(s.notFoundResponse)
 	r.NoMethod(s.methodNotAllowedResponse)
+
+	r.Use(s.recoverPanic(), s.requestID(), s.securityHeaders(), s.accessLog(), s.rateLimit())
 
 	v2 := r.Group(apiPrefix)
 	v2.GET("/healthz", s.healthzHandler)
@@ -38,5 +63,8 @@ func (s *Server) Routes() http.Handler {
 	v2.GET("/batches", s.listBatchesHandler)
 	v2.POST("/batches/:id/accept", s.acceptBatchHandler)
 
+	for _, register := range extra {
+		register(r)
+	}
 	return r
 }

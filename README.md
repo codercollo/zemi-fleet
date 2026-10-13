@@ -35,6 +35,8 @@ All under `/api/v2`. Money is KES in JSON (cents in the database).
 | PATCH | `/riders/:id/location` | `latitude`, `longitude`, optional `bearing_degrees`, `speed_kmh`; returns the rider |
 | PATCH | `/riders/:id/availability` | `is_available`; returns the rider |
 
+**Time.** Everything is UTC: the database session, stored values and JSON (`"created_at": "2026-10-13T09:30:15Z"`). `APP_TIMEZONE` (default `Africa/Nairobi`) only names the business zone for presentation and day boundaries. The location PATCH stores an omitted `bearing_degrees` / `speed_kmh` as `null` (unknown) because they describe that one reading.
+
 Errors: `400` malformed JSON or header, `404` unknown ID, `409` edit conflict, `422` validation (per-field messages).
 
 **Optimistic locking.** Riders carry a `version`. Every write bumps it, and a write that loses a race gets `409`. Send `X-Expected-Version: <n>` on the PATCHes and the preferences PUT to be rejected with `409` when your copy is stale. Every statement is cut off after `DB_QUERY_TIMEOUT` (default 3s).

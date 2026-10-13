@@ -24,15 +24,16 @@ const (
 )
 
 // NewOrderID, NewRiderID and NewBatchID return IDs like "ord_01HX9Z3K4M7Q2R8T5V".
-func NewOrderID() string { return NewID(PrefixOrder) }
-func NewRiderID() string { return NewID(PrefixRider) }
-func NewBatchID() string { return NewID(PrefixBatch) }
+func NewOrderID(now time.Time) string { return NewID(PrefixOrder, now) }
+func NewRiderID(now time.Time) string { return NewID(PrefixRider, now) }
+func NewBatchID(now time.Time) string { return NewID(PrefixBatch, now) }
 
 // NewID returns prefix + a time-sortable suffix: IDs created later sort after
 // earlier ones (millisecond resolution), which keeps primary-key inserts mostly
-// append-only and matches the brief's "rider_123" style.
-func NewID(prefix string) string {
-	id, err := newID(prefix, time.Now())
+// append-only and matches the brief's "rider_123" style. The caller passes the time
+// (from the injected clock.Clock) so this package never reads the system clock.
+func NewID(prefix string, now time.Time) string {
+	id, err := newID(prefix, now)
 	if err != nil {
 		// crypto/rand failing means the OS entropy source is broken; nothing sensible can continue.
 		panic(fmt.Errorf("generate id: %w", err))

@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/codercollo/zemi-fleet/internal/clock"
 	"github.com/codercollo/zemi-fleet/internal/config"
 	"github.com/codercollo/zemi-fleet/internal/repository"
 	"github.com/codercollo/zemi-fleet/internal/service"
@@ -47,7 +48,8 @@ func integrationEnv(t *testing.T) (h http.Handler, riderID string, pool *pgxpool
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
 
-	riderID = util.NewRiderID()
+	clk := clock.Real{}
+	riderID = util.NewRiderID(clk.Now())
 	phone := fmt.Sprintf("+254%09d", rand.IntN(1_000_000_000))
 	_, err = pool.Exec(ctx, `INSERT INTO riders (id, full_name, phone, is_available) VALUES ($1, 'Integration Rider', $2, TRUE)`, riderID, phone)
 	require.NoError(t, err)
@@ -59,7 +61,7 @@ func integrationEnv(t *testing.T) (h http.Handler, riderID string, pool *pgxpool
 	store := repository.NewStore(pool, dbCfg.QueryTimeout)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := NewServer(config.Config{Env: config.EnvDevelopment, RiderPayoutBPS: 9000, DB: dbCfg}, logger, pool,
-		service.NewOrderService(store, 9000), service.NewRiderService(store), "integration")
+		service.NewOrderService(store, clk, 9000), service.NewRiderService(store, clk), "integration")
 	return srv.Routes(), riderID, pool
 }
 

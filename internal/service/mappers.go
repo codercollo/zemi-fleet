@@ -1,6 +1,8 @@
 package service
 
 import (
+	"time"
+
 	"github.com/codercollo/zemi-fleet/internal/domain"
 	"github.com/codercollo/zemi-fleet/internal/repository/sqlc"
 )
@@ -24,8 +26,8 @@ func orderFromRow(o sqlc.Order) domain.Order {
 		PlatformFeeCents:   deref(o.PlatformFeeCents),
 		BatchID:            o.BatchID,
 		RiderID:            o.RiderID,
-		CreatedAt:          o.CreatedAt,
-		UpdatedAt:          o.UpdatedAt,
+		CreatedAt:          o.CreatedAt.UTC(),
+		UpdatedAt:          o.UpdatedAt.UTC(),
 		Version:            int(o.Version),
 	}
 }
@@ -38,13 +40,13 @@ func riderFromRow(r sqlc.Rider) domain.Rider {
 		IsAvailable:       r.IsAvailable,
 		MaxCapacity:       int(r.MaxCapacity),
 		CurrentOrders:     int(r.CurrentOrdersCount),
-		LocationUpdatedAt: r.LocationUpdatedAt,
+		LocationUpdatedAt: utcPtr(r.LocationUpdatedAt),
 		OffersCount:       int(r.OffersCount),
 		AcceptedCount:     int(r.AcceptedCount),
 		AcceptanceRate:    deref(r.AcceptanceRate),
 		Version:           int(r.Version),
-		CreatedAt:         r.CreatedAt,
-		UpdatedAt:         r.UpdatedAt,
+		CreatedAt:         r.CreatedAt.UTC(),
+		UpdatedAt:         r.UpdatedAt.UTC(),
 	}
 	// The riders table CHECKs that lat and lng are both set or both NULL.
 	if r.LastLat != nil && r.LastLng != nil {
@@ -67,4 +69,13 @@ func deref[T any](p *T) T {
 		return zero
 	}
 	return *p
+}
+
+// utcPtr normalises an optional timestamp to UTC without mutating the input.
+func utcPtr(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	u := t.UTC()
+	return &u
 }

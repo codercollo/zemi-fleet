@@ -12,7 +12,7 @@ SET last_lat = sqlc.arg(last_lat),
     last_lng = sqlc.arg(last_lng),
     last_bearing_deg = sqlc.arg(last_bearing_deg),
     last_speed_kmh = sqlc.arg(last_speed_kmh),
-    location_updated_at = now(),
+    location_updated_at = sqlc.arg(location_updated_at),
     version = version + 1
 WHERE id = sqlc.arg(id) AND version = sqlc.arg(version)
 RETURNING *;

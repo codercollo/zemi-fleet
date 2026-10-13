@@ -19,9 +19,12 @@ const (
 
 // Config holds every application setting.
 type Config struct {
-	Env  string   `mapstructure:"APP_ENV"`
-	Port int      `mapstructure:"PORT"`
-	DB   DBConfig `mapstructure:",squash"`
+	Env  string `mapstructure:"APP_ENV"`
+	Port int    `mapstructure:"PORT"`
+	// Timezone is the business time zone (IANA name) used for presentation and day boundaries.
+	// Storage, the API and the database session are always UTC.
+	Timezone string   `mapstructure:"APP_TIMEZONE"`
+	DB       DBConfig `mapstructure:",squash"`
 
 	// RiderPayoutBPS is the rider's share of each delivery fee in basis points
 	// (9000 = 90%). It is snapshotted on every order, so changing it never
@@ -47,6 +50,7 @@ type DBConfig struct {
 var defaults = map[string]any{
 	"APP_ENV":               EnvDevelopment,
 	"PORT":                  4000,
+	"APP_TIMEZONE":          "Africa/Nairobi",
 	"DATABASE_URL":          "",
 	"DB_MAX_CONNS":          25,
 	"DB_MIN_CONNS":          2,
@@ -90,6 +94,9 @@ func (c Config) validate() error {
 	default:
 		errs = append(errs, fmt.Errorf("APP_ENV must be development, staging or production (got %q)", c.Env))
 	}
+	if _, err := time.LoadLocation(c.Timezone); err != nil || c.Timezone == "" {
+		errs = append(errs, fmt.Errorf("APP_TIMEZONE must be an IANA time zone such as Africa/Nairobi (got %q)", c.Timezone))
+	}
 	if c.Port < 1 || c.Port > 65535 {
 		errs = append(errs, fmt.Errorf("PORT must be 1-65535 (got %d)", c.Port))
 	}
@@ -106,4 +113,14 @@ func (c Config) validate() error {
 		errs = append(errs, fmt.Errorf("DB_QUERY_TIMEOUT must be greater than zero (got %s)", c.DB.QueryTimeout))
 	}
 	return errors.Join(errs...)
+}
+
+// Location returns the business time zone. Load has already validated it, so the UTC
+// fallback only applies to a hand-built Config.
+func (c Config) Location() *time.Location {
+	loc, err := time.LoadLocation(c.Timezone)
+	if err != nil {
+		return time.UTC
+	}
+	return loc
 }

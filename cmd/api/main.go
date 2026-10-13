@@ -9,10 +9,12 @@ import (
 	"net/http"
 	"os"
 	"time"
+	_ "time/tzdata" // embed the IANA database so APP_TIMEZONE works in scratch/minimal images
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/codercollo/zemi-fleet/internal/api"
+	"github.com/codercollo/zemi-fleet/internal/clock"
 	"github.com/codercollo/zemi-fleet/internal/config"
 	"github.com/codercollo/zemi-fleet/internal/repository"
 	"github.com/codercollo/zemi-fleet/internal/service"
@@ -58,8 +60,9 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	}
 
 	store := repository.NewStore(pool, cfg.DB.QueryTimeout)
-	orders := service.NewOrderService(store, cfg.RiderPayoutBPS)
-	riders := service.NewRiderService(store)
+	clk := clock.Real{}
+	orders := service.NewOrderService(store, clk, cfg.RiderPayoutBPS)
+	riders := service.NewRiderService(store, clk)
 	app := api.NewServer(cfg, logger, pool, orders, riders, version)
 
 	srv := &http.Server{
@@ -71,7 +74,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		ErrorLog:     slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}
 
-	logger.Info("starting server", "addr", srv.Addr, "env", cfg.Env, "version", version)
+	logger.Info("starting server", "addr", srv.Addr, "env", cfg.Env, "version", version, "timezone", cfg.Timezone)
 
 	// Start server
 	return srv.ListenAndServe()

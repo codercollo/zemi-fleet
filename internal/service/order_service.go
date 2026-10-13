@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/codercollo/zemi-fleet/internal/clock"
 	"github.com/codercollo/zemi-fleet/internal/domain"
+	"github.com/codercollo/zemi-fleet/internal/geo"
 	"github.com/codercollo/zemi-fleet/internal/repository"
 	"github.com/codercollo/zemi-fleet/internal/repository/sqlc"
 	"github.com/codercollo/zemi-fleet/internal/util"
@@ -16,14 +18,15 @@ import (
 // OrderService creates and reads orders.
 type OrderService struct {
 	store repository.Store
+	clock clock.Clock
 	// payoutBPS is the rider's share of the delivery fee (RIDER_PAYOUT_BPS). It is
 	// copied onto each order so later config changes never alter past earnings.
 	payoutBPS int
 }
 
-// NewOrderService wires the service to its store and the configured payout share.
-func NewOrderService(store repository.Store, payoutBPS int) *OrderService {
-	return &OrderService{store: store, payoutBPS: payoutBPS}
+// NewOrderService wires the service to its store, clock and the configured payout share.
+func NewOrderService(store repository.Store, clk clock.Clock, payoutBPS int) *OrderService {
+	return &OrderService{store: store, clock: clk, payoutBPS: payoutBPS}
 }
 
 // CreateOrderInput is a validated order request. Money is in cents.
@@ -60,19 +63,21 @@ func (s *OrderService) Create(ctx context.Context, in CreateOrderInput) (domain.
 	}
 
 	pickup := domain.Location{Lat: vendor.Lat, Lng: vendor.Lng}
+	now := s.clock.Now()
 	row, err := s.store.CreateOrder(ctx, sqlc.CreateOrderParams{
-		ID:               util.NewOrderID(),
+		ID:               util.NewOrderID(now),
 		VendorID:         vendor.ID,
 		CategoryCode:     in.CategoryCode,
 		PickupLat:        pickup.Lat,
 		PickupLng:        pickup.Lng,
 		DeliveryLat:      in.Delivery.Lat,
 		DeliveryLng:      in.Delivery.Lng,
-		TripDistanceM:    int32(math.Round(haversineM(pickup, in.Delivery))),
-		TripBearingDeg:   roundBearing(bearingDeg(pickup, in.Delivery)),
+		TripDistanceM:    int32(math.Round(geo.Haversine(pickup, in.Delivery))),
+		TripBearingDeg:   roundBearing(geo.Bearing(pickup, in.Delivery)),
 		ValueCents:       in.ValueCents,
 		DeliveryFeeCents: in.DeliveryFeeCents,
 		RiderPayoutBps:   int32(s.payoutBPS),
+		CreatedAt:        now,
 	})
 	if err != nil {
 		return domain.Order{}, fmt.Errorf("create order: %w", err)

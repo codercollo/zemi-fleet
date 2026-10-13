@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	"github.com/codercollo/zemi-fleet/internal/clock"
 	"github.com/codercollo/zemi-fleet/internal/config"
 	"github.com/codercollo/zemi-fleet/internal/domain"
 	"github.com/codercollo/zemi-fleet/internal/mock"
@@ -28,6 +29,9 @@ import (
 
 const testPayoutBPS = 9000
 
+// testNow is the fixed instant every handler test runs at.
+var testNow = time.Date(2026, 10, 13, 9, 0, 0, 0, time.UTC)
+
 // newStoreHandler builds the real router and services on top of a gomock Store.
 func newStoreHandler(t *testing.T) (http.Handler, *mock.MockStore) {
 	t.Helper()
@@ -35,7 +39,7 @@ func newStoreHandler(t *testing.T) (http.Handler, *mock.MockStore) {
 	store := mock.NewMockStore(gomock.NewController(t))
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := NewServer(config.Config{Env: config.EnvDevelopment, RiderPayoutBPS: testPayoutBPS}, logger,
-		fakeDB{}, service.NewOrderService(store, testPayoutBPS), service.NewRiderService(store), "test")
+		fakeDB{}, service.NewOrderService(store, clock.NewTest(testNow), testPayoutBPS), service.NewRiderService(store, clock.NewTest(testNow)), "test")
 	return srv.Routes(), store
 }
 
@@ -99,6 +103,8 @@ func TestCreateOrder(t *testing.T) {
 				assert.EqualValues(t, 450050, p.ValueCents)
 				assert.EqualValues(t, 25000, p.DeliveryFeeCents)
 				assert.EqualValues(t, testPayoutBPS, p.RiderPayoutBps)
+				assert.True(t, p.CreatedAt.Equal(testNow), "created_at comes from the injected clock, not SQL now()")
+				assert.Equal(t, time.UTC, p.CreatedAt.Location())
 				return orderRowFrom(p), nil
 			})
 
@@ -108,6 +114,7 @@ func TestCreateOrder(t *testing.T) {
 		order := decode(t, rec)["order"].(map[string]any)
 		assert.Equal(t, "/api/v2/orders/"+order["id"].(string), rec.Header().Get("Location"))
 		assert.Equal(t, "pending", order["status"])
+		assert.Equal(t, "2026-10-13T09:00:00Z", order["created_at"], "RFC 3339 in UTC")
 		assert.InDelta(t, 4500.50, order["value_kes"], 0.001)
 		assert.InDelta(t, 225.0, order["estimated_earnings_kes"], 0.001)
 		assert.InDelta(t, 25.0, order["platform_fee_kes"], 0.001)

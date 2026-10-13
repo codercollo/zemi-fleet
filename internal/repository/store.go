@@ -38,9 +38,9 @@ func NewStore(pool *pgxpool.Pool, queryTimeout time.Duration) *SQLStore {
 	return &SQLStore{Queries: sqlc.New(wrap(pool, queryTimeout)), pool: pool, timeout: queryTimeout}
 }
 
-// wrap layers the per-statement deadline and the ErrNoRows mapping onto a DBTX.
+// wrap layers the per-statement deadline, UTC normalisation and the ErrNoRows mapping onto a DBTX.
 func wrap(db sqlc.DBTX, timeout time.Duration) sqlc.DBTX {
-	return notFoundDB{timeoutDB{DBTX: db, timeout: timeout}}
+	return notFoundDB{utcDB{timeoutDB{DBTX: db, timeout: timeout}}}
 }
 
 // ExecTx runs fn in a transaction, rolling back on any error.

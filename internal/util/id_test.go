@@ -12,7 +12,7 @@ import (
 func TestNewID_Prefix(t *testing.T) {
 	tests := []struct {
 		name   string
-		gen    func() string
+		gen    func(time.Time) string
 		prefix string
 	}{
 		{"order", NewOrderID, "ord_"},
@@ -21,7 +21,7 @@ func TestNewID_Prefix(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			id := tc.gen()
+			id := tc.gen(time.Date(2026, 10, 13, 9, 0, 0, 0, time.UTC))
 
 			assert.True(t, strings.HasPrefix(id, tc.prefix))
 			assert.Len(t, id, len(tc.prefix)+timeChars+randomChars)
@@ -46,9 +46,10 @@ func TestNewID_SortsByTime(t *testing.T) {
 }
 
 func TestNewID_Unique(t *testing.T) {
+	now := time.Date(2026, 10, 13, 9, 0, 0, 0, time.UTC) // same millisecond: only the random part separates IDs
 	seen := make(map[string]struct{}, 10000)
 	for range 10000 {
-		id := NewOrderID()
+		id := NewOrderID(now)
 		_, dup := seen[id]
 		require.False(t, dup, "duplicate id %s", id)
 		seen[id] = struct{}{}

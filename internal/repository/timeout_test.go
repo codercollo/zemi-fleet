@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/codercollo/zemi-fleet/internal/clock"
 	"github.com/codercollo/zemi-fleet/internal/domain"
 	"github.com/codercollo/zemi-fleet/internal/repository/sqlc"
 )
@@ -48,6 +49,8 @@ type errRow struct{ err error }
 
 func (r errRow) Scan(...any) error { return r.err }
 
+var clk = clock.Real{}
+
 func TestQueryTimeout(t *testing.T) {
 	const timeout = 40 * time.Millisecond
 	q := sqlc.New(wrap(hangingDB{}, timeout))
@@ -62,14 +65,14 @@ func TestQueryTimeout(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			start := time.Now()
+			start := clk.Now()
 
 			err := tc.call(context.Background()) // the caller set no deadline: the store adds its own
 
 			require.Error(t, err)
 			assert.ErrorIs(t, err, context.DeadlineExceeded)
-			assert.GreaterOrEqual(t, time.Since(start), timeout)
-			assert.Less(t, time.Since(start), 2*time.Second, "must not hang")
+			assert.GreaterOrEqual(t, clk.Now().Sub(start), timeout)
+			assert.Less(t, clk.Now().Sub(start), 2*time.Second, "must not hang")
 		})
 	}
 }
@@ -79,11 +82,11 @@ func TestQueryTimeout_CallerDeadlineStillWins(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
 
-	start := time.Now()
+	start := clk.Now()
 	_, err := q.GetRider(ctx, "rider_001")
 
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
-	assert.Less(t, time.Since(start), 2*time.Second)
+	assert.Less(t, clk.Now().Sub(start), 2*time.Second)
 }
 
 func TestNoRowsBecomesErrNotFound(t *testing.T) {

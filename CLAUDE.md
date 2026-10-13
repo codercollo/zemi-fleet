@@ -49,7 +49,7 @@ internal/config        Viper. Precedence: environment variables > app.env > defa
 internal/api           HTTP layer: Server struct (the book's `application`), routes.go, handlers,
                        middleware, writeJSON/envelope, readJSON, errors.go (all error responses)
 internal/validator     the book's Validator (Check/AddError/PermittedValue/Unique/Between)
-internal/service       business rules; calls the repository and the algorithm packages        (Phase 3+; geo.go is a temp haversine until Phase 5)
+internal/service       business rules; calls the repository and the algorithm packages        (Phase 3+)
 internal/repository    OpenPool; later the sqlc code in ./sqlc, a Store interface + ExecTx  (Phase 3+)
 internal/domain        shared types + domain errors (ErrNotFound, ErrEditConflict, ...)    (Phase 3+)
 internal/geo           pure: Haversine, Bearing, AngleDiff, BoundingBox                     (Phase 5)
@@ -79,13 +79,24 @@ db/query, db/seed      sqlc input SQL, Nairobi seed data                        
   - Batch acceptance runs in one transaction: lock the rider `FOR UPDATE`, then claim the batch `WHERE status='open' AND version=$v`.
   - Batch creation selects orders with `FOR UPDATE SKIP LOCKED`.
   - DB `CHECK` constraints are the last line of defence (capacity, state/assignment consistency).
-- **Optimistic locking:** `PATCH .../location`, `PATCH .../availability` and `PUT .../preferences` read the rider, then `UPDATE ... WHERE id=$1 AND version=$2 RETURNING *`; no row back = `ErrEditConflict` = 409. The optional `X-Expected-Version` header is compared with the stored version first (stale = 409). PATCH leaves omitted `bearing_degrees` / `speed_kmh` unchanged (pointer fields, ch. 8.1). The preferences PUT locks the rider row `FOR UPDATE` and bumps its version.
+- **Optimistic locking:** `PATCH .../location`, `PATCH .../availability` and `PUT .../preferences` read the rider, then `UPDATE ... WHERE id=$1 AND version=$2 RETURNING *`; no row back = `ErrEditConflict` = 409. The optional `X-Expected-Version` header is compared with the stored version first (stale = 409). In the location PATCH an omitted `bearing_degrees` / `speed_kmh` is stored as NULL (unknown), **not** kept: they describe that one reading, so this deliberately deviates from the book's keep-old-value rule (ch. 8.1) and is commented in `RiderService.UpdateLocation`. The preferences PUT locks the rider row `FOR UPDATE` and bumps its version.
 - **Query timeouts:** `DB_QUERY_TIMEOUT` (default 3s) is applied per statement by a DBTX wrapper in `internal/repository/timeout.go`, so every sqlc query is covered. A timeout is an ordinary error and becomes a 500.
 - **Not-found mapping:** the repository wraps the pgx DBTX so every `:one` query returns `domain.ErrNotFound` instead of `pgx.ErrNoRows`. Services just `errors.Is(err, domain.ErrNotFound)`.
-- **Config:** every tunable is an environment variable read in `internal/config` (radius, cone angle, payout bps, average speed, batch TTL, rate limits, weights). Add new keys to `defaults`, `validate()`, `.env.example` and `docker-compose.yml`.
+- **Config:** every tunable is an environment variable read in `internal/config` (timezone, radius, cone angle, payout bps, average speed, batch TTL, rate limits, weights). Add new keys to `defaults`, `validate()`, `.env.example` and `docker-compose.yml`.
 - **Errors:** wrap with `fmt.Errorf("context: %w", err)`, log once at the edge, and never leak internals in a 500.
 - **Tests:** testify (`require` for preconditions, `assert` for checks), table-driven, `t.Run` subtests; gomock Store for handler/service tests; faker for data.
 - **Comments:** explain _why_, and cite the book chapter when following a Greenlight pattern (e.g. `// Let's Go Further ch. 8.2`).
+
+## Time handling
+
+One standard from the database to the API: **UTC everywhere, in code and on the wire.**
+
+- **Storage and sessions are UTC.** `repository.OpenPool` sets the pgx runtime parameter `timezone=UTC` on every connection. Columns are `TIMESTAMPTZ`.
+- **Only `internal/clock` reads the system clock.** No other code calls `time.Now()` (enforced by `TestNoTimeNowOutsideClockPackage`); logging and `http.Server` setup need no timestamps from us. Services take a `clock.Clock` through their constructors, wired in `main.go` with `clock.Real{}` (returns `time.Now().UTC()`). Tests use `clock.NewTest(t)` with `Set` / `Advance`. ID generation takes the time as an argument for the same reason.
+- **Business timestamps come from the clock and are passed as query parameters**, not from `now()` in SQL: `orders.created_at`, `riders.location_updated_at`, and later `batches.expires_at` / `accepted_at`. The column `DEFAULT now()` is only a fallback. (`updated_at` is the one exception: the `set_updated_at` trigger owns it.) The seed file uses SQL `now()` because it is not application code.
+- **Normalise to UTC at the edges.** Reading: the repository wraps DBTX so every scanned `time.Time` / `*time.Time` is `.UTC()` (pgx otherwise returns the process's local zone), and the mappers repeat it. Writing: every DTO calls `.UTC()` before encoding, so JSON is RFC 3339 with a `Z` suffix (`2026-10-13T09:30:15Z`).
+- **`APP_TIMEZONE`** (default `Africa/Nairobi`, validated with `time.LoadLocation` at startup; `time/tzdata` is embedded) is the *business* zone for presentation and "today" boundaries. It never changes what is stored or serialised. Use `cfg.Location()` when a local wall-clock day is needed, and convert at the last moment.
+- Compare instants with `Equal`/`Before`/`After`, never `==`. Durations (timeouts, TTLs) are plain `time.Duration` from config.
 
 ## Schema (db/migrations/000001_init_schema)
 
@@ -104,7 +115,7 @@ make dev/mock         # mockgen (pinned in the Makefile) -> internal/mock/store.
 make dev/run          # API natively on :4000
 make dev/audit        # what CI runs: tidy -diff, verify, gofmt, vet, staticcheck@v0.8.2, tests
 make dev/test | dev/test/race | dev/test/cover | dev/build
-make dev/test/integration   # -tags=integration against the real DATABASE_URL (concurrent PATCH -> one 200, rest 409; slow query cancelled)
+make dev/test/integration   # -tags=integration against the real DATABASE_URL (concurrent PATCH -> one 200, rest 409; slow query cancelled; UTC session; seeded trips match geo)
 make dev/db/psql | dev/db/migrations/new name=x | dev/db/migrations/down | dev/db/migrations/version
 make staging/up       # cross-compile bin/linux_amd64/api -> image (target prebuilt) -> compose on :8080 (override with STAGING_API_PORT / STAGING_DB_PORT, e.g. when 8080 or 5433 are taken)
 make staging/smoke | staging/logs | staging/seed | staging/down
@@ -117,7 +128,7 @@ make help
 
 ## Build process (follow it)
 
-The work proceeds **one phase at a time** in `docs/BUILD_PHASES.md`, in Greenlight chapter order. Phases 0 (foundation, ch. 2–5), 1 (tooling, ch. 20–21), 2 (migrations, seed, sqlc config), 3 (domain, repository, first CRUD) and 4 (advanced CRUD: PATCH, optimistic locking, query timeouts) are done. **The next phase is Phase 5** (geo package).
+The work proceeds **one phase at a time** in `docs/BUILD_PHASES.md`, in Greenlight chapter order. Phases 0 (foundation, ch. 2–5), 1 (tooling, ch. 20–21), 2 (migrations, seed, sqlc config), 3 (domain, repository, first CRUD), 4 (advanced CRUD) and 5 (geo + clock) are done. **The next phase is Phase 6** (proximity matching, 60° cone).
 For each phase:
 
 1. Build only that phase's scope, on top of what already exists. Don't rewrite earlier phases unless they're broken.

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/codercollo/zemi-fleet/internal/clock"
 	"github.com/codercollo/zemi-fleet/internal/domain"
 	"github.com/codercollo/zemi-fleet/internal/repository"
 	"github.com/codercollo/zemi-fleet/internal/repository/sqlc"
@@ -14,11 +15,12 @@ import (
 // RiderService reads riders, manages their preferences and applies partial updates.
 type RiderService struct {
 	store repository.Store
+	clock clock.Clock
 }
 
-// NewRiderService wires the service to its store.
-func NewRiderService(store repository.Store) *RiderService {
-	return &RiderService{store: store}
+// NewRiderService wires the service to its store and clock.
+func NewRiderService(store repository.Store, clk clock.Clock) *RiderService {
+	return &RiderService{store: store, clock: clk}
 }
 
 // Get returns a rider with their preferences, or domain.ErrNotFound.
@@ -80,9 +82,8 @@ func checkVersion(current int32, expected *int) error {
 	return nil
 }
 
-// LocationUpdate is a partial location ping. Latitude and longitude always change;
-// a nil BearingDeg or SpeedKmh leaves the stored value untouched (PATCH semantics,
-// Let's Go Further ch. 8.1).
+// LocationUpdate is one location reading. BearingDeg and SpeedKmh are optional parts of that
+// reading: nil means "this reading did not say" and is stored as NULL (unknown).
 type LocationUpdate struct {
 	Lat        float64
 	Lng        float64
@@ -103,21 +104,19 @@ func (s *RiderService) UpdateLocation(ctx context.Context, id string, in Locatio
 		return domain.Rider{}, err
 	}
 
-	bearing, speed := cur.LastBearingDeg, cur.LastSpeedKmh
-	if in.BearingDeg != nil {
-		bearing = in.BearingDeg
-	}
-	if in.SpeedKmh != nil {
-		speed = in.SpeedKmh
-	}
-
+	// Deliberate deviation from the book's PATCH rule (ch. 8.1: omitted fields keep their old
+	// value). Bearing and speed describe this one reading, not a standing setting: carrying the
+	// previous reading's heading over to a new position would make the cone matcher trust a
+	// direction the rider is no longer travelling in. So an omitted bearing or speed is stored
+	// as NULL ("unknown"), never as the old value.
 	row, err := s.store.UpdateRiderLocation(ctx, sqlc.UpdateRiderLocationParams{
-		LastLat:        &in.Lat,
-		LastLng:        &in.Lng,
-		LastBearingDeg: bearing,
-		LastSpeedKmh:   speed,
-		ID:             id,
-		Version:        cur.Version,
+		LastLat:           &in.Lat,
+		LastLng:           &in.Lng,
+		LastBearingDeg:    in.BearingDeg,
+		LastSpeedKmh:      in.SpeedKmh,
+		LocationUpdatedAt: ptr(s.clock.Now()),
+		ID:                id,
+		Version:           cur.Version,
 	})
 	if err != nil {
 		return domain.Rider{}, fmt.Errorf("update rider location: %w", versionMiss(err))
@@ -261,3 +260,5 @@ func unknown(wanted []string, known map[string]struct{}) []string {
 	}
 	return missing
 }
+
+func ptr[T any](v T) *T { return &v }

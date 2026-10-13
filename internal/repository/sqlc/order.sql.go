@@ -7,33 +7,36 @@ package sqlc
 
 import (
 	"context"
+	"time"
 )
 
 const createOrder = `-- name: CreateOrder :one
 INSERT INTO orders (
     id, vendor_id, category_code, pickup_lat, pickup_lng, delivery_lat, delivery_lng,
-    trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps
+    trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps, created_at
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
 )
 RETURNING id, vendor_id, category_code, status, pickup_lat, pickup_lng, delivery_lat, delivery_lng, trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps, rider_earnings_cents, platform_fee_cents, batch_id, rider_id, batch_seq, created_at, updated_at, delivered_at, version
 `
 
 type CreateOrderParams struct {
-	ID               string  `json:"id"`
-	VendorID         string  `json:"vendor_id"`
-	CategoryCode     string  `json:"category_code"`
-	PickupLat        float64 `json:"pickup_lat"`
-	PickupLng        float64 `json:"pickup_lng"`
-	DeliveryLat      float64 `json:"delivery_lat"`
-	DeliveryLng      float64 `json:"delivery_lng"`
-	TripDistanceM    int32   `json:"trip_distance_m"`
-	TripBearingDeg   float64 `json:"trip_bearing_deg"`
-	ValueCents       int64   `json:"value_cents"`
-	DeliveryFeeCents int64   `json:"delivery_fee_cents"`
-	RiderPayoutBps   int32   `json:"rider_payout_bps"`
+	ID               string    `json:"id"`
+	VendorID         string    `json:"vendor_id"`
+	CategoryCode     string    `json:"category_code"`
+	PickupLat        float64   `json:"pickup_lat"`
+	PickupLng        float64   `json:"pickup_lng"`
+	DeliveryLat      float64   `json:"delivery_lat"`
+	DeliveryLng      float64   `json:"delivery_lng"`
+	TripDistanceM    int32     `json:"trip_distance_m"`
+	TripBearingDeg   float64   `json:"trip_bearing_deg"`
+	ValueCents       int64     `json:"value_cents"`
+	DeliveryFeeCents int64     `json:"delivery_fee_cents"`
+	RiderPayoutBps   int32     `json:"rider_payout_bps"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
+// created_at comes from the injected clock (UTC), not now(): the column DEFAULT is only a fallback.
 func (q *Queries) CreateOrder(ctx context.Context, arg CreateOrderParams) (Order, error) {
 	row := q.db.QueryRow(ctx, createOrder,
 		arg.ID,
@@ -48,6 +51,7 @@ func (q *Queries) CreateOrder(ctx context.Context, arg CreateOrderParams) (Order
 		arg.ValueCents,
 		arg.DeliveryFeeCents,
 		arg.RiderPayoutBps,
+		arg.CreatedAt,
 	)
 	var i Order
 	err := row.Scan(

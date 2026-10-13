@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	"github.com/codercollo/zemi-fleet/internal/clock"
 	"github.com/codercollo/zemi-fleet/internal/domain"
 	"github.com/codercollo/zemi-fleet/internal/mock"
 	"github.com/codercollo/zemi-fleet/internal/repository/sqlc"
@@ -22,6 +23,8 @@ import (
 const conflictBody = `{"error":"unable to update the record due to an edit conflict, please try again"}`
 
 // expectPreferencesLoad covers the reads that attach preferences to the response (rider has none).
+func ptrTo[T any](v T) *T { return &v }
+
 func expectPreferencesLoad(store *mock.MockStore, id string) {
 	store.EXPECT().GetPreferences(gomock.Any(), id).Return(sqlc.RiderPreference{}, domain.ErrNotFound)
 	store.EXPECT().ListPreferredCategories(gomock.Any(), id).Return(nil, nil)
@@ -42,6 +45,7 @@ func TestPatchLocation(t *testing.T) {
 				assert.Equal(t, 36.9, *p.LastLng)
 				assert.Equal(t, 270.5, *p.LastBearingDeg)
 				assert.Equal(t, 31.0, *p.LastSpeedKmh)
+				assert.True(t, p.LocationUpdatedAt.Equal(testNow), "location_updated_at comes from the injected clock")
 				row := fakeRiderRow("rider_003")
 				row.LastLat, row.LastLng, row.LastBearingDeg, row.LastSpeedKmh = p.LastLat, p.LastLng, p.LastBearingDeg, p.LastSpeedKmh
 				row.Version = 4
@@ -58,15 +62,18 @@ func TestPatchLocation(t *testing.T) {
 		assert.InDelta(t, -1.3, rider["current_location"].(map[string]any)["lat"], 1e-9)
 	})
 
-	t.Run("omitted bearing and speed keep their values, explicit zeros are applied", func(t *testing.T) {
+	t.Run("omitted bearing and speed are stored as NULL, explicit zeros are kept", func(t *testing.T) {
 		tests := []struct {
 			name        string
 			body        string
-			wantBearing float64
-			wantSpeed   float64
+			wantBearing *float64
+			wantSpeed   *float64
 		}{
-			{"omitted", `{"latitude":-1.3,"longitude":36.9}`, 95, 22}, // fakeRiderRow: bearing 95, speed 22
-			{"explicit zeros", `{"latitude":-1.3,"longitude":36.9,"bearing_degrees":0,"speed_kmh":0}`, 0, 0},
+			// The stored reading (bearing 95, speed 22) must NOT leak into the new one.
+			{"omitted", `{"latitude":-1.3,"longitude":36.9}`, nil, nil},
+			{"only bearing", `{"latitude":-1.3,"longitude":36.9,"bearing_degrees":10}`, ptrTo(10.0), nil},
+			{"only speed", `{"latitude":-1.3,"longitude":36.9,"speed_kmh":12}`, nil, ptrTo(12.0)},
+			{"explicit zeros", `{"latitude":-1.3,"longitude":36.9,"bearing_degrees":0,"speed_kmh":0}`, ptrTo(0.0), ptrTo(0.0)},
 		}
 		for _, tc := range tests {
 			t.Run(tc.name, func(t *testing.T) {
@@ -74,15 +81,26 @@ func TestPatchLocation(t *testing.T) {
 				store.EXPECT().GetRider(gomock.Any(), "rider_003").Return(fakeRiderRow("rider_003"), nil)
 				store.EXPECT().UpdateRiderLocation(gomock.Any(), gomock.Any()).DoAndReturn(
 					func(_ context.Context, p sqlc.UpdateRiderLocationParams) (sqlc.Rider, error) {
-						assert.Equal(t, tc.wantBearing, *p.LastBearingDeg)
-						assert.Equal(t, tc.wantSpeed, *p.LastSpeedKmh)
-						return fakeRiderRow("rider_003"), nil
+						assert.Equal(t, tc.wantBearing, p.LastBearingDeg)
+						assert.Equal(t, tc.wantSpeed, p.LastSpeedKmh)
+						row := fakeRiderRow("rider_003")
+						row.LastBearingDeg, row.LastSpeedKmh = p.LastBearingDeg, p.LastSpeedKmh
+						return row, nil
 					})
 				expectPreferencesLoad(store, "rider_003")
 
 				rec := send(t, h, http.MethodPatch, path, tc.body)
 
-				assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+				require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+				rider := decode(t, rec)["rider"].(map[string]any)
+				if tc.wantBearing == nil {
+					assert.Nil(t, rider["bearing_degrees"], "unknown direction is null in JSON")
+				} else {
+					assert.InDelta(t, *tc.wantBearing, rider["bearing_degrees"], 1e-9)
+				}
+				if tc.wantSpeed == nil {
+					assert.Nil(t, rider["speed_kmh"])
+				}
 			})
 		}
 	})
@@ -285,11 +303,12 @@ func TestSlowQueryBecomes500(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v2/riders/rider_003", nil).WithContext(ctx)
 	rec := httptest.NewRecorder()
 
-	start := time.Now()
+	clk := clock.Real{}
+	start := clk.Now()
 	h.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-	assert.Less(t, time.Since(start), 2*time.Second)
+	assert.Less(t, clk.Now().Sub(start), 2*time.Second)
 	assert.NotContains(t, rec.Body.String(), "deadline")
 	assert.True(t, errors.Is(ctx.Err(), context.DeadlineExceeded))
 }

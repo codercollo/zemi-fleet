@@ -34,7 +34,7 @@ The algorithm packages (`geo`, `batching`, `matching`) are pure Go and are calle
 | 2 | Migrations, seed data, sqlc setup | 6 | ✅ done |
 | 3 | Domain models, repository Store, first CRUD (orders, riders, preferences) | 7 | ✅ done |
 | 4 | Advanced CRUD: optimistic locking, query timeouts, partial updates | 8 | ✅ done |
-| 5 | Geo core: haversine, bearing, angle difference | — (algorithm) | |
+| 5 | Geo core: haversine, bearing, angle difference | — (algorithm) | ✅ done |
 | 6 | Proximity matching: 60° cone, `POST /riders/match-orders` | 9 (sorting) | |
 | 7 | Batching: clustering, sequencing, scoring, batch endpoints, exclusive accept | 8, 9 | |
 | 8 | Preference matching: `POST /orders/match-riders` | 9 | |
@@ -151,10 +151,16 @@ Target pace (deadline Fri 16 Oct, 22:00): Mon 0–2 · Tue 3–5 · Wed 6–7 ·
 
 ---
 
-## Phase 5 — Geo core
+## Phase 5 — Geo core ✅
 **Scope**
 - `internal/geo`: `Haversine`, `Bearing`, `AngleDiff` (handles wraparound, e.g. 350° vs 10°), `BoundingBox` (prefilter for the SQL queries).
 - Table-driven tests with known Nairobi distances, wraparound, identical points and antipodes.
+
+**Notes (as built)**
+- `internal/geo`: `Haversine` (mean Earth radius 6,371,008.8 m), `Bearing` ([0, 360)), `AngleDiff` (signed, (-180, 180]; exactly opposite bearings give +180), `WithinCone` (inclusive edge), `BoundingBox` (exact `asin(sin(r/R)/cos(lat))` longitude half-width; widened to the full longitude range when the circle reaches a pole or crosses the antimeridian). Table-driven tests plus a 160k-point property test that the box contains every point within the radius; coverage 100%.
+- `internal/service/geo.go` is deleted; `OrderService` calls `geo`. The seed's stored trip distances and bearings are identical under the new radius, and `TestIntegration_SeededTripsMatchGeo` keeps checking that.
+- Part A: the location PATCH stores an omitted bearing/speed as NULL (a reading's direction is not carried over from the previous one).
+- Part B (`internal/clock`, UTC end to end): see CLAUDE.md "Time handling". Business timestamps come from the injected clock and are query parameters; pool sessions run in UTC; times are normalised to UTC when scanned and when encoded; `APP_TIMEZONE` is validated at startup.
 
 **Done when:** `go test ./internal/geo -cover` reports ≥ 95% coverage.
 

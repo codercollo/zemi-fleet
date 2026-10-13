@@ -4,15 +4,20 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	"github.com/codercollo/zemi-fleet/internal/clock"
 	"github.com/codercollo/zemi-fleet/internal/domain"
 	"github.com/codercollo/zemi-fleet/internal/mock"
 	"github.com/codercollo/zemi-fleet/internal/repository/sqlc"
 )
+
+// testNow is the instant the injected clock reports in every service test.
+var testNow = time.Date(2026, 10, 13, 9, 0, 0, 0, time.UTC)
 
 var sarit = domain.Location{Lat: -1.2635, Lng: 36.8030}
 
@@ -43,7 +48,7 @@ func TestOrderService_Create_TripAndPayout(t *testing.T) {
 					got = p
 					return sqlc.Order{ID: p.ID, RiderPayoutBps: p.RiderPayoutBps, TripDistanceM: p.TripDistanceM}, nil
 				})
-			svc := NewOrderService(store, tc.payoutBPS)
+			svc := NewOrderService(store, clock.NewTest(testNow), tc.payoutBPS)
 
 			order, err := svc.Create(context.Background(), CreateOrderInput{
 				VendorID: "ven_001", CategoryCode: "food", Delivery: tc.delivery, ValueCents: 100000, DeliveryFeeCents: 20000,
@@ -54,6 +59,8 @@ func TestOrderService_Create_TripAndPayout(t *testing.T) {
 			assert.EqualValues(t, tc.payoutBPS, got.RiderPayoutBps)
 			assert.Equal(t, sarit.Lat, got.PickupLat, "pickup is the vendor's location")
 			assert.Regexp(t, `^ord_[0-9A-Z]{20}$`, got.ID)
+			assert.True(t, got.CreatedAt.Equal(testNow), "created_at is the injected clock's time")
+			assert.Equal(t, time.UTC, got.CreatedAt.Location())
 			assert.GreaterOrEqual(t, got.TripBearingDeg, 0.0)
 			assert.Less(t, got.TripBearingDeg, 360.0, "bearing must satisfy the column CHECK")
 			if tc.name == "Westlands to Karen" {
@@ -83,7 +90,7 @@ func TestOrderService_Create_Validation(t *testing.T) {
 			store := mock.NewMockStore(gomock.NewController(t))
 			store.EXPECT().GetVendor(gomock.Any(), gomock.Any()).Return(sqlc.Vendor{}, tc.vendorErr)
 			store.EXPECT().GetCategory(gomock.Any(), gomock.Any()).Return(sqlc.Category{}, tc.catErr)
-			svc := NewOrderService(store, 9000)
+			svc := NewOrderService(store, clock.NewTest(testNow), 9000)
 
 			_, err := svc.Create(context.Background(), CreateOrderInput{VendorID: "v", CategoryCode: "c"})
 
@@ -102,7 +109,7 @@ func TestOrderService_Create_StoreFailure(t *testing.T) {
 	boom := errors.New("boom")
 	store.EXPECT().GetVendor(gomock.Any(), gomock.Any()).Return(sqlc.Vendor{}, boom) // a real failure stops before the category lookup
 
-	_, err := NewOrderService(store, 9000).Create(context.Background(), CreateOrderInput{})
+	_, err := NewOrderService(store, clock.NewTest(testNow), 9000).Create(context.Background(), CreateOrderInput{})
 
 	require.ErrorIs(t, err, boom)
 	var verr *domain.ValidationError
@@ -119,7 +126,7 @@ func TestOrderService_Get(t *testing.T) {
 			TripDistanceM: 2500, TripBearingDeg: 45.5,
 		}, nil)
 
-		order, err := NewOrderService(store, 9000).Get(context.Background(), "ord_1")
+		order, err := NewOrderService(store, clock.NewTest(testNow), 9000).Get(context.Background(), "ord_1")
 
 		require.NoError(t, err)
 		assert.Equal(t, domain.OrderBatched, order.Status)
@@ -134,30 +141,10 @@ func TestOrderService_Get(t *testing.T) {
 		store := mock.NewMockStore(gomock.NewController(t))
 		store.EXPECT().GetOrder(gomock.Any(), "x").Return(sqlc.Order{}, domain.ErrNotFound)
 
-		_, err := NewOrderService(store, 9000).Get(context.Background(), "x")
+		_, err := NewOrderService(store, clock.NewTest(testNow), 9000).Get(context.Background(), "x")
 
 		assert.ErrorIs(t, err, domain.ErrNotFound)
 	})
-}
-
-func TestGeo(t *testing.T) {
-	tests := []struct {
-		name         string
-		a, b         domain.Location
-		wantDistance float64
-		wantBearing  float64
-	}{
-		{"one degree of latitude", domain.Location{}, domain.Location{Lat: 1}, 111_195, 0},
-		{"one degree of longitude on the equator", domain.Location{}, domain.Location{Lng: 1}, 111_195, 90},
-		{"identical points", sarit, sarit, 0, 0},
-		{"antimeridian crossing westwards", domain.Location{Lng: 179.5}, domain.Location{Lng: -179.5}, 111_195, 90},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			assert.InDelta(t, tc.wantDistance, haversineM(tc.a, tc.b), 5)
-			assert.InDelta(t, tc.wantBearing, bearingDeg(tc.a, tc.b), 0.01)
-		})
-	}
 }
 
 func TestRoundBearing(t *testing.T) {

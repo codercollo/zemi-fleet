@@ -7,6 +7,7 @@ package sqlc
 
 import (
 	"context"
+	"time"
 )
 
 const bumpRiderVersion = `-- name: BumpRiderVersion :one
@@ -151,19 +152,20 @@ SET last_lat = $1,
     last_lng = $2,
     last_bearing_deg = $3,
     last_speed_kmh = $4,
-    location_updated_at = now(),
+    location_updated_at = $5,
     version = version + 1
-WHERE id = $5 AND version = $6
+WHERE id = $6 AND version = $7
 RETURNING id, full_name, phone, is_available, max_capacity, current_orders_count, last_lat, last_lng, last_bearing_deg, last_speed_kmh, location_updated_at, offers_count, accepted_count, acceptance_rate, created_at, updated_at, version
 `
 
 type UpdateRiderLocationParams struct {
-	LastLat        *float64 `json:"last_lat"`
-	LastLng        *float64 `json:"last_lng"`
-	LastBearingDeg *float64 `json:"last_bearing_deg"`
-	LastSpeedKmh   *float64 `json:"last_speed_kmh"`
-	ID             string   `json:"id"`
-	Version        int32    `json:"version"`
+	LastLat           *float64   `json:"last_lat"`
+	LastLng           *float64   `json:"last_lng"`
+	LastBearingDeg    *float64   `json:"last_bearing_deg"`
+	LastSpeedKmh      *float64   `json:"last_speed_kmh"`
+	LocationUpdatedAt *time.Time `json:"location_updated_at"`
+	ID                string     `json:"id"`
+	Version           int32      `json:"version"`
 }
 
 // Optimistic lock (Let's Go Further ch. 8.2): no row comes back when the version moved on.
@@ -173,6 +175,7 @@ func (q *Queries) UpdateRiderLocation(ctx context.Context, arg UpdateRiderLocati
 		arg.LastLng,
 		arg.LastBearingDeg,
 		arg.LastSpeedKmh,
+		arg.LocationUpdatedAt,
 		arg.ID,
 		arg.Version,
 	)

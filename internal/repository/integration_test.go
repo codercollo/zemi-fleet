@@ -26,10 +26,10 @@ func TestIntegration_SlowQueryIsCancelled(t *testing.T) {
 	const timeout = 150 * time.Millisecond
 	db := wrap(pool, timeout)
 
-	start := time.Now()
+	start := clk.Now()
 	var one int
 	err = db.QueryRow(context.Background(), "SELECT pg_sleep(2)::text::int").Scan(&one)
-	elapsed := time.Since(start)
+	elapsed := clk.Now().Sub(start)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.DeadlineExceeded)

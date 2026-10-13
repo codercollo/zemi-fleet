@@ -11,6 +11,7 @@ import (
 type Querier interface {
 	// Used after replacing preferences, which live in other tables, so clients see the rider change.
 	BumpRiderVersion(ctx context.Context, arg BumpRiderVersionParams) (Rider, error)
+	// created_at comes from the injected clock (UTC), not now(): the column DEFAULT is only a fallback.
 	CreateOrder(ctx context.Context, arg CreateOrderParams) (Order, error)
 	DeletePreferredAreas(ctx context.Context, riderID string) error
 	DeletePreferredCategories(ctx context.Context, riderID string) error

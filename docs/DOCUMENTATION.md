@@ -673,12 +673,12 @@ the full rider-fleet surface, give every client its own, and rotate it if it lea
 ### Middleware order
 
 ```
-request -> recoverPanic -> requestID -> securityHeaders -> accessLog -> rateLimit -> requireAPIKey -> handler
-                                                                                                 (idempotency: POST /orders, /orders/batch only)
+request -> recoverPanic -> metrics -> requestID -> securityHeaders -> enableCORS -> accessLog -> rateLimit -> requireAPIKey -> handler
+          (metrics: only when METRICS_ENABLED)                                                            (idempotency: POST /orders, /orders/batch only)
 ```
 
-`recoverPanic` is outermost so a panic anywhere below becomes a logged 500. `requestID` comes next so every later log line
-can carry the ID. `securityHeaders` runs before anything can answer, so even a 429 or a 404 has the headers. `accessLog` wraps
+`recoverPanic` is outermost so a panic anywhere below becomes a logged 500. `metrics` follows it so every response, 401s and 429s included, is counted (see "Metrics"). `requestID` comes next so every later log line
+can carry the ID. `securityHeaders` runs before anything can answer, so even a 429 or a 404 has the headers. `enableCORS` runs before the limiter and authentication so a browser's key-less preflight can be answered (see "CORS"). `accessLog` wraps
 the limiter and the handlers, so it records the final status of every request, rate-limited and panicked ones included.
 `rateLimit` runs before any work is done for the client. `requireAPIKey` comes right after it (see "Authentication"). The router is built with `gin.New()`, never `gin.Default()`, so there
 is exactly one logger and one recovery.
@@ -751,3 +751,120 @@ If in-flight requests outlast the timeout the server gives up and exits with an 
 - Limiter state is keyed by IP only. Clients behind one NAT share a bucket.
 - The idle-client timeout (3 minutes) and cleanup interval (1 minute) are constants; the rest is configuration.
 - Because requests are limited per IP and before authentication, an unauthenticated flood, and a client guessing keys, is limited too (`requireAPIKey` sits after the limiter).
+
+## CORS
+
+Browser code (a dispatcher dashboard, say, served from `http://localhost:3000`) may call the API only if the API says so. Without any
+configuration it says nothing, so cross-origin calls are blocked by the browser, which is the safe default. Server-to-server and
+mobile clients are not affected: CORS is a browser rule.
+
+### Configuration
+
+`CORS_TRUSTED_ORIGINS` is a comma-separated list of exact origins: `http://localhost:3000,https://app.zemi.africa`. It is empty by default,
+and then no `Access-Control-*` header is ever sent. Each entry is validated at startup: lowercase `http://` or `https://`, a host, an
+optional port, and nothing else. A `*`, a path, a trailing slash, a query, user info, a missing scheme or a malformed URL stops the
+server from starting, with the offending entry in the message.
+
+### What the middleware does (`enableCORS`, `internal/api/cors.go`)
+
+| Request | Response |
+|---|---|
+| any request | `Vary: Origin` (always, even with no origins configured) |
+| preflight (`OPTIONS` with `Access-Control-Request-Method`) | also `Vary: Access-Control-Request-Method` |
+| `Origin` exactly equals a trusted origin | `Access-Control-Allow-Origin: <that origin>` and `Access-Control-Expose-Headers: Location, X-Request-ID, Retry-After, Idempotent-Replay` |
+| preflight from a trusted origin | `200`, no body, `Access-Control-Allow-Methods: GET, POST, PUT, PATCH`, `Access-Control-Allow-Headers: Content-Type, X-API-Key, Idempotency-Key, X-Request-ID, X-Expected-Version`, `Access-Control-Max-Age: 600` |
+| anything from an untrusted origin | no CORS headers; a preflight carries on down the chain and gets the normal `401` |
+
+### Why exact origins
+
+The origin is compared with `==` against the list, never with a prefix, a suffix or a pattern, so `http://localhost:3000.evil.example` or
+`https://zemi.africa.evil.example` can never match. The response echoes the matching origin and never `*`; with `*` any website a
+rider visits could read API responses using a key the page holds. `Vary: Origin` is on every response so a cache cannot hand one
+origin's answer, with its `Allow-Origin`, to another.
+
+### Why the preflight skips authentication
+
+A browser sends the preflight itself, before the real request, and it never attaches custom headers such as `X-API-Key` to it. If
+the preflight needed a key, every cross-origin call with an `X-API-Key` header would fail before it started. `enableCORS` therefore sits
+before `rateLimit` and `requireAPIKey` and answers a trusted origin's preflight directly. This exposes nothing: the answer holds
+only the static list of methods and headers. The real request that follows is rate limited and authenticated as usual. A preflight from
+an untrusted origin gets no CORS headers, so the browser refuses to send the real request.
+
+### Why no credentials
+
+The API authenticates with an `X-API-Key` header, not with cookies or HTTP auth, so the browser has no ambient credentials to send and
+`Access-Control-Allow-Credentials` is never set. That also rules out cross-site request forgery through the browser's cookie jar.
+The consequence to know: a page that wants to call the API must hold the key itself, which is only appropriate for a trusted internal tool.
+A public web app needs a backend that holds the key, or per-user tokens (see "Known limitation" under Security).
+
+### Decisions beyond the brief
+
+- An `OPTIONS` without `Access-Control-Request-Method` is not a preflight and takes the normal path (a `401` without a key).
+- A trusted origin's preflight is answered before `accessLog`, so the metrics count it but it has no access-log line.
+- The allowed methods and headers are constants, not configuration.
+- `Origin: null` (sandboxed frames, local files) is never trusted, and the validator refuses `null` as an entry.
+
+## Metrics
+
+`GET /debug/vars` serves the process's metrics as JSON, using Go's `expvar` (Let's Go Further ch. 19). It is outside `/api/v2`
+because it is operations data, not part of the API.
+
+### Protection
+
+- `METRICS_ENABLED` decides whether the route exists. When it is not set it is **true in development and staging and false in
+  production**. Disabled means the route is not registered at all: `404`, and the metrics middleware is not installed.
+- When enabled, the route sits behind the same chain as every other route: it needs a valid `X-API-Key` (`401` otherwise) and it is
+  rate limited. Nothing is exempt. In production, switch it on only if the key holders are trusted and ideally scrape it from inside
+  the network: the numbers reveal traffic volume and the Go runtime's memory use.
+
+### Published values
+
+| Name | Meaning |
+|---|---|
+| `version` | the build version (`-ldflags -X main.version`) |
+| `goroutines` | number of goroutines now |
+| `timestamp` | Unix seconds, from the injected clock |
+| `memstats` | Go's `runtime.MemStats` |
+| `database` | `pgxpool` statistics: `total_conns`, `idle_conns`, `acquired_conns`, `acquire_count`, `empty_acquire_count`, `canceled_acquire_count`, `acquire_duration_ms` (the total time spent waiting for a connection, a running sum) |
+| `total_requests_received` | requests that entered the server (counted right after panic recovery, so 401s, 429s and 404s are included) |
+| `total_responses_sent` | responses written; `received - sent` is the number in flight (the scrape itself counts as one) |
+| `total_processing_time_μs` | the sum of every request's duration in microseconds, from the injected clock; divide by `total_responses_sent` for the mean |
+| `total_responses_sent_by_status` | a map from status code to count, e.g. `{"200": 41, "401": 3, "409": 1}` |
+| `orders_created` | orders stored |
+| `batches_formed` | batches newly formed by `POST /orders/batch` (batches that were already open are not counted again) |
+| `batches_accepted` | batches won by a rider (an idempotent retry by the winner is not counted again) |
+| `batch_accept_conflicts` | accepts that lost the race or hit an expired batch (`409`) |
+| `batch_capacity_rejections` | accepts refused because the rider had no room (`422`) |
+| `cone_matches_served` | completed `POST /riders/match-orders` calls |
+| `rider_matches_served` | completed `POST /orders/match-riders` calls |
+| `idempotent_replays` | `Idempotency-Key` retries answered from the stored response |
+
+The domain counters are incremented in the services **after the work has succeeded** (the database commit has returned), so a
+validation error, a rolled-back transaction or a `409` never moves `orders_created` or `batches_accepted`. All counters are in memory and
+start at zero when the process starts; with several instances each reports its own, so a scraper should sum them and treat a
+drop as a restart.
+
+### What to alert on
+
+- **`batch_accept_conflicts` rising** faster than `batches_accepted`: riders are racing for the same batches, so some wait and lose.
+  Consider smaller offer areas or more batches per request. A ratio near 1:1 is the first sign of a thin supply of orders.
+- **`batch_capacity_rejections` rising:** the app is showing riders batches they cannot take; the rider app's capacity display is stale.
+- **`database.canceled_acquire_count` growing:** requests gave up waiting for a connection, so the pool is starved. Also watch
+  `acquired_conns` pinned at `DB_MAX_CONNS` and the mean wait (`acquire_duration_ms` divided by `acquire_count`) climbing; raise
+  `DB_MAX_CONNS` or find the slow query (`DB_QUERY_TIMEOUT` turns those into `500`s).
+- **`total_responses_sent_by_status`:** a rising `5xx` share is an incident; a rising `429` means the limiter is biting a legitimate client
+  (or one NAT); a rising `401` is a misconfigured client or key guessing (the log lines carry `key_fingerprint`).
+- **`total_processing_time_μs / total_responses_sent`:** the mean latency; alert when it doubles against its baseline.
+- **`goroutines`** climbing steadily without traffic is a leak.
+- **`idempotent_replays`:** a spike means clients are retrying (timeouts upstream), not a fault in itself.
+- **`orders_created` flat** during business hours while requests continue means order creation is failing or clients have stopped.
+
+### Decisions beyond the brief
+
+- The values live in a per-server `expvar.Map`, not in expvar's global registry (`expvar.NewInt` panics on a second server, and every
+  test builds one). The handler serves that map's JSON itself; the standard `cmdline` variable is left out because it would echo the process arguments.
+- The status code comes from Gin's own response writer, which records it, so no wrapper type is needed; a panic is counted as the `500`
+  that the recovery middleware then sends.
+- `batches_formed` counts batches whose `created_at` equals the call's clock time (to the millisecond), because the repository returns
+  every open batch on offer, new or not. The same test marks an accept as fresh via `accepted_at`.
+- The cone and rider match counters count requests served, including ones with an empty result (the rider was at capacity, or nothing was pending).

@@ -11,6 +11,7 @@ import (
 	"github.com/codercollo/zemi-fleet/internal/api"
 	"github.com/codercollo/zemi-fleet/internal/clock"
 	"github.com/codercollo/zemi-fleet/internal/config"
+	"github.com/codercollo/zemi-fleet/internal/metrics"
 	"github.com/codercollo/zemi-fleet/internal/repository"
 	"github.com/codercollo/zemi-fleet/internal/service"
 )
@@ -24,14 +25,16 @@ func Build(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, clk clock
 // New returns the API server itself, which cmd/api runs with Serve so it can shut down gracefully.
 func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, clk clock.Clock, version string) *api.Server {
 	store := repository.NewStore(pool, cfg.DB.QueryTimeout)
+	counters := metrics.New()
 
 	server := api.NewServer(cfg, logger, pool, api.Services{
-		Orders:      service.NewOrderService(store, clk, cfg.RiderPayoutBPS, cfg.OrderMinTripM),
+		Orders:      service.NewOrderService(store, clk, cfg.RiderPayoutBPS, cfg.OrderMinTripM).WithMetrics(counters),
 		Riders:      service.NewRiderService(store, clk),
-		Matching:    service.NewMatchingService(store, clk, logger, cfg.Cone),
-		Batches:     service.NewBatchService(store, clk, cfg.Batch),
-		Preferences: service.NewPreferenceService(store, clk, cfg.Match, cfg.OrderMinTripM),
-		Idempotency: service.NewIdempotencyService(store, clk, cfg.IdempotencyTTL, cfg.IdempotencyProcessingTimeout),
+		Matching:    service.NewMatchingService(store, clk, logger, cfg.Cone).WithMetrics(counters),
+		Batches:     service.NewBatchService(store, clk, cfg.Batch).WithMetrics(counters),
+		Preferences: service.NewPreferenceService(store, clk, cfg.Match, cfg.OrderMinTripM).WithMetrics(counters),
+		Idempotency: service.NewIdempotencyService(store, clk, cfg.IdempotencyTTL, cfg.IdempotencyProcessingTimeout).WithMetrics(counters),
+		Metrics:     counters,
 		Clock:       clk,
 	}, version)
 	return server

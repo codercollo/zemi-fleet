@@ -10,6 +10,7 @@ import (
 	"github.com/codercollo/zemi-fleet/internal/clock"
 	"github.com/codercollo/zemi-fleet/internal/domain"
 	"github.com/codercollo/zemi-fleet/internal/geo"
+	"github.com/codercollo/zemi-fleet/internal/metrics"
 	"github.com/codercollo/zemi-fleet/internal/repository"
 	"github.com/codercollo/zemi-fleet/internal/repository/sqlc"
 	"github.com/codercollo/zemi-fleet/internal/util"
@@ -24,11 +25,18 @@ type OrderService struct {
 	payoutBPS int
 	// minTripM is ORDER_MIN_TRIP_M: shorter pickup-to-delivery trips are rejected.
 	minTripM float64
+	metrics  *metrics.Counters
 }
 
 // NewOrderService wires the service to its store, clock and the configured payout share.
 func NewOrderService(store repository.Store, clk clock.Clock, payoutBPS, minTripM int) *OrderService {
 	return &OrderService{store: store, clock: clk, payoutBPS: payoutBPS, minTripM: float64(minTripM)}
+}
+
+// WithMetrics makes the service count business events in c. Without it nothing is counted.
+func (s *OrderService) WithMetrics(c *metrics.Counters) *OrderService {
+	s.metrics = c
+	return s
 }
 
 // CreateOrderInput is a validated order request. Money is in cents.
@@ -91,6 +99,7 @@ func (s *OrderService) Create(ctx context.Context, in CreateOrderInput) (domain.
 	if err != nil {
 		return domain.Order{}, fmt.Errorf("create order: %w", err)
 	}
+	s.metrics.OrderCreated()
 	return orderFromRow(row), nil
 }
 

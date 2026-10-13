@@ -19,13 +19,17 @@ func (s *Server) Routes() http.Handler { return s.router() }
 // MIDDLEWARE ORDER (outermost first), and why:
 //
 //	recoverPanic     outermost, so a panic in ANY later middleware or handler becomes a logged 500, not a dropped connection
+//	metrics          (only when METRICS_ENABLED) right after the recovery, so every response is counted: 401s, 429s, panics
 //	requestID        next, so everything after (logs, errors) can carry the ID
 //	securityHeaders  before anything can answer, so even a 429 or a 404 carries nosniff and no-store
+//	enableCORS       before auth and the limiter: a browser sends no API key on a preflight, so a trusted origin's
+//	                 preflight is answered here; Vary: Origin is on every response
 //	accessLog        wraps the rest, so the line records the final status (rate-limited and panicked requests too)
 //	rateLimit        before any work is done for the client; /healthz is exempt
 //	requireAPIKey    after the limiter, so guessing keys is rate-limited; only GET /healthz is exempt; before any handler
 //	                 or idempotency, so an unauthenticated request never reaches a service
-//	handlers         the idempotency middleware sits on its two POST routes only, after everything above
+//	idempotency      on its two POST routes only, after everything above
+//	handlers
 //
 // The engine comes from gin.New(), never gin.Default(): Default adds Gin's own Logger and Recovery, and we have
 // exactly one of each, ours.
@@ -43,7 +47,16 @@ func (s *Server) router(extra ...func(*gin.Engine)) *gin.Engine {
 	r.NoRoute(s.notFoundResponse)
 	r.NoMethod(s.methodNotAllowedResponse)
 
-	r.Use(s.recoverPanic(), s.requestID(), s.securityHeaders(), s.accessLog(), s.rateLimit(), s.requireAPIKey())
+	r.Use(s.recoverPanic())
+	if s.cfg.MetricsEnabled {
+		r.Use(s.metricsMiddleware())
+	}
+	r.Use(s.requestID(), s.securityHeaders(), s.enableCORS(), s.accessLog(), s.rateLimit(), s.requireAPIKey())
+
+	// Behind the same chain as everything else: it needs the API key and is rate limited. Disabled means no route (404).
+	if s.cfg.MetricsEnabled {
+		r.GET(metricsPath, s.metricsHandler)
+	}
 
 	v2 := r.Group(apiPrefix)
 	v2.GET("/healthz", s.healthzHandler)

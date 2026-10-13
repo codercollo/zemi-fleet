@@ -13,6 +13,7 @@ import (
 	"github.com/codercollo/zemi-fleet/internal/clock"
 	"github.com/codercollo/zemi-fleet/internal/config"
 	"github.com/codercollo/zemi-fleet/internal/domain"
+	"github.com/codercollo/zemi-fleet/internal/metrics"
 	"github.com/codercollo/zemi-fleet/internal/mock"
 	"github.com/codercollo/zemi-fleet/internal/repository"
 	"github.com/codercollo/zemi-fleet/internal/repository/sqlc"
@@ -264,4 +265,22 @@ func TestListBatches(t *testing.T) {
 
 		assert.ErrorIs(t, err, boom)
 	})
+}
+
+func TestCreateBatches_CountsOnlyNewlyFormedBatches(t *testing.T) {
+	f := newBatchFixture(t)
+	counters := metrics.New()
+	f.svc.WithMetrics(counters)
+	now := f.clk.Now()
+	f.store.EXPECT().GetRider(gomock.Any(), "rider_001").Return(riderRow(0, 5, true), nil)
+	f.store.EXPECT().CreateBatchesTx(gomock.Any(), gomock.Any()).Return([]domain.Batch{
+		{ID: "batch_new1", CreatedAt: now},
+		{ID: "batch_new2", CreatedAt: now.Add(300 * time.Microsecond)}, // the database keeps microseconds
+		{ID: "batch_old", CreatedAt: now.Add(-2 * time.Minute)},        // already on offer from an earlier request
+	}, nil)
+
+	_, err := f.svc.CreateBatches(context.Background(), CreateBatchesInput{RiderID: "rider_001", MaxOrders: 5, RadiusKM: 2})
+
+	require.NoError(t, err)
+	assert.Equal(t, "2", counters.Vars()["batches_formed"].String())
 }

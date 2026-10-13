@@ -8,6 +8,7 @@ import (
 
 	"github.com/codercollo/zemi-fleet/internal/clock"
 	"github.com/codercollo/zemi-fleet/internal/config"
+	"github.com/codercollo/zemi-fleet/internal/metrics"
 	"github.com/codercollo/zemi-fleet/internal/service"
 )
 
@@ -25,6 +26,8 @@ type Services struct {
 	Batches     *service.BatchService
 	Preferences *service.PreferenceService
 	Idempotency *service.IdempotencyService
+	// Metrics are the domain counters the services increment; the HTTP layer publishes them. Nil means a fresh set.
+	Metrics *metrics.Counters
 	// Clock is the source of time for the HTTP layer (access-log durations, the rate limiter). Nil means clock.Real{}.
 	Clock clock.Clock
 }
@@ -42,6 +45,7 @@ type Server struct {
 	preferences *service.PreferenceService
 	idempotency *service.IdempotencyService
 	clock       clock.Clock
+	metrics     *requestMetrics
 	limiter     *limiter // nil when LIMITER_ENABLED is false
 	wg          sync.WaitGroup
 	version     string
@@ -58,6 +62,11 @@ func NewServer(cfg config.Config, logger *slog.Logger, db Pinger, svc Services, 
 		orders: svc.Orders, riders: svc.Riders, matching: svc.Matching, batches: svc.Batches,
 		preferences: svc.Preferences, idempotency: svc.Idempotency,
 	}
+	counters := svc.Metrics
+	if counters == nil {
+		counters = metrics.New()
+	}
+	s.metrics = s.newRequestMetrics(counters)
 	if cfg.Limiter.Enabled {
 		s.limiter = newLimiter(cfg.Limiter.RPS, cfg.Limiter.Burst, clk)
 	}

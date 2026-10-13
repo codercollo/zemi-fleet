@@ -13,6 +13,7 @@ import (
 
 	"github.com/codercollo/zemi-fleet/internal/clock"
 	"github.com/codercollo/zemi-fleet/internal/domain"
+	"github.com/codercollo/zemi-fleet/internal/metrics"
 	"github.com/codercollo/zemi-fleet/internal/repository"
 	"github.com/codercollo/zemi-fleet/internal/repository/sqlc"
 )
@@ -28,11 +29,18 @@ type IdempotencyService struct {
 	// processingTimeout is how long a claim may stay unfinished before another request may take it over
 	// (IDEMPOTENCY_PROCESSING_TIMEOUT): the first attempt probably crashed.
 	processingTimeout time.Duration
+	metrics           *metrics.Counters
 }
 
 // NewIdempotencyService wires the service.
 func NewIdempotencyService(store repository.Store, clk clock.Clock, ttl, processingTimeout time.Duration) *IdempotencyService {
 	return &IdempotencyService{store: store, clock: clk, ttl: ttl, processingTimeout: processingTimeout}
+}
+
+// WithMetrics makes the service count business events in c. Without it nothing is counted.
+func (s *IdempotencyService) WithMetrics(c *metrics.Counters) *IdempotencyService {
+	s.metrics = c
+	return s
 }
 
 // Decision says what to do with a request that carries a key.
@@ -70,6 +78,14 @@ func HashBody(body []byte) string {
 // Begin decides what to do with a request. It first deletes keys older than the TTL (cleanup on write), then
 // tries to claim the key atomically.
 func (s *IdempotencyService) Begin(ctx context.Context, key, endpoint, requestHash string) (Decision, Stored, error) {
+	decision, stored, err := s.begin(ctx, key, endpoint, requestHash)
+	if err == nil && decision == Replay {
+		s.metrics.IdempotentReplay()
+	}
+	return decision, stored, err
+}
+
+func (s *IdempotencyService) begin(ctx context.Context, key, endpoint, requestHash string) (Decision, Stored, error) {
 	now := s.clock.Now()
 
 	if err := s.store.DeleteExpiredIdempotencyKeys(ctx, now.Add(-s.ttl)); err != nil {

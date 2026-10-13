@@ -10,6 +10,7 @@ import (
 	"github.com/codercollo/zemi-fleet/internal/domain"
 	"github.com/codercollo/zemi-fleet/internal/geo"
 	"github.com/codercollo/zemi-fleet/internal/matching"
+	"github.com/codercollo/zemi-fleet/internal/metrics"
 	"github.com/codercollo/zemi-fleet/internal/repository"
 )
 
@@ -19,6 +20,7 @@ type PreferenceService struct {
 	clock    clock.Clock
 	params   matching.PrefParams
 	minTripM float64
+	metrics  *metrics.Counters
 }
 
 // NewPreferenceService wires the service. Distances are kilometres in config and metres in the algorithm.
@@ -37,6 +39,12 @@ func NewPreferenceService(store repository.Store, clk clock.Clock, cfg config.Ma
 		},
 		minTripM: float64(minTripM),
 	}
+}
+
+// WithMetrics makes the service count business events in c. Without it nothing is counted.
+func (s *PreferenceService) WithMetrics(c *metrics.Counters) *PreferenceService {
+	s.metrics = c
+	return s
 }
 
 // OrderDetails describes an order that may not be saved yet.
@@ -68,6 +76,7 @@ func (s *PreferenceService) MatchRiders(ctx context.Context, in MatchRidersInput
 		return nil, fmt.Errorf("list candidate riders: %w", err)
 	}
 	if len(rows) == 0 {
+		s.metrics.RiderMatchServed()
 		return []matching.RiderMatch{}, nil
 	}
 	ids := make([]string, 0, len(rows))
@@ -116,6 +125,7 @@ func (s *PreferenceService) MatchRiders(ctx context.Context, in MatchRidersInput
 		riders = append(riders, pr)
 	}
 
+	s.metrics.RiderMatchServed()
 	return matching.MatchRiders(order, riders, s.params, s.clock.Now()), nil
 }
 

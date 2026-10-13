@@ -54,6 +54,11 @@ type Config struct {
 	APIKeys []APIKey `mapstructure:"-"`
 
 	Limiter LimiterConfig `mapstructure:",squash"`
+	CORS    CORSConfig    `mapstructure:",squash"`
+
+	// MetricsEnabled turns on GET /debug/vars (Let's Go Further ch. 19). When METRICS_ENABLED is not set it is true in
+	// development and staging and false in production, decided in Load. Disabled means the route is not registered (404).
+	MetricsEnabled bool `mapstructure:"-"`
 
 	// ShutdownTimeout is how long SIGINT/SIGTERM waits for in-flight requests to finish before the server gives up.
 	ShutdownTimeout time.Duration `mapstructure:"SHUTDOWN_TIMEOUT"`
@@ -186,6 +191,7 @@ var defaults = map[string]any{
 	"LIMITER_BURST":         20,
 	"TRUSTED_PROXIES":       "",
 	"API_KEYS":              "",
+	"CORS_TRUSTED_ORIGINS":  "",
 	"SHUTDOWN_TIMEOUT":      "30s",
 	"CONE_RADIUS_KM":        1,
 	"CONE_HALF_ANGLE_DEG":   30,
@@ -240,6 +246,10 @@ func Load(path string) (Config, error) {
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
 	}
+	cfg.MetricsEnabled = cfg.Env != EnvProduction
+	if v.IsSet("METRICS_ENABLED") {
+		cfg.MetricsEnabled = v.GetBool("METRICS_ENABLED")
+	}
 	cfg.APIKeys, _ = parseAPIKeys(cfg.APIKeysRaw, cfg.Env) // validate() has already reported any problem
 	cfg.APIKeysRaw = ""
 	return cfg, nil
@@ -287,6 +297,7 @@ func (c Config) validate() error {
 	_, keyErrs := parseAPIKeys(c.APIKeysRaw, c.Env)
 	errs = append(errs, keyErrs...)
 	errs = append(errs, c.Limiter.validate()...)
+	errs = append(errs, c.CORS.validate()...)
 	if c.ShutdownTimeout <= 0 {
 		errs = append(errs, fmt.Errorf("SHUTDOWN_TIMEOUT must be greater than zero (got %s)", c.ShutdownTimeout))
 	}

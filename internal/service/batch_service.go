@@ -2,28 +2,38 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/codercollo/zemi-fleet/internal/batching"
 	"github.com/codercollo/zemi-fleet/internal/clock"
 	"github.com/codercollo/zemi-fleet/internal/config"
 	"github.com/codercollo/zemi-fleet/internal/domain"
 	"github.com/codercollo/zemi-fleet/internal/geo"
+	"github.com/codercollo/zemi-fleet/internal/metrics"
 	"github.com/codercollo/zemi-fleet/internal/repository"
 )
 
 // BatchService forms and offers batches of pending orders.
 type BatchService struct {
-	store repository.Store
-	clock clock.Clock
-	cfg   config.BatchConfig
+	store   repository.Store
+	clock   clock.Clock
+	cfg     config.BatchConfig
+	metrics *metrics.Counters
 }
 
 // NewBatchService wires the service to its store, clock and batching settings.
 func NewBatchService(store repository.Store, clk clock.Clock, cfg config.BatchConfig) *BatchService {
 	return &BatchService{store: store, clock: clk, cfg: cfg}
+}
+
+// WithMetrics makes the service count business events in c. Without it nothing is counted.
+func (s *BatchService) WithMetrics(c *metrics.Counters) *BatchService {
+	s.metrics = c
+	return s
 }
 
 // CreateBatchesInput is a validated POST /orders/batch request.
@@ -60,10 +70,11 @@ func (s *BatchService) CreateBatches(ctx context.Context, in CreateBatchesInput)
 	}
 	size := min(in.MaxOrders, spare)
 
+	now := s.clock.Now()
 	batches, err := s.store.CreateBatchesTx(ctx, repository.CreateBatchesParams{
 		RiderID:       rider.ID,
 		RiderLocation: in.RiderLocation,
-		Now:           s.clock.Now(),
+		Now:           now,
 		TTL:           s.cfg.TTL,
 		SearchRadiusM: s.cfg.SearchRadiusKM * metresPerKM,
 		Batching: batching.Params{
@@ -77,6 +88,15 @@ func (s *BatchService) CreateBatches(ctx context.Context, in CreateBatchesInput)
 	if err != nil {
 		return nil, err
 	}
+
+	// The transaction returns every open batch on offer, new or not. The ones it just formed carry this call's time.
+	formed := 0
+	for _, b := range batches {
+		if sameInstant(b.CreatedAt, now) {
+			formed++
+		}
+	}
+	s.metrics.BatchesFormed(formed)
 
 	offers := make([]BatchOffer, 0, len(batches))
 	for _, b := range batches {
@@ -101,8 +121,22 @@ func (s *BatchService) CreateBatches(ctx context.Context, in CreateBatchesInput)
 // transaction (see repository.AcceptBatchTx); this only supplies the clock's time.
 // Errors: domain.ErrNotFound (rider or batch), ErrRiderUnavailable, ErrRiderAtCapacity, ErrBatchTaken.
 func (s *BatchService) Accept(ctx context.Context, batchID, riderID string) (domain.Batch, error) {
-	return s.store.AcceptBatchTx(ctx, repository.AcceptBatchParams{BatchID: batchID, RiderID: riderID, Now: s.clock.Now()})
+	now := s.clock.Now()
+	batch, err := s.store.AcceptBatchTx(ctx, repository.AcceptBatchParams{BatchID: batchID, RiderID: riderID, Now: now})
+	switch {
+	case errors.Is(err, domain.ErrBatchTaken):
+		s.metrics.BatchAcceptConflict()
+	case errors.Is(err, domain.ErrRiderAtCapacity):
+		s.metrics.BatchCapacityRejection()
+	case err == nil && batch.AcceptedAt != nil && sameInstant(*batch.AcceptedAt, now):
+		// An idempotent retry by the winner also returns 200, but its accepted_at is the first call's time.
+		s.metrics.BatchAccepted()
+	}
+	return batch, err
 }
+
+// sameInstant reports whether two times are the same moment up to the database's microsecond precision.
+func sameInstant(a, b time.Time) bool { return a.Sub(b).Abs() < time.Millisecond }
 
 // ListBatchesInput is a validated GET /batches request.
 type ListBatchesInput struct {

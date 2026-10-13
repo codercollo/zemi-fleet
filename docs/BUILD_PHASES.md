@@ -40,8 +40,8 @@ The algorithm packages (`geo`, `batching`, `matching`) are pure Go and are calle
 | 8 | Preference matching: `POST /orders/match-riders` | 9 | ✅ done |
 | 8.5 | Integration hardening: separate test database, e2e scenarios with SQL invariants, CI job, dead-file audit | — | ✅ done |
 | 9 | Structured logging, panic recovery, rate limiting, graceful shutdown | 10, 11, 12 | ✅ done |
-| 10 | Authentication: API key (+ PASETO stretch) | 16, 17 (13–15 skipped) | |
-| 11 | CORS and metrics | 18, 19 | |
+| 10 | Authentication: API key (+ PASETO stretch) | 16, 17 (13–15 skipped) | ✅ done |
+| 11 | CORS and metrics | 18, 19 | ✅ done |
 | 12 | Deliverables: OpenAPI, Postman, DOCUMENTATION.md, README, final audit | 20, 21 | |
 
 Target pace (deadline Fri 16 Oct, 22:00): Mon 0–2 · Tue 3–5 · Wed 6–7 · Thu 8–10 · Fri 11–12, submit by 18:00.
@@ -307,10 +307,16 @@ Target pace (deadline Fri 16 Oct, 22:00): Mon 0–2 · Tue 3–5 · Wed 6–7 ·
 
 ---
 
-## Phase 11 — CORS + metrics
+## Phase 11 — CORS + metrics ✅
 **Book:** 18 Cross Origin Requests · 19 Metrics
 
 **Scope:** trusted-origins CORS middleware (`CORS_TRUSTED_ORIGINS`), `expvar` metrics at `/debug/vars` (request counts, status codes, pool stats). Metrics are protected or disabled in production.
+
+**Notes (as built)**
+- **CORS:** `CORS_TRUSTED_ORIGINS` (validated: lowercase http/https origin, no `*`, path, query or user info; empty default = no CORS headers). `enableCORS` sits after `securityHeaders` and before `accessLog`/`rateLimit`/`requireAPIKey`: always `Vary: Origin` (plus `Vary: Access-Control-Request-Method` on preflights), exact-match echo of the origin (never `*`, no credentials), `Expose-Headers`, and a key-less `200` preflight for trusted origins; an untrusted preflight falls through to the normal 401.
+- **Metrics:** new `internal/metrics` (nil-safe `Counters`; services take `WithMetrics`, incremented after success) and `internal/api/metrics.go` (per-server `expvar.Map`, `metricsMiddleware` right after `recoverPanic`, `GET /debug/vars`). `METRICS_ENABLED` defaults to true in development and staging and false in production (decided in `config.Load`); disabled = no route and no middleware (404).
+- Tests: unit (CORS, metrics, config validation, counters on success only) and three e2e scenarios (counters follow a real workflow with a 409, CORS preflight, metrics protection and switch).
+- Verified: `make dev/audit`, `make dev/test/all`, `make dev/run` curls (preflight, evil origin, real GET, counters before/after with a 409; reseeded), `make staging/up && smoke && down`.
 
 > **Prompt:** Build Phase 11 from docs/BUILD_PHASES.md (Let's Go Further ch. 18–19): CORS middleware and expvar metrics.
 

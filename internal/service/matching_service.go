@@ -10,6 +10,7 @@ import (
 	"github.com/codercollo/zemi-fleet/internal/domain"
 	"github.com/codercollo/zemi-fleet/internal/geo"
 	"github.com/codercollo/zemi-fleet/internal/matching"
+	"github.com/codercollo/zemi-fleet/internal/metrics"
 	"github.com/codercollo/zemi-fleet/internal/repository"
 	"github.com/codercollo/zemi-fleet/internal/repository/sqlc"
 )
@@ -18,10 +19,11 @@ const metresPerKM = 1000
 
 // MatchingService finds pending pickups for a moving rider.
 type MatchingService struct {
-	store  repository.Store
-	clock  clock.Clock
-	logger *slog.Logger
-	params matching.ConeParams
+	store   repository.Store
+	clock   clock.Clock
+	logger  *slog.Logger
+	params  matching.ConeParams
+	metrics *metrics.Counters
 }
 
 // NewMatchingService wires the service. The cone settings come from config (kilometres there,
@@ -38,6 +40,12 @@ func NewMatchingService(store repository.Store, clk clock.Clock, logger *slog.Lo
 			MaxResults:   cone.MaxResults,
 		},
 	}
+}
+
+// WithMetrics makes the service count business events in c. Without it nothing is counted.
+func (s *MatchingService) WithMetrics(c *metrics.Counters) *MatchingService {
+	s.metrics = c
+	return s
 }
 
 // MatchOrdersInput is a validated match-orders request.
@@ -131,6 +139,7 @@ func (s *MatchingService) MatchOrders(ctx context.Context, in MatchOrdersInput) 
 		SpeedKMH:   in.SpeedKMH,
 	}, candidates, s.params, s.clock.Now())
 
+	s.metrics.ConeMatchServed()
 	return MatchOrdersResult{
 		Matches:                cone.Matches,
 		CanAcceptMore:          true,

@@ -35,6 +35,9 @@ const (
 // testNow is the fixed instant every handler test runs at.
 var testNow = time.Date(2026, 10, 13, 9, 0, 0, 0, time.UTC)
 
+// testMatchCfg mirrors the default MATCH_* settings.
+var testMatchCfg = config.MatchConfig{MaxDistanceKM: 10, LocationStaleAfter: 30 * time.Minute, WeightCategory: 0.25, WeightArea: 0.20, WeightProximity: 0.35, WeightAcceptance: 0.20, MaxResults: 10}
+
 // testBatchCfg mirrors the default BATCH_* settings.
 var testBatchCfg = config.BatchConfig{MaxOrders: 5, PickupRadiusKM: 2, DirectionToleranceDeg: 45, SearchRadiusKM: 5, VisibilityRadiusKM: 3, TTL: 10 * time.Minute, AvgSpeedKMH: 20, StopDwellMin: 2}
 
@@ -50,7 +53,8 @@ func newStoreHandler(t *testing.T) (http.Handler, *mock.MockStore) {
 	srv := NewServer(config.Config{Env: config.EnvDevelopment, RiderPayoutBPS: testPayoutBPS, Batch: testBatchCfg}, logger,
 		fakeDB{}, service.NewOrderService(store, clock.NewTest(testNow), testPayoutBPS, testMinTripM), service.NewRiderService(store, clock.NewTest(testNow)),
 		service.NewMatchingService(store, clock.NewTest(testNow), logger, testCone),
-		service.NewBatchService(store, clock.NewTest(testNow), testBatchCfg), "test")
+		service.NewBatchService(store, clock.NewTest(testNow), testBatchCfg),
+		service.NewPreferenceService(store, clock.NewTest(testNow), testMatchCfg, testMinTripM), "test")
 	return srv.Routes(), store
 }
 

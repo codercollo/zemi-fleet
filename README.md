@@ -28,6 +28,7 @@ All under `/api/v2`. Money is KES in JSON (cents in the database).
 | Method | Path | |
 |---|---|---|
 | GET | `/healthz` | status + database check |
+| POST | `/orders/match-riders` | rank riders for an order (stored by `order_id`, or unsaved via `order_details`) by category, area, minimum order value, distance and acceptance rate; preferences are hard filters |
 | POST | `/orders/batch` | form batches of up to 5 pending orders (pickups pairwise within `radius_km`, similar directions, oldest first) near a rider and return the open batches on offer, each with a suggested stop sequence |
 | GET | `/batches` | open batches near `lat`,`lng` (`radius_km`, `page`, `page_size`), nearest first, with pagination `metadata`; read-only |
 | POST | `/batches/:id/accept` | `{rider_id}`: the first rider to accept gets the batch exclusively (`409` after that, `422` if over capacity or off shift); a retry by the holder is `200` |
@@ -45,7 +46,7 @@ Errors: `400` malformed JSON or header, `404` unknown ID, `409` edit conflict, `
 
 **Optimistic locking.** Riders carry a `version`. Every write bumps it, and a write that loses a race gets `409`. Send `X-Expected-Version: <n>` on the PATCHes and the preferences PUT to be rejected with `409` when your copy is stale. Every statement is cut off after `DB_QUERY_TIMEOUT` (default 3s).
 
-See [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md) for the algorithms (proximity matching, order batching).
+See [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md) for the algorithms (proximity matching, order batching, rider preference matching).
 
 ## Build phases
 The work is tracked phase by phase in [docs/BUILD_PHASES.md](docs/BUILD_PHASES.md).

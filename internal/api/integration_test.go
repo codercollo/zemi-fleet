@@ -34,6 +34,9 @@ import (
 
 const concurrentRequests = 10
 
+// integrationMatchCfg mirrors the default MATCH_* settings.
+var integrationMatchCfg = config.MatchConfig{MaxDistanceKM: 10, LocationStaleAfter: 30 * time.Minute, WeightCategory: 0.25, WeightArea: 0.20, WeightProximity: 0.35, WeightAcceptance: 0.20, MaxResults: 10}
+
 // integrationBatchCfg mirrors the default BATCH_* settings.
 var integrationBatchCfg = config.BatchConfig{MaxOrders: 5, PickupRadiusKM: 2, DirectionToleranceDeg: 45, SearchRadiusKM: 5, VisibilityRadiusKM: 3, TTL: 10 * time.Minute, AvgSpeedKMH: 20, StopDwellMin: 2}
 
@@ -66,7 +69,8 @@ func integrationEnv(t *testing.T) (h http.Handler, riderID string, pool *pgxpool
 	srv := NewServer(config.Config{Env: config.EnvDevelopment, RiderPayoutBPS: 9000, DB: dbCfg, Batch: integrationBatchCfg}, logger, pool,
 		service.NewOrderService(store, clk, 9000, 50), service.NewRiderService(store, clk),
 		service.NewMatchingService(store, clk, logger, config.ConeConfig{RadiusKM: 1, HalfAngleDeg: 30, MinSpeedKMH: 3, MaxResults: 20}),
-		service.NewBatchService(store, clk, integrationBatchCfg), "integration")
+		service.NewBatchService(store, clk, integrationBatchCfg),
+		service.NewPreferenceService(store, clk, integrationMatchCfg, 50), "integration")
 	return srv.Routes(), riderID, pool
 }
 

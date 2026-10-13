@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"time"
 
@@ -37,7 +38,31 @@ type Config struct {
 
 	Cone  ConeConfig  `mapstructure:",squash"`
 	Batch BatchConfig `mapstructure:",squash"`
+	Match MatchConfig `mapstructure:",squash"`
 }
+
+// MatchConfig holds the rider preference matching tunables (POST /orders/match-riders).
+type MatchConfig struct {
+	// MaxDistanceKM: a rider with a fresh, known location farther than this from the pickup is excluded,
+	// and it is the distance at which the proximity score reaches 0.
+	MaxDistanceKM float64 `mapstructure:"MATCH_MAX_DISTANCE_KM"`
+	// LocationStaleAfter: a location older than this is treated as unknown (not filtered, scores 0 for proximity).
+	LocationStaleAfter time.Duration `mapstructure:"RIDER_LOCATION_STALE_AFTER"`
+	// The four score weights; they must sum to 1.0.
+	WeightCategory   float64 `mapstructure:"MATCH_WEIGHT_CATEGORY"`
+	WeightArea       float64 `mapstructure:"MATCH_WEIGHT_AREA"`
+	WeightProximity  float64 `mapstructure:"MATCH_WEIGHT_PROXIMITY"`
+	WeightAcceptance float64 `mapstructure:"MATCH_WEIGHT_ACCEPTANCE"`
+	// MaxResults caps matching_riders.
+	MaxResults int `mapstructure:"MATCH_MAX_RESULTS"`
+}
+
+// Limits for validating the match settings.
+const (
+	maxMatchDistanceKM = 100.0
+	maxMatchResults    = 100
+	weightSumTolerance = 1e-9
+)
 
 // BatchConfig holds the order-batching tunables.
 type BatchConfig struct {
@@ -118,6 +143,14 @@ var defaults = map[string]any{
 	"CONE_MIN_SPEED_KMH":    3,
 	"CONE_MAX_RESULTS":      20,
 
+	"MATCH_MAX_DISTANCE_KM":      10,
+	"RIDER_LOCATION_STALE_AFTER": "30m",
+	"MATCH_WEIGHT_CATEGORY":      0.25,
+	"MATCH_WEIGHT_AREA":          0.20,
+	"MATCH_WEIGHT_PROXIMITY":     0.35,
+	"MATCH_WEIGHT_ACCEPTANCE":    0.20,
+	"MATCH_MAX_RESULTS":          10,
+
 	"BATCH_MAX_ORDERS":              5,
 	"BATCH_PICKUP_RADIUS_KM":        2,
 	"BATCH_DIRECTION_TOLERANCE_DEG": 45,
@@ -187,6 +220,7 @@ func (c Config) validate() error {
 	}
 	errs = append(errs, c.Cone.validate()...)
 	errs = append(errs, c.Batch.validate()...)
+	errs = append(errs, c.Match.validate()...)
 	return errors.Join(errs...)
 }
 
@@ -242,6 +276,34 @@ func (b BatchConfig) validate() []error {
 	}
 	if b.StopDwellMin < 0 || b.StopDwellMin > maxBatchDwellMin {
 		errs = append(errs, fmt.Errorf("STOP_DWELL_MIN must be between 0 and %v (got %v)", maxBatchDwellMin, b.StopDwellMin))
+	}
+	return errs
+}
+
+func (m MatchConfig) validate() []error {
+	var errs []error
+	if m.MaxDistanceKM <= 0 || m.MaxDistanceKM > maxMatchDistanceKM {
+		errs = append(errs, fmt.Errorf("MATCH_MAX_DISTANCE_KM must be greater than 0 and at most %v (got %v)", maxMatchDistanceKM, m.MaxDistanceKM))
+	}
+	if m.LocationStaleAfter <= 0 {
+		errs = append(errs, fmt.Errorf("RIDER_LOCATION_STALE_AFTER must be greater than zero (got %s)", m.LocationStaleAfter))
+	}
+	if m.MaxResults < 1 || m.MaxResults > maxMatchResults {
+		errs = append(errs, fmt.Errorf("MATCH_MAX_RESULTS must be between 1 and %d (got %d)", maxMatchResults, m.MaxResults))
+	}
+	weights := map[string]float64{
+		"MATCH_WEIGHT_CATEGORY": m.WeightCategory, "MATCH_WEIGHT_AREA": m.WeightArea,
+		"MATCH_WEIGHT_PROXIMITY": m.WeightProximity, "MATCH_WEIGHT_ACCEPTANCE": m.WeightAcceptance,
+	}
+	negative := false
+	for name, w := range weights {
+		if w < 0 || w > 1 {
+			negative = true
+			errs = append(errs, fmt.Errorf("%s must be between 0 and 1 (got %v)", name, w))
+		}
+	}
+	if sum := m.WeightCategory + m.WeightArea + m.WeightProximity + m.WeightAcceptance; !negative && math.Abs(sum-1) > weightSumTolerance {
+		errs = append(errs, fmt.Errorf("the MATCH_WEIGHT_* values must sum to 1.0 (got %v)", sum))
 	}
 	return errs
 }

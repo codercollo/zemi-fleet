@@ -388,3 +388,129 @@ Rider B leaves no trace: nothing is assigned, no counter moves, no offer is reco
   also taken gets `422`, not `409`.
 - Other riders' unanswered offers for an accepted batch stay as they are (`accepted IS NULL`).
 - Orders in an accepted batch are no longer offered by `match-orders`, `GET /batches` or `POST /orders/batch`.
+
+---
+
+## Algorithm: rider preference matching
+
+`POST /api/v2/orders/match-riders` answers: *"which riders would want this order, best first?"* The pure
+algorithm is `internal/matching/preference.go` (no DB, config or HTTP imports); the service
+(`internal/service/preference_service.go`) loads the riders and their preferences and feeds it.
+
+### Request
+
+`{"order_id": "...", "order_details": {"category", "pickup_location": {"lat","lng"}, "delivery_location": {"lat","lng"}, "value_kes"}}`
+
+- `order_details` lets the match run for an order that is **not saved yet**. When it is sent it is used, and the
+  stored order (if `order_id` names one) is not read: **details win**.
+- When `order_details` is omitted, the order is loaded by `order_id` (`404` if unknown). `order_id` is required
+  in that case and optional otherwise.
+- Validation (`422`): the category must exist; `lat`/`lng` in range; `value_kes` greater than 0 with at most 2
+  decimals; pickup and delivery at least `ORDER_MIN_TRIP_M` apart (the same rule as `POST /orders`).
+
+### Hard filters vs the score, and why
+
+**Preferences are hard filters; the score only ranks the riders who passed them.** The brief says a rider who
+prefers "electronics only" must not be offered a food order, and asks for "all riders whose preferences match".
+If preferences were just score terms, a nearby rider with a great acceptance rate could outrank the rule and
+still appear for an order they said they never take, and the `matching_riders` list would contain people who
+will decline. Filtering first keeps the list honest; scoring then orders it. A preference left **empty** means
+"accepts everything" (no filter).
+
+Any one of these excludes a rider:
+
+| Filter | Rule |
+|---|---|
+| Availability | `is_available` is false |
+| Capacity | `current_orders_count >= max_capacity` |
+| Minimum order value | order `value_kes` is below the rider's minimum (equal is **in**; 1 KES below is out) |
+| Category | the rider has category preferences and the order's category is not one of them |
+| Area | the rider has area preferences and the pickup is inside none of them (haversine to the area centre `<= radius_m`; **on the boundary is in**) |
+| Distance | the rider has a **known, fresh** location farther than `MATCH_MAX_DISTANCE_KM` from the pickup |
+
+### Location freshness
+
+A rider's location is **fresh** if `location_updated_at` is within `RIDER_LOCATION_STALE_AFTER` (default 30 minutes)
+of the clock. A **stale or missing** location counts as **unknown**: the rider is *not* excluded by distance (we
+do not know they are far), but they score 0 for proximity and `distance_to_pickup_km` is `null`. A location with no
+timestamp cannot be trusted and is treated as unknown. A timestamp slightly in the future (clock skew) counts as fresh.
+
+### Score
+
+```
+category   = 1.0 if the rider explicitly prefers this category, 0.5 if they have no category preference
+area       = 1.0 if the pickup is inside an explicitly preferred area, 0.5 if they have no area preference
+proximity  = 1 - distance / MATCH_MAX_DISTANCE_KM       (0 if the location is unknown)
+acceptance = the rider's acceptance_rate                (accepted / offered)
+
+match_score = round2( 0.25*category + 0.20*area + 0.35*proximity + 0.20*acceptance )
+```
+
+The weights are `MATCH_WEIGHT_CATEGORY` (0.25), `MATCH_WEIGHT_AREA` (0.20), `MATCH_WEIGHT_PROXIMITY` (0.35) and
+`MATCH_WEIGHT_ACCEPTANCE` (0.20). **They must sum to 1.0**; the server refuses to start otherwise (a tolerance of
+1e-9 absorbs float noise). The neutral 0.5 means "no opinion": a rider with no preferences sits between a rider who
+explicitly wants the order (1.0) and one who would have been filtered out.
+
+**Sorting:** `match_score` descending, then distance ascending with unknown distances last, then `rider_id`. The
+sort uses the *rounded* score, the number the client sees, so two riders who both show 0.80 are ordered by distance
+rather than by an invisible third decimal. Capped at `MATCH_MAX_RESULTS` (10). `matching_riders` is always an array.
+
+**`matching_preferences`** lists only the *explicit* matches: the category code if the rider prefers it, then the
+names of every preferred area that contains the pickup (areas can overlap), e.g. `["electronics","Kilimani"]`. It
+is `[]` for a rider with no preferences.
+
+### Worked example (fresh seed)
+
+An **electronics** order worth **KES 5,000**, picked up at Yaya Centre in Kilimani (-1.2917, 36.7878):
+
+```
+filtered out (hard filters)
+  rider_001 Brian   prefers electronics, but only the Westlands and Parklands areas: pickup is in neither
+  rider_003 Kevin   at capacity (5/5)
+  rider_005 Samuel  off shift
+  rider_006 Grace   prefers food and documents only
+  rider_007 Peter   prefers Upper Hill and South B only
+
+ranked
+  rider_002 Mercy   0.25*1.0 (prefers electronics)  + 0.20*1.0 (pickup is in Kilimani, Kileleshwa and Lavington, all preferred)
+                    + 0.35*(1 - 0.39/10) = 0.336    + 0.20*0.88 = 0.176          = 0.962  -> 0.96
+  rider_010 Aisha   0.25*0.5 (no category pref)     + 0.20*0.5 (no area pref)
+                    + 0.35*(1 - 0.25/10) = 0.341    + 0.20*0.857 = 0.171         = 0.738  -> 0.74
+  rider_009 David   0.25*0.5                        + 0.20*0.5
+                    + 0.35*(1 - 4.48/10) = 0.193    + 0.20*0.80 = 0.160          = 0.578  -> 0.58
+  rider_004 Faith   0.125 + 0.10 + 0.35*(1 - 5.24/10) = 0.167 + 0.20*0.917 = 0.183 = 0.575  -> 0.58   (ties David on the rounded score; David is nearer, so he is first)
+  rider_008 Lucy    0.125 + 0.10 + 0 (no location yet) + 0 (no offers yet)          = 0.225  -> 0.23   (distance_to_pickup_km: null)
+```
+
+At KES 300 Mercy drops out (her minimum order value is KES 500), and a **food** order drops Mercy too and brings
+in Grace (prefers food; the pickup is inside her Kileleshwa and Lavington areas).
+
+### Configuration
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `MATCH_MAX_DISTANCE_KM` | 10 | A rider with a fresh location farther than this is excluded; also where the proximity score reaches 0 |
+| `RIDER_LOCATION_STALE_AFTER` | 30m | Older locations are unknown (not filtered, proximity 0, distance null) |
+| `MATCH_WEIGHT_CATEGORY` / `_AREA` / `_PROXIMITY` / `_ACCEPTANCE` | 0.25 / 0.20 / 0.35 / 0.20 | Score weights; must sum to 1.0 |
+| `MATCH_MAX_RESULTS` | 10 | Cap on `matching_riders` |
+
+### Assumptions and decisions
+
+- The pool of candidates is every rider who is on shift with spare capacity; the SQL only pre-filters those two
+  conditions and the pure function applies all six (so each is testable in isolation).
+- A new rider with no offers yet has an acceptance rate of 0, so scores lowest on that term; there is no
+  "benefit of the doubt" for newcomers.
+- `acceptance_rate` is shown with 3 decimals (as stored) and `match_score` with 2.
+- Order creation's minimum trip rule also applies to `order_details`, so an unsaved order is judged as strictly
+  as a saved one. A stored order found by `order_id` is not re-validated.
+- The seeded rider locations are timestamped when the seed runs, so after `RIDER_LOCATION_STALE_AFTER` they
+  become unknown until the riders ping again.
+
+### Limitations (for Improvements)
+
+- Straight-line distance from the rider's *last known* position, which may be minutes old, not a road route or an ETA.
+- The proximity score is linear in distance; a rider 5 km away scores half of one at the pickup regardless of traffic.
+- All eligible riders are loaded and scored in memory per call; fine for a city fleet, a geo-indexed prefilter
+  would be needed for tens of thousands of riders.
+- Preferences are all-or-nothing filters. There is no "prefers X but will accept Y at a premium".
+- It ranks riders but does not reserve or notify anyone; the offer flow is the batch accept in Phase 7.

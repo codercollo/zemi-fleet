@@ -472,6 +472,21 @@ func (mr *MockStoreMockRecorder) ListBatchStops(ctx, batchIds any) *gomock.Call 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListBatchStops", reflect.TypeOf((*MockStore)(nil).ListBatchStops), ctx, batchIds)
 }
 
+// ListMatchCandidateRiders mocks base method.
+func (m *MockStore) ListMatchCandidateRiders(ctx context.Context) ([]sqlc.ListMatchCandidateRidersRow, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListMatchCandidateRiders", ctx)
+	ret0, _ := ret[0].([]sqlc.ListMatchCandidateRidersRow)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListMatchCandidateRiders indicates an expected call of ListMatchCandidateRiders.
+func (mr *MockStoreMockRecorder) ListMatchCandidateRiders(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListMatchCandidateRiders", reflect.TypeOf((*MockStore)(nil).ListMatchCandidateRiders), ctx)
+}
+
 // ListOpenBatchSummaries mocks base method.
 func (m *MockStore) ListOpenBatchSummaries(ctx context.Context, arg sqlc.ListOpenBatchSummariesParams) ([]sqlc.ListOpenBatchSummariesRow, error) {
 	m.ctrl.T.Helper()
@@ -563,6 +578,21 @@ func (mr *MockStoreMockRecorder) ListPreferredAreas(ctx, riderID any) *gomock.Ca
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListPreferredAreas", reflect.TypeOf((*MockStore)(nil).ListPreferredAreas), ctx, riderID)
 }
 
+// ListPreferredAreasForRiders mocks base method.
+func (m *MockStore) ListPreferredAreasForRiders(ctx context.Context, riderIds []string) ([]sqlc.ListPreferredAreasForRidersRow, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListPreferredAreasForRiders", ctx, riderIds)
+	ret0, _ := ret[0].([]sqlc.ListPreferredAreasForRidersRow)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListPreferredAreasForRiders indicates an expected call of ListPreferredAreasForRiders.
+func (mr *MockStoreMockRecorder) ListPreferredAreasForRiders(ctx, riderIds any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListPreferredAreasForRiders", reflect.TypeOf((*MockStore)(nil).ListPreferredAreasForRiders), ctx, riderIds)
+}
+
 // ListPreferredCategories mocks base method.
 func (m *MockStore) ListPreferredCategories(ctx context.Context, riderID string) ([]string, error) {
 	m.ctrl.T.Helper()
@@ -576,6 +606,21 @@ func (m *MockStore) ListPreferredCategories(ctx context.Context, riderID string)
 func (mr *MockStoreMockRecorder) ListPreferredCategories(ctx, riderID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListPreferredCategories", reflect.TypeOf((*MockStore)(nil).ListPreferredCategories), ctx, riderID)
+}
+
+// ListPreferredCategoriesForRiders mocks base method.
+func (m *MockStore) ListPreferredCategoriesForRiders(ctx context.Context, riderIds []string) ([]sqlc.RiderPreferredCategory, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListPreferredCategoriesForRiders", ctx, riderIds)
+	ret0, _ := ret[0].([]sqlc.RiderPreferredCategory)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListPreferredCategoriesForRiders indicates an expected call of ListPreferredCategoriesForRiders.
+func (mr *MockStoreMockRecorder) ListPreferredCategoriesForRiders(ctx, riderIds any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListPreferredCategoriesForRiders", reflect.TypeOf((*MockStore)(nil).ListPreferredCategoriesForRiders), ctx, riderIds)
 }
 
 // MarkBatchOfferAccepted mocks base method.

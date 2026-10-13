@@ -47,6 +47,10 @@ type Querier interface {
 	InsertPreferredCategories(ctx context.Context, arg InsertPreferredCategoriesParams) error
 	ListBatchOrders(ctx context.Context, batchIds []string) ([]ListBatchOrdersRow, error)
 	ListBatchStops(ctx context.Context, batchIds []string) ([]BatchStop, error)
+	// Queries for rider preference matching (POST /orders/match-riders).
+	// Riders who could take another order at all: on shift and with spare capacity. Everything else
+	// (preferences, minimum value, distance) is applied by internal/matching, which has no SQL.
+	ListMatchCandidateRiders(ctx context.Context) ([]ListMatchCandidateRidersRow, error)
 	// GET /batches candidates: open, unexpired batches whose first pickup is inside a bounding box,
 	// with the creation time of their oldest order (for sorting). Read-only: nothing is expired or offered here.
 	ListOpenBatchSummaries(ctx context.Context, arg ListOpenBatchSummariesParams) ([]ListOpenBatchSummariesRow, error)
@@ -61,7 +65,9 @@ type Querier interface {
 	// applied in Go (internal/matching).
 	ListPendingOrdersInBox(ctx context.Context, arg ListPendingOrdersInBoxParams) ([]ListPendingOrdersInBoxRow, error)
 	ListPreferredAreas(ctx context.Context, riderID string) ([]string, error)
+	ListPreferredAreasForRiders(ctx context.Context, riderIds []string) ([]ListPreferredAreasForRidersRow, error)
 	ListPreferredCategories(ctx context.Context, riderID string) ([]string, error)
+	ListPreferredCategoriesForRiders(ctx context.Context, riderIds []string) ([]RiderPreferredCategory, error)
 	MarkBatchOfferAccepted(ctx context.Context, arg MarkBatchOfferAcceptedParams) error
 	// The rider takes on n orders and one more accepted offer. The version bump makes a client holding a
 	// stale X-Expected-Version conflict, because the rider's state really did change.

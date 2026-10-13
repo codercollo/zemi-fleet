@@ -37,7 +37,7 @@ The algorithm packages (`geo`, `batching`, `matching`) are pure Go and are calle
 | 5 | Geo core: haversine, bearing, angle difference | — (algorithm) | ✅ done |
 | 6 | Proximity matching: 60° cone, `POST /riders/match-orders` | 9 (sorting) | ✅ done |
 | 7 | Batching: clustering, sequencing, scoring, batch endpoints, exclusive accept | 8, 9 | ✅ done |
-| 8 | Preference matching: `POST /orders/match-riders` | 9 | |
+| 8 | Preference matching: `POST /orders/match-riders` | 9 | ✅ done |
 | 9 | Structured logging, panic recovery, rate limiting, graceful shutdown | 10, 11, 12 | |
 | 10 | Authentication: API key (+ PASETO stretch) | 16, 17 (13–15 skipped) | |
 | 11 | CORS and metrics | 18, 19 | |
@@ -222,13 +222,19 @@ Target pace (deadline Fri 16 Oct, 22:00): Mon 0–2 · Tue 3–5 · Wed 6–7 ·
 
 ---
 
-## Phase 8 — Preference matching
+## Phase 8 — Preference matching ✅
 **Scope**
 - `internal/matching/preference.go`:
   - **Hard filters:** the rider is available, under capacity, and the order's value is ≥ the rider's minimum.
   - **Score:** weighted category, area, proximity and acceptance rate. The weights come from config.
 - `matching_preferences` lists which of the rider's preferences matched.
 - `POST /api/v2/orders/match-riders`, using the brief's exact shape, best match first.
+
+**Notes (as built)**
+- Pure `internal/matching/preference.go` (`MatchRiders`): six hard filters, then the weighted score (category, area, proximity, acceptance); ranking on the rounded score, then distance (unknown last), then rider id; capped at `MATCH_MAX_RESULTS`. Service `preference_service.go`; handler `match_riders_handler.go`; queries in `db/query/match.sql` (candidates with spare capacity and their preferences, one query each for categories and areas).
+- Config: `MATCH_MAX_DISTANCE_KM`, `RIDER_LOCATION_STALE_AFTER`, `MATCH_WEIGHT_CATEGORY/AREA/PROXIMITY/ACCEPTANCE` (must sum to 1.0, validated), `MATCH_MAX_RESULTS`.
+- `order_details` wins over a stored order; `order_id` is required only when details are omitted; details get the same `ORDER_MIN_TRIP_M` check as `POST /orders`.
+- Decisions the brief did not fix: see "Assumptions and decisions" under the preference matching section of `docs/DOCUMENTATION.md`.
 
 **Done when:** tests cover a rider with no preferences (matches everything), an order below a rider's minimum (excluded), the ranking order, and the case where no riders match.
 

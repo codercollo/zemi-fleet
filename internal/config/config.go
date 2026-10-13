@@ -31,8 +31,35 @@ type Config struct {
 	// rewrites history.
 	RiderPayoutBPS int `mapstructure:"RIDER_PAYOUT_BPS"`
 
-	Cone ConeConfig `mapstructure:",squash"`
+	Cone  ConeConfig  `mapstructure:",squash"`
+	Batch BatchConfig `mapstructure:",squash"`
 }
+
+// BatchConfig holds the order-batching tunables.
+type BatchConfig struct {
+	// MaxOrders is the largest batch the algorithm will form (and the largest max_orders a request may ask for).
+	MaxOrders int `mapstructure:"BATCH_MAX_ORDERS"`
+	// PickupRadiusKM is the largest pairwise distance between pickups in one batch, and the largest radius_km a request may ask for.
+	PickupRadiusKM float64 `mapstructure:"BATCH_PICKUP_RADIUS_KM"`
+	// DirectionToleranceDeg is how far a trip's bearing may differ from the batch seed's.
+	DirectionToleranceDeg float64 `mapstructure:"BATCH_DIRECTION_TOLERANCE_DEG"`
+	// SearchRadiusKM is how far from the rider pending orders and open batches are looked up.
+	SearchRadiusKM float64 `mapstructure:"BATCH_SEARCH_RADIUS_KM"`
+	// TTL is how long an open batch stays on offer before it expires and its orders return to pending.
+	TTL time.Duration `mapstructure:"BATCH_TTL"`
+	// AvgSpeedKMH and StopDwellMin drive the delivery time estimates.
+	AvgSpeedKMH  float64 `mapstructure:"AVG_SPEED_KMH"`
+	StopDwellMin float64 `mapstructure:"STOP_DWELL_MIN"`
+}
+
+// Limits for validating the batch settings. MaxBatchOrders mirrors the batches.orders_count CHECK.
+const (
+	MaxBatchOrders    = 5
+	maxBatchRadiusKM  = 50.0
+	maxBatchDwellMin  = 60.0
+	maxBatchAvgSpeed  = 200.0
+	maxBatchTolerance = 180.0
+)
 
 // ConeConfig holds the proximity-matching (60 degree cone) tunables.
 type ConeConfig struct {
@@ -83,6 +110,14 @@ var defaults = map[string]any{
 	"CONE_HALF_ANGLE_DEG":   30,
 	"CONE_MIN_SPEED_KMH":    3,
 	"CONE_MAX_RESULTS":      20,
+
+	"BATCH_MAX_ORDERS":              5,
+	"BATCH_PICKUP_RADIUS_KM":        2,
+	"BATCH_DIRECTION_TOLERANCE_DEG": 45,
+	"BATCH_SEARCH_RADIUS_KM":        5,
+	"BATCH_TTL":                     "10m",
+	"AVG_SPEED_KMH":                 20,
+	"STOP_DWELL_MIN":                2,
 }
 
 // Load configuration
@@ -139,6 +174,7 @@ func (c Config) validate() error {
 		errs = append(errs, fmt.Errorf("DB_QUERY_TIMEOUT must be greater than zero (got %s)", c.DB.QueryTimeout))
 	}
 	errs = append(errs, c.Cone.validate()...)
+	errs = append(errs, c.Batch.validate()...)
 	return errors.Join(errs...)
 }
 
@@ -165,6 +201,32 @@ func (c ConeConfig) validate() []error {
 	}
 	if c.MaxResults < 1 || c.MaxResults > maxConeMaxResults {
 		errs = append(errs, fmt.Errorf("CONE_MAX_RESULTS must be between 1 and %d (got %d)", maxConeMaxResults, c.MaxResults))
+	}
+	return errs
+}
+
+func (b BatchConfig) validate() []error {
+	var errs []error
+	if b.MaxOrders < 1 || b.MaxOrders > MaxBatchOrders {
+		errs = append(errs, fmt.Errorf("BATCH_MAX_ORDERS must be between 1 and %d (got %d)", MaxBatchOrders, b.MaxOrders))
+	}
+	if b.PickupRadiusKM <= 0 || b.PickupRadiusKM > maxBatchRadiusKM {
+		errs = append(errs, fmt.Errorf("BATCH_PICKUP_RADIUS_KM must be greater than 0 and at most %v (got %v)", maxBatchRadiusKM, b.PickupRadiusKM))
+	}
+	if b.DirectionToleranceDeg <= 0 || b.DirectionToleranceDeg > maxBatchTolerance {
+		errs = append(errs, fmt.Errorf("BATCH_DIRECTION_TOLERANCE_DEG must be greater than 0 and at most %v (got %v)", maxBatchTolerance, b.DirectionToleranceDeg))
+	}
+	if b.SearchRadiusKM <= 0 || b.SearchRadiusKM > maxBatchRadiusKM {
+		errs = append(errs, fmt.Errorf("BATCH_SEARCH_RADIUS_KM must be greater than 0 and at most %v (got %v)", maxBatchRadiusKM, b.SearchRadiusKM))
+	}
+	if b.TTL <= 0 {
+		errs = append(errs, fmt.Errorf("BATCH_TTL must be greater than zero (got %s)", b.TTL))
+	}
+	if b.AvgSpeedKMH <= 0 || b.AvgSpeedKMH > maxBatchAvgSpeed {
+		errs = append(errs, fmt.Errorf("AVG_SPEED_KMH must be greater than 0 and at most %v (got %v)", maxBatchAvgSpeed, b.AvgSpeedKMH))
+	}
+	if b.StopDwellMin < 0 || b.StopDwellMin > maxBatchDwellMin {
+		errs = append(errs, fmt.Errorf("STOP_DWELL_MIN must be between 0 and %v (got %v)", maxBatchDwellMin, b.StopDwellMin))
 	}
 	return errs
 }

@@ -34,6 +34,9 @@ import (
 
 const concurrentRequests = 10
 
+// integrationBatchCfg mirrors the default BATCH_* settings.
+var integrationBatchCfg = config.BatchConfig{MaxOrders: 5, PickupRadiusKM: 2, DirectionToleranceDeg: 45, SearchRadiusKM: 5, TTL: 10 * time.Minute, AvgSpeedKMH: 20, StopDwellMin: 2}
+
 // integrationEnv connects to DATABASE_URL, creates a throwaway rider at version 1 and
 // returns the real router plus that rider's ID. The rider is deleted afterwards, so the
 // test never touches seeded data.
@@ -60,9 +63,10 @@ func integrationEnv(t *testing.T) (h http.Handler, riderID string, pool *pgxpool
 	gin.SetMode(gin.TestMode)
 	store := repository.NewStore(pool, dbCfg.QueryTimeout)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := NewServer(config.Config{Env: config.EnvDevelopment, RiderPayoutBPS: 9000, DB: dbCfg}, logger, pool,
+	srv := NewServer(config.Config{Env: config.EnvDevelopment, RiderPayoutBPS: 9000, DB: dbCfg, Batch: integrationBatchCfg}, logger, pool,
 		service.NewOrderService(store, clk, 9000), service.NewRiderService(store, clk),
-		service.NewMatchingService(store, clk, logger, config.ConeConfig{RadiusKM: 1, HalfAngleDeg: 30, MinSpeedKMH: 3, MaxResults: 20}), "integration")
+		service.NewMatchingService(store, clk, logger, config.ConeConfig{RadiusKM: 1, HalfAngleDeg: 30, MinSpeedKMH: 3, MaxResults: 20}),
+		service.NewBatchService(store, clk, integrationBatchCfg), "integration")
 	return srv.Routes(), riderID, pool
 }
 

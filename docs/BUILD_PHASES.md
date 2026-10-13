@@ -36,7 +36,7 @@ The algorithm packages (`geo`, `batching`, `matching`) are pure Go and are calle
 | 4 | Advanced CRUD: optimistic locking, query timeouts, partial updates | 8 | ✅ done |
 | 5 | Geo core: haversine, bearing, angle difference | — (algorithm) | ✅ done |
 | 6 | Proximity matching: 60° cone, `POST /riders/match-orders` | 9 (sorting) | ✅ done |
-| 7 | Batching: clustering, sequencing, scoring, batch endpoints, exclusive accept | 8, 9 | |
+| 7 | Batching: clustering, sequencing, scoring, batch endpoints, exclusive accept | 8, 9 | 7a done (7b: list + accept pending) |
 | 8 | Preference matching: `POST /orders/match-riders` | 9 | |
 | 9 | Structured logging, panic recovery, rate limiting, graceful shutdown | 10, 11, 12 | |
 | 10 | Authentication: API key (+ PASETO stretch) | 16, 17 (13–15 skipped) | |
@@ -190,7 +190,7 @@ Target pace (deadline Fri 16 Oct, 22:00): Mon 0–2 · Tue 3–5 · Wed 6–7 ·
 
 ---
 
-## Phase 7 — Batching + exclusive accept
+## Phase 7 — Batching + exclusive accept (7a done; 7b pending)
 **Book:** 8 (concurrency) · 9 (filtering)
 
 **Scope**
@@ -201,6 +201,13 @@ Target pace (deadline Fri 16 Oct, 22:00): Mon 0–2 · Tue 3–5 · Wed 6–7 ·
 - `tx_create_batches.go`: `FOR UPDATE SKIP LOCKED`, so concurrent batch requests never pick the same order.
 - `tx_accept_batch.go`: lock the rider, claim the batch only while it's `open` and its `version` matches, assign its orders, and increment the rider's order count.
 - Endpoints: `POST /orders/batch` (the brief), `GET /batches?lat=&lng=&radius_km=` (open batches near a position), `POST /batches/:id/accept` (409 if taken, 422 if over capacity).
+
+**7a (as built): batching algorithm + `POST /orders/batch`.** 7b adds `GET /batches`, `POST /batches/:id/accept` and the concurrent-accept test; Phase 7 is not done until then.
+- `internal/batching` (pure): `Form` (FIFO seed, pairwise pickup radius, direction vs the seed, cap), `Sequence` (nearest neighbour, pickup before delivery), scoring (`min(1, trips/route)`, per-order minutes, earnings).
+- `repository.CreateBatchesTx` (`tx_create_batches.go`): expire stale batches and release their orders, `FOR UPDATE SKIP LOCKED` selection, insert batches/stops, mark orders batched, one offer per (batch, rider). Added to the `Store` interface.
+- Config: `BATCH_MAX_ORDERS`, `BATCH_PICKUP_RADIUS_KM`, `BATCH_DIRECTION_TOLERANCE_DEG`, `BATCH_SEARCH_RADIUS_KM`, `BATCH_TTL`, `AVG_SPEED_KMH`, `STOP_DWELL_MIN`.
+- Phase 6 review fixes: the cone is skipped only for a null bearing or a known speed below the minimum; multi-key responses are structs so keys follow the brief's order (`writeJSON` takes `any`).
+- Decisions the brief did not fix: see "Assumptions and decisions" in the batching section of `docs/DOCUMENTATION.md`.
 
 **Done when:** a test where N goroutines accept the same batch produces exactly one winner, and the edge cases (0, 1 and 6 orders, opposite directions) pass.
 

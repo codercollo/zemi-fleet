@@ -104,8 +104,16 @@ type matchedOrderDTO struct {
 	EstimatedEarningsKES  float64     `json:"estimated_earnings_kes"`
 }
 
+// matchOrdersResponse is a struct, not an envelope map, so the keys are written in the brief's order.
+type matchOrdersResponse struct {
+	MatchingOrders         []matchedOrderDTO `json:"matching_orders"`
+	CanAcceptMoreOrders    bool              `json:"can_accept_more_orders"`
+	MaxAdditionalOrders    int               `json:"max_additional_orders"`
+	DirectionFilterApplied bool              `json:"direction_filter_applied"`
+}
+
 // newMatchOrdersDTO builds the response body. It is the brief's shape plus direction_filter_applied.
-func newMatchOrdersDTO(r service.MatchOrdersResult) envelope {
+func newMatchOrdersDTO(r service.MatchOrdersResult) matchOrdersResponse {
 	orders := make([]matchedOrderDTO, 0, len(r.Matches)) // non-nil: encodes as [] not null
 	for _, m := range r.Matches {
 		dto := matchedOrderDTO{
@@ -121,11 +129,11 @@ func newMatchOrdersDTO(r service.MatchOrdersResult) envelope {
 		}
 		orders = append(orders, dto)
 	}
-	return envelope{
-		"matching_orders":          orders,
-		"can_accept_more_orders":   r.CanAcceptMore,
-		"max_additional_orders":    r.MaxAdditional,
-		"direction_filter_applied": r.DirectionFilterApplied,
+	return matchOrdersResponse{
+		MatchingOrders:         orders,
+		CanAcceptMoreOrders:    r.CanAcceptMore,
+		MaxAdditionalOrders:    r.MaxAdditional,
+		DirectionFilterApplied: r.DirectionFilterApplied,
 	}
 }
 

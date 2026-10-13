@@ -32,6 +32,9 @@ const testPayoutBPS = 9000
 // testNow is the fixed instant every handler test runs at.
 var testNow = time.Date(2026, 10, 13, 9, 0, 0, 0, time.UTC)
 
+// testBatchCfg mirrors the default BATCH_* settings.
+var testBatchCfg = config.BatchConfig{MaxOrders: 5, PickupRadiusKM: 2, DirectionToleranceDeg: 45, SearchRadiusKM: 5, TTL: 10 * time.Minute, AvgSpeedKMH: 20, StopDwellMin: 2}
+
 // testCone mirrors the default CONE_* settings.
 var testCone = config.ConeConfig{RadiusKM: 1, HalfAngleDeg: 30, MinSpeedKMH: 3, MaxResults: 20}
 
@@ -41,9 +44,10 @@ func newStoreHandler(t *testing.T) (http.Handler, *mock.MockStore) {
 	gin.SetMode(gin.TestMode)
 	store := mock.NewMockStore(gomock.NewController(t))
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := NewServer(config.Config{Env: config.EnvDevelopment, RiderPayoutBPS: testPayoutBPS}, logger,
+	srv := NewServer(config.Config{Env: config.EnvDevelopment, RiderPayoutBPS: testPayoutBPS, Batch: testBatchCfg}, logger,
 		fakeDB{}, service.NewOrderService(store, clock.NewTest(testNow), testPayoutBPS), service.NewRiderService(store, clock.NewTest(testNow)),
-		service.NewMatchingService(store, clock.NewTest(testNow), logger, testCone), "test")
+		service.NewMatchingService(store, clock.NewTest(testNow), logger, testCone),
+		service.NewBatchService(store, clock.NewTest(testNow), testBatchCfg), "test")
 	return srv.Routes(), store
 }
 

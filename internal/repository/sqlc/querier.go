@@ -6,16 +6,29 @@ package sqlc
 
 import (
 	"context"
+	"time"
 )
 
 type Querier interface {
+	// offers_count feeds acceptance_rate. No version bump: like telemetry, it must not cause edit conflicts.
+	AddRiderOffers(ctx context.Context, arg AddRiderOffersParams) error
+	// Only a still-pending order can be batched; zero rows means it changed under us.
+	AssignOrderToBatch(ctx context.Context, arg AssignOrderToBatchParams) (int64, error)
 	// Used after replacing preferences, which live in other tables, so clients see the rider change.
 	BumpRiderVersion(ctx context.Context, arg BumpRiderVersionParams) (Rider, error)
+	CreateBatch(ctx context.Context, arg CreateBatchParams) (Batch, error)
+	// One offer per (batch, rider): asking again does not create a second row.
+	CreateBatchOffer(ctx context.Context, arg CreateBatchOfferParams) (int64, error)
+	CreateBatchStop(ctx context.Context, arg CreateBatchStopParams) error
 	// created_at comes from the injected clock (UTC), not now(): the column DEFAULT is only a fallback.
 	CreateOrder(ctx context.Context, arg CreateOrderParams) (Order, error)
 	DeletePreferredAreas(ctx context.Context, riderID string) error
 	DeletePreferredCategories(ctx context.Context, riderID string) error
+	// Queries for batch creation (POST /orders/batch). All timestamps come from the injected clock.
+	// Open batches past their TTL are no longer on offer.
+	ExpireStaleBatches(ctx context.Context, now time.Time) ([]string, error)
 	GetAreasByIDs(ctx context.Context, ids []string) ([]Area, error)
+	GetBatchesByIDs(ctx context.Context, ids []string) ([]Batch, error)
 	GetCategoriesByCodes(ctx context.Context, codes []string) ([]Category, error)
 	GetCategory(ctx context.Context, code string) (Category, error)
 	GetOrder(ctx context.Context, id string) (Order, error)
@@ -26,6 +39,13 @@ type Querier interface {
 	GetVendor(ctx context.Context, id string) (Vendor, error)
 	InsertPreferredAreas(ctx context.Context, arg InsertPreferredAreasParams) error
 	InsertPreferredCategories(ctx context.Context, arg InsertPreferredCategoriesParams) error
+	ListBatchOrders(ctx context.Context, batchIds []string) ([]ListBatchOrdersRow, error)
+	ListBatchStops(ctx context.Context, batchIds []string) ([]BatchStop, error)
+	// Open, unexpired batches whose first pickup (stop 1) is inside a bounding box and that fit max_orders.
+	ListOpenBatchesNearPoint(ctx context.Context, arg ListOpenBatchesNearPointParams) ([]ListOpenBatchesNearPointRow, error)
+	// Pending pickups inside a bounding box, oldest first, row-locked. SKIP LOCKED means a concurrent
+	// batch request that already holds an order simply does not see it, so no order is batched twice.
+	ListPendingOrdersForBatching(ctx context.Context, arg ListPendingOrdersForBatchingParams) ([]ListPendingOrdersForBatchingRow, error)
 	// Cone-matching candidates: pending pickups inside a lat/lng bounding box. The literal
 	// status = 'pending' lets Postgres use the partial index idx_orders_pending_pickup, and it
 	// keeps orders that are already batched or assigned out. Exact distance and angle are
@@ -33,6 +53,8 @@ type Querier interface {
 	ListPendingOrdersInBox(ctx context.Context, arg ListPendingOrdersInBoxParams) ([]ListPendingOrdersInBoxRow, error)
 	ListPreferredAreas(ctx context.Context, riderID string) ([]string, error)
 	ListPreferredCategories(ctx context.Context, riderID string) ([]string, error)
+	// Orders of expired batches go back to the pending pool.
+	ReleaseOrdersFromBatches(ctx context.Context, batchIds []string) error
 	UpdateRiderAvailability(ctx context.Context, arg UpdateRiderAvailabilityParams) (Rider, error)
 	// Optimistic lock (Let's Go Further ch. 8.2): no row comes back when the version moved on.
 	UpdateRiderLocation(ctx context.Context, arg UpdateRiderLocationParams) (Rider, error)

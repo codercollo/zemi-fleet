@@ -64,7 +64,8 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	orders := service.NewOrderService(store, clk, cfg.RiderPayoutBPS)
 	riders := service.NewRiderService(store, clk)
 	matching := service.NewMatchingService(store, clk, logger, cfg.Cone)
-	app := api.NewServer(cfg, logger, pool, orders, riders, matching, version)
+	batches := service.NewBatchService(store, clk, cfg.Batch)
+	app := api.NewServer(cfg, logger, pool, orders, riders, matching, batches, version)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),

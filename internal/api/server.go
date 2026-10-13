@@ -24,10 +24,11 @@ type Server struct {
 	orders   *service.OrderService
 	riders   *service.RiderService
 	matching *service.MatchingService
+	batches  *service.BatchService
 	version  string
 }
 
 // NewServer wires the dependencies together.
-func NewServer(cfg config.Config, logger *slog.Logger, db Pinger, orders *service.OrderService, riders *service.RiderService, matching *service.MatchingService, version string) *Server {
-	return &Server{cfg: cfg, logger: logger, db: db, orders: orders, riders: riders, matching: matching, version: version}
+func NewServer(cfg config.Config, logger *slog.Logger, db Pinger, orders *service.OrderService, riders *service.RiderService, matching *service.MatchingService, batches *service.BatchService, version string) *Server {
+	return &Server{cfg: cfg, logger: logger, db: db, orders: orders, riders: riders, matching: matching, batches: batches, version: version}
 }

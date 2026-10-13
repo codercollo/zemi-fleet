@@ -70,16 +70,17 @@ type ConeResult struct {
 // MatchCone picks the pending pickups worth offering to a moving rider:
 //
 //  1. keep pickups within RadiusM of the rider (inclusive);
-//  2. if the heading is known AND the speed is known and at least MinSpeedKMH, also keep only
-//     pickups whose bearing from the rider is within HalfAngleDeg of the heading (inclusive).
-//     A stationary or slow rider's GPS heading is noise, and an unknown heading or speed gives
-//     nothing to filter on, so all of those fall back to the full circle;
+//  2. if the heading is known, also keep only pickups whose bearing from the rider is within
+//     HalfAngleDeg of the heading (inclusive), unless the rider is known to be slow: a reported
+//     speed below MinSpeedKMH means the GPS heading is noise, so the full circle is used. An
+//     unknown heading gives nothing to filter on, so it also falls back to the full circle. A
+//     heading with no speed is trusted (the cone is used), because nothing says it is noise;
 //  3. sort by distance, then oldest order first (FIFO), then order ID, so the order is deterministic;
 //  4. cap at MaxResults.
 //
 // now is passed in (from the injected clock) so ages are exact in tests.
 func MatchCone(rider Rider, candidates []Candidate, p ConeParams, now time.Time) ConeResult {
-	applyCone := rider.HeadingDeg != nil && rider.SpeedKMH != nil && *rider.SpeedKMH >= p.MinSpeedKMH
+	applyCone := rider.HeadingDeg != nil && (rider.SpeedKMH == nil || *rider.SpeedKMH >= p.MinSpeedKMH)
 	result := ConeResult{Matches: []Match{}, DirectionFilterApplied: applyCone}
 
 	for _, c := range candidates {

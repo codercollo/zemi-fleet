@@ -59,14 +59,16 @@ pickup at bearing 10 degrees are 20 degrees apart, not 340.
 
 ### The fallback rule (when the cone is *not* used)
 
-The cone is applied only if the heading is known **and** the speed is known **and** the speed is at
-least `CONE_MIN_SPEED_KMH` (default 3). Otherwise the matcher uses the **full circle** (distance filter
-only) and returns `direction_filter_applied: false` and `angle_from_rider_degrees: null` for every match.
+The cone is skipped (the matcher uses the **full circle**: distance filter only, and returns
+`direction_filter_applied: false` and `angle_from_rider_degrees: null` for every match) in exactly two cases:
 
-Why: a GPS heading is derived from movement. A stationary or very slow rider (or one whose phone
-reports no heading) has a heading that is noise, and cutting their results to a random 60 degree wedge
-would hide orders next to them. An unknown speed is treated like a slow one, because nothing vouches
-for the heading.
+- the **bearing is null/omitted**: there is no direction to filter on;
+- a **speed is reported and is below `CONE_MIN_SPEED_KMH`** (default 3).
+
+A bearing with **no speed** uses the cone: nothing says the heading is noise, so it is trusted.
+
+Why: a GPS heading is derived from movement. A stationary or very slow rider has a heading that is noise,
+and cutting their results to a random 60 degree wedge would hide orders next to them.
 
 ### The authoritative count
 
@@ -128,3 +130,144 @@ Example (illustrative values):
 - **Rider at capacity or unavailable** still has their position recorded; only the matching is skipped.
   `direction_filter_applied` is `false` in that case because no filter ran.
 - A rider's position is trusted as sent (validated only for range); no check that it is in Nairobi.
+
+---
+
+## Algorithm: order batching
+
+`POST /api/v2/orders/batch` offers a rider batches of up to 5 pending orders that are picked up close
+together and delivered in similar directions. The pure algorithm is `internal/batching`
+(`batcher.go`, `sequencer.go`, `scoring.go`: no DB, config or clock imports); the transaction that feeds
+it is `internal/repository/tx_create_batches.go`.
+
+### Steps
+
+1. **Rider checks.** Unknown rider gives 404. A rider who is off shift or at capacity gets
+   `{"batches": []}` and no transaction runs. Otherwise the effective batch size is
+   `min(max_orders, max_capacity - current_orders_count)`, using the database's counts.
+2. **Expire.** In one transaction, every open batch whose `expires_at <= now` (clock time) becomes
+   `expired` and its orders go back to `pending` (`batch_id` and `batch_seq` cleared).
+3. **Select.** Pending orders whose pickup is within `BATCH_SEARCH_RADIUS_KM` of the rider (bounding box
+   in SQL, exact haversine in Go), oldest first, `FOR UPDATE SKIP LOCKED`. If two riders ask at the same
+   moment, the second simply skips rows the first holds, so no order is ever batched twice.
+4. **Form** (`batching.Form`): described below.
+5. **Store.** Insert each batch (`status = 'open'`, no rider, pickup centroid, `pickup_spread_m`,
+   `expires_at = now + BATCH_TTL`), its stops, and mark its orders `batched` with `batch_id` and
+   `batch_seq` (their FIFO rank).
+6. **Offer.** The rider is shown the new batches plus any still-open batches whose first pickup is
+   within `BATCH_SEARCH_RADIUS_KM` and whose size fits their effective size. A `batch_offers` row is
+   written per batch (once: asking again does not duplicate it or inflate `riders.offers_count`).
+7. **Sort** by `distance_to_first_pickup_km` (rider to the route's first stop), then by the batch's
+   oldest order (FIFO).
+
+A batch stays `open`, assigned to nobody, until a rider accepts it (Phase 7b). Anyone near the vendor may
+see it; the first to accept gets it exclusively.
+
+### Forming batches (`Form`)
+
+1. Sort orders by `created_at`, then `id` (**FIFO**).
+2. The **seed** is the oldest order not yet in a batch.
+3. Walk the remaining unused orders in FIFO order and add one if **both** hold:
+   - its pickup is within the radius (`radius_km` from the request, at most `BATCH_PICKUP_RADIUS_KM`)
+     of **every pickup already in the batch** (the pairwise rule), and
+   - its trip bearing (pickup to delivery) is within `BATCH_DIRECTION_TOLERANCE_DEG` of the **seed's**
+     trip bearing (`geo.AngleDiff`, so 350 and 20 degrees are 30 apart).
+
+   Stop at the effective size (never more than `BATCH_MAX_ORDERS`).
+4. An order with no partners becomes a batch of one, so it is still offered.
+5. Repeat from step 2 until every order is in exactly one batch.
+
+**The pairwise rule and why.** The brief says pickups are "within 2 km *of each other*". Measuring only
+from the seed would let A, B and C join when A-B is 1.5 km and A-C is 1.5 km but B-C is 3 km (B and C on
+opposite sides of A), which breaks that promise. Checking every pair keeps the whole pickup cluster inside
+the radius. Likewise A-B 1.5 km, B-C 1.5 km, A-C 3 km cannot all be one batch.
+
+**Direction tolerance.** Direction is compared with the *seed's* bearing, not the previous member's, so a
+batch cannot drift: trips at 0, 40 and 80 degrees are not one batch (80 is 80 from the seed) even though
+each is within 45 of its neighbour. A trip shorter than 1 m has no direction and is compatible with any.
+
+**FIFO.** Seeds are taken oldest-first and members are added oldest-first, so when a cluster has more
+than 5 orders the 5 oldest share the first batch and nobody who has waited longer is passed over for a
+newer order.
+
+### Sequencing (`Sequence`)
+
+The route starts at the seed's pickup. From the current position it goes to the **nearest feasible
+stop**: the pickup of any order not yet collected, or the delivery of an order already collected and not
+yet delivered. A delivery is never feasible before its own pickup, so every pickup precedes its delivery.
+Ties go to a pickup before a delivery, then to the older order, so the result is deterministic.
+
+### Scoring (`scoring.go`)
+
+```
+route_distance           = sum of the stop-to-stop legs (the first stop has leg 0)
+trip_distance(order)     = haversine(order pickup, order delivery)
+route_optimization_score = min(1, sum(trip_distance) / route_distance)
+                           = "useful loaded km per km driven"; 1.0 for a batch of one
+stop_time (seconds)      = cumulative_distance_to_stop / AVG_SPEED_KMH
+                           + STOP_DWELL_MIN * 60 * (number of EARLIER stops)
+estimated_time_min       = stop_time of that order's delivery, in minutes (the API rounds up)
+estimated_earnings       = sum(rider_earnings_cents)   # 90% of the delivery fees
+```
+
+### Worked example (seed data, fresh seed, `rider_001` at -1.2650, 36.8038)
+
+The oldest pending order near Westlands is `ord_002` (Sarit Centre to Kasarani, bearing 65.9). It is the
+seed. In FIFO order the next unused orders that fit are `ord_003` (Westlands Bites to Eastleigh, bearing
+102.2: 36.3 degrees from the seed, pickup 325 m away), `ord_009` and `ord_029` (Sarit to Kasarani again)
+and `ord_020` (Westlands Bites to Eastleigh again). That is five orders, so the batch is full:
+
+```
+batch   [ord_002, ord_003, ord_009, ord_020, ord_029]          (FIFO order)
+route   1P:002 > 2P:009 > 3P:029 > 4P:003 > 5P:020 > 6D:003 > 7D:020 > 8D:002 > 9D:009 > 10D:029
+trips   11.32 + 4.72 + 11.32 + 4.72 + 11.32 = 43.41 km          route 13.15 km
+score   min(1, 43.41 / 13.15 = 3.30) = 1.0
+time    ord_003 is delivered at stop 6: 16 min of driving + 5 earlier stops x 2 min = 26 min
+earn    216 + 396 + 396 + 216 + 396 = 1,620 KES
+```
+
+The next oldest unused order, `ord_004` (Yaya Centre to Madaraka, bearing 121), is both too far from Sarit
+(about 3.6 km) and heading a different way (55 degrees off the seed), so it seeds a different batch (`ord_004`, `ord_005`, `ord_010`, `ord_011`, `ord_013`), and so on.
+`ord_018` is left over from that cluster (6 Yaya orders, capacity 5) and becomes a batch of one.
+
+### Configuration
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `BATCH_MAX_ORDERS` | 5 | Largest batch (1 to 5; the database allows 5) and the largest `max_orders` a request may use |
+| `BATCH_PICKUP_RADIUS_KM` | 2 | Largest `radius_km` a request may use (the pairwise pickup radius) |
+| `BATCH_DIRECTION_TOLERANCE_DEG` | 45 | Largest bearing difference from the seed's trip |
+| `BATCH_SEARCH_RADIUS_KM` | 5 | How far from the rider orders are batched and open batches are shown |
+| `BATCH_TTL` | 10m | How long an open batch is offered before it expires |
+| `AVG_SPEED_KMH` | 20 | Driving speed for the time estimates |
+| `STOP_DWELL_MIN` | 2 | Minutes spent at each earlier stop |
+
+### Assumptions and decisions
+
+- Batching runs per request, around the asking rider (not as a background job), and only on orders within
+  the search radius of that rider.
+- A request's `radius_km` is the pairwise pickup radius; `BATCH_PICKUP_RADIUS_KM` is only the ceiling.
+- Existing open batches are shown to any rider whose location is within `BATCH_SEARCH_RADIUS_KM` of the
+  batch's first pickup and whose effective size fits the batch; the request's `radius_km` does not filter them.
+- A batch's route starts at its first pickup; `distance_to_first_pickup_km` is the rider-specific leg
+  to get there.
+- `estimated_time_min` is rounded **up** to a whole minute so the estimate never under-promises.
+- The score saturates at 1.0 whenever the route is shorter than the sum of the separate trips, which is
+  the case for nearly every same-direction batch. It separates "efficient" from "wasteful" batches, not
+  good from great ones.
+- A batch of only zero-length trips (pickup equals delivery) can score 0; such orders are not meaningful.
+- Batching does not record the rider's position (only `match-orders` does).
+
+### Limitations (for Improvements)
+
+- **Nearest neighbour is a heuristic, not an optimal tour.** A small TSP-with-precedence solver (or
+  insertion heuristics plus 2-opt) would shorten some routes.
+- **Straight-line (haversine) distances.** Real road distance and traffic (OSRM or similar) would change
+  the grouping, the sequence and the time estimates. Out of scope per the brief.
+- **Greedy FIFO grouping** is not an optimal partition: it never trades a slightly worse seed batch for a
+  better overall result, and it does not look at delivery clustering, only direction.
+- **Scoring** compares loaded distance to route distance; it ignores the distance from the rider to the
+  first pickup, order value or urgency, and saturates at 1.0 (see above).
+- **Concurrent requests** skip locked orders rather than wait, so a rider who asks at the same instant as
+  another may not see the other's brand-new batches until their next request.
+- **No re-batching of open batches.** Orders stay in their batch until it is accepted or expires.

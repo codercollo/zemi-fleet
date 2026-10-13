@@ -128,7 +128,7 @@ func TestMatchCone_FallsBackToFullCircle(t *testing.T) {
 		{"speed 0", Rider{Position: origin, HeadingDeg: ptr(0.0), SpeedKMH: ptr(0.0)}},
 		{"just below the minimum speed", Rider{Position: origin, HeadingDeg: ptr(0.0), SpeedKMH: ptr(2.99)}},
 		{"heading unknown", Rider{Position: origin, SpeedKMH: ptr(30.0)}},
-		{"speed unknown", Rider{Position: origin, HeadingDeg: ptr(0.0)}},
+		{"heading unknown (fast)", Rider{Position: origin, SpeedKMH: ptr(80.0)}},
 		{"both unknown", Rider{Position: origin}},
 	}
 	for _, tc := range tests {
@@ -147,6 +147,16 @@ func TestMatchCone_FallsBackToFullCircle(t *testing.T) {
 		res := MatchCone(Rider{Position: origin}, []Candidate{order("far", 90, 1500, 1)}, params, now)
 
 		assert.Empty(t, res.Matches)
+	})
+
+	t.Run("a heading with no speed uses the cone", func(t *testing.T) {
+		rider := Rider{Position: origin, HeadingDeg: ptr(0.0)}
+
+		res := MatchCone(rider, []Candidate{behind, ahead}, params, now)
+
+		assert.True(t, res.DirectionFilterApplied)
+		assert.Equal(t, []string{"ord_ahead"}, ids(res))
+		require.NotNil(t, res.Matches[0].AngleDeg)
 	})
 
 	t.Run("exactly the minimum speed applies the cone", func(t *testing.T) {

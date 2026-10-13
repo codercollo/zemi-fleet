@@ -263,3 +263,23 @@ func TestMatchOrders_500HidesInternals(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 	assert.NotContains(t, rec.Body.String(), "10.0.0.5")
 }
+
+// A bearing with no speed is trusted: the cone applies (a null bearing is what disables it).
+func TestMatchOrders_BearingWithoutSpeedUsesCone(t *testing.T) {
+	h, store := newStoreHandler(t)
+	store.EXPECT().GetRider(gomock.Any(), gomock.Any()).Return(matchRiderRow(0, 5, true), nil)
+	store.EXPECT().UpdateRiderTelemetry(gomock.Any(), gomock.Any()).Return(nil)
+	store.EXPECT().ListPendingOrdersInBox(gomock.Any(), gomock.Any()).Return([]sqlc.ListPendingOrdersInBoxRow{
+		pendingRow("ord_ahead", 0.002, time.Minute, 100), pendingRow("ord_behind", -0.002, time.Minute, 100),
+	}, nil)
+
+	rec := send(t, h, http.MethodPost, matchPath,
+		`{"rider_id":"rider_001","current_location":{"latitude":-1.2635,"longitude":36.8030},"bearing_degrees":0,"current_orders_count":0}`)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	body := decode(t, rec)
+	assert.Equal(t, true, body["direction_filter_applied"])
+	orders := body["matching_orders"].([]any)
+	require.Len(t, orders, 1)
+	assert.Equal(t, "ord_ahead", orders[0].(map[string]any)["order_id"])
+}

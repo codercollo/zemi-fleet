@@ -22,6 +22,10 @@ type Store interface {
 	// ExecTx runs fn inside one transaction and commits if it returns nil. The
 	// Querier passed to fn is bound to that transaction.
 	ExecTx(ctx context.Context, fn func(q sqlc.Querier) error) error
+
+	// CreateBatchesTx forms batches near a rider and returns the open batches on offer to them
+	// (tx_create_batches.go).
+	CreateBatchesTx(ctx context.Context, arg CreateBatchesParams) ([]domain.Batch, error)
 }
 
 // SQLStore is the PostgreSQL implementation of Store.

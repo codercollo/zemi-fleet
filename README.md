@@ -28,6 +28,7 @@ All under `/api/v2`. Money is KES in JSON (cents in the database).
 | Method | Path | |
 |---|---|---|
 | GET | `/healthz` | status + database check |
+| POST | `/orders/batch` | form batches of up to 5 pending orders (pickups pairwise within `radius_km`, similar directions, oldest first) near a rider and return the open batches on offer, each with a suggested stop sequence |
 | POST | `/orders` | create a pending order, `201` + `Location` |
 | GET | `/orders/:id` | one order |
 | GET | `/riders/:id` | rider with preferences |
@@ -42,7 +43,7 @@ Errors: `400` malformed JSON or header, `404` unknown ID, `409` edit conflict, `
 
 **Optimistic locking.** Riders carry a `version`. Every write bumps it, and a write that loses a race gets `409`. Send `X-Expected-Version: <n>` on the PATCHes and the preferences PUT to be rejected with `409` when your copy is stale. Every statement is cut off after `DB_QUERY_TIMEOUT` (default 3s).
 
-See [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md) for the algorithms (proximity matching so far).
+See [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md) for the algorithms (proximity matching, order batching).
 
 ## Build phases
 The work is tracked phase by phase in [docs/BUILD_PHASES.md](docs/BUILD_PHASES.md).

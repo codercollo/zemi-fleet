@@ -12,7 +12,10 @@ package mock
 import (
 	context "context"
 	reflect "reflect"
+	time "time"
 
+	domain "github.com/codercollo/zemi-fleet/internal/domain"
+	repository "github.com/codercollo/zemi-fleet/internal/repository"
 	sqlc "github.com/codercollo/zemi-fleet/internal/repository/sqlc"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -41,6 +44,35 @@ func (m *MockStore) EXPECT() *MockStoreMockRecorder {
 	return m.recorder
 }
 
+// AddRiderOffers mocks base method.
+func (m *MockStore) AddRiderOffers(ctx context.Context, arg sqlc.AddRiderOffersParams) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AddRiderOffers", ctx, arg)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// AddRiderOffers indicates an expected call of AddRiderOffers.
+func (mr *MockStoreMockRecorder) AddRiderOffers(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddRiderOffers", reflect.TypeOf((*MockStore)(nil).AddRiderOffers), ctx, arg)
+}
+
+// AssignOrderToBatch mocks base method.
+func (m *MockStore) AssignOrderToBatch(ctx context.Context, arg sqlc.AssignOrderToBatchParams) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AssignOrderToBatch", ctx, arg)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// AssignOrderToBatch indicates an expected call of AssignOrderToBatch.
+func (mr *MockStoreMockRecorder) AssignOrderToBatch(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AssignOrderToBatch", reflect.TypeOf((*MockStore)(nil).AssignOrderToBatch), ctx, arg)
+}
+
 // BumpRiderVersion mocks base method.
 func (m *MockStore) BumpRiderVersion(ctx context.Context, arg sqlc.BumpRiderVersionParams) (sqlc.Rider, error) {
 	m.ctrl.T.Helper()
@@ -54,6 +86,65 @@ func (m *MockStore) BumpRiderVersion(ctx context.Context, arg sqlc.BumpRiderVers
 func (mr *MockStoreMockRecorder) BumpRiderVersion(ctx, arg any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BumpRiderVersion", reflect.TypeOf((*MockStore)(nil).BumpRiderVersion), ctx, arg)
+}
+
+// CreateBatch mocks base method.
+func (m *MockStore) CreateBatch(ctx context.Context, arg sqlc.CreateBatchParams) (sqlc.Batch, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateBatch", ctx, arg)
+	ret0, _ := ret[0].(sqlc.Batch)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CreateBatch indicates an expected call of CreateBatch.
+func (mr *MockStoreMockRecorder) CreateBatch(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateBatch", reflect.TypeOf((*MockStore)(nil).CreateBatch), ctx, arg)
+}
+
+// CreateBatchOffer mocks base method.
+func (m *MockStore) CreateBatchOffer(ctx context.Context, arg sqlc.CreateBatchOfferParams) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateBatchOffer", ctx, arg)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CreateBatchOffer indicates an expected call of CreateBatchOffer.
+func (mr *MockStoreMockRecorder) CreateBatchOffer(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateBatchOffer", reflect.TypeOf((*MockStore)(nil).CreateBatchOffer), ctx, arg)
+}
+
+// CreateBatchStop mocks base method.
+func (m *MockStore) CreateBatchStop(ctx context.Context, arg sqlc.CreateBatchStopParams) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateBatchStop", ctx, arg)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CreateBatchStop indicates an expected call of CreateBatchStop.
+func (mr *MockStoreMockRecorder) CreateBatchStop(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateBatchStop", reflect.TypeOf((*MockStore)(nil).CreateBatchStop), ctx, arg)
+}
+
+// CreateBatchesTx mocks base method.
+func (m *MockStore) CreateBatchesTx(ctx context.Context, arg repository.CreateBatchesParams) ([]domain.Batch, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateBatchesTx", ctx, arg)
+	ret0, _ := ret[0].([]domain.Batch)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CreateBatchesTx indicates an expected call of CreateBatchesTx.
+func (mr *MockStoreMockRecorder) CreateBatchesTx(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateBatchesTx", reflect.TypeOf((*MockStore)(nil).CreateBatchesTx), ctx, arg)
 }
 
 // CreateOrder mocks base method.
@@ -113,6 +204,21 @@ func (mr *MockStoreMockRecorder) ExecTx(ctx, fn any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExecTx", reflect.TypeOf((*MockStore)(nil).ExecTx), ctx, fn)
 }
 
+// ExpireStaleBatches mocks base method.
+func (m *MockStore) ExpireStaleBatches(ctx context.Context, now time.Time) ([]string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ExpireStaleBatches", ctx, now)
+	ret0, _ := ret[0].([]string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ExpireStaleBatches indicates an expected call of ExpireStaleBatches.
+func (mr *MockStoreMockRecorder) ExpireStaleBatches(ctx, now any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExpireStaleBatches", reflect.TypeOf((*MockStore)(nil).ExpireStaleBatches), ctx, now)
+}
+
 // GetAreasByIDs mocks base method.
 func (m *MockStore) GetAreasByIDs(ctx context.Context, ids []string) ([]sqlc.Area, error) {
 	m.ctrl.T.Helper()
@@ -126,6 +232,21 @@ func (m *MockStore) GetAreasByIDs(ctx context.Context, ids []string) ([]sqlc.Are
 func (mr *MockStoreMockRecorder) GetAreasByIDs(ctx, ids any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAreasByIDs", reflect.TypeOf((*MockStore)(nil).GetAreasByIDs), ctx, ids)
+}
+
+// GetBatchesByIDs mocks base method.
+func (m *MockStore) GetBatchesByIDs(ctx context.Context, ids []string) ([]sqlc.Batch, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetBatchesByIDs", ctx, ids)
+	ret0, _ := ret[0].([]sqlc.Batch)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetBatchesByIDs indicates an expected call of GetBatchesByIDs.
+func (mr *MockStoreMockRecorder) GetBatchesByIDs(ctx, ids any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetBatchesByIDs", reflect.TypeOf((*MockStore)(nil).GetBatchesByIDs), ctx, ids)
 }
 
 // GetCategoriesByCodes mocks base method.
@@ -261,6 +382,66 @@ func (mr *MockStoreMockRecorder) InsertPreferredCategories(ctx, arg any) *gomock
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InsertPreferredCategories", reflect.TypeOf((*MockStore)(nil).InsertPreferredCategories), ctx, arg)
 }
 
+// ListBatchOrders mocks base method.
+func (m *MockStore) ListBatchOrders(ctx context.Context, batchIds []string) ([]sqlc.ListBatchOrdersRow, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListBatchOrders", ctx, batchIds)
+	ret0, _ := ret[0].([]sqlc.ListBatchOrdersRow)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListBatchOrders indicates an expected call of ListBatchOrders.
+func (mr *MockStoreMockRecorder) ListBatchOrders(ctx, batchIds any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListBatchOrders", reflect.TypeOf((*MockStore)(nil).ListBatchOrders), ctx, batchIds)
+}
+
+// ListBatchStops mocks base method.
+func (m *MockStore) ListBatchStops(ctx context.Context, batchIds []string) ([]sqlc.BatchStop, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListBatchStops", ctx, batchIds)
+	ret0, _ := ret[0].([]sqlc.BatchStop)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListBatchStops indicates an expected call of ListBatchStops.
+func (mr *MockStoreMockRecorder) ListBatchStops(ctx, batchIds any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListBatchStops", reflect.TypeOf((*MockStore)(nil).ListBatchStops), ctx, batchIds)
+}
+
+// ListOpenBatchesNearPoint mocks base method.
+func (m *MockStore) ListOpenBatchesNearPoint(ctx context.Context, arg sqlc.ListOpenBatchesNearPointParams) ([]sqlc.ListOpenBatchesNearPointRow, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListOpenBatchesNearPoint", ctx, arg)
+	ret0, _ := ret[0].([]sqlc.ListOpenBatchesNearPointRow)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListOpenBatchesNearPoint indicates an expected call of ListOpenBatchesNearPoint.
+func (mr *MockStoreMockRecorder) ListOpenBatchesNearPoint(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListOpenBatchesNearPoint", reflect.TypeOf((*MockStore)(nil).ListOpenBatchesNearPoint), ctx, arg)
+}
+
+// ListPendingOrdersForBatching mocks base method.
+func (m *MockStore) ListPendingOrdersForBatching(ctx context.Context, arg sqlc.ListPendingOrdersForBatchingParams) ([]sqlc.ListPendingOrdersForBatchingRow, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListPendingOrdersForBatching", ctx, arg)
+	ret0, _ := ret[0].([]sqlc.ListPendingOrdersForBatchingRow)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListPendingOrdersForBatching indicates an expected call of ListPendingOrdersForBatching.
+func (mr *MockStoreMockRecorder) ListPendingOrdersForBatching(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListPendingOrdersForBatching", reflect.TypeOf((*MockStore)(nil).ListPendingOrdersForBatching), ctx, arg)
+}
+
 // ListPendingOrdersInBox mocks base method.
 func (m *MockStore) ListPendingOrdersInBox(ctx context.Context, arg sqlc.ListPendingOrdersInBoxParams) ([]sqlc.ListPendingOrdersInBoxRow, error) {
 	m.ctrl.T.Helper()
@@ -304,6 +485,20 @@ func (m *MockStore) ListPreferredCategories(ctx context.Context, riderID string)
 func (mr *MockStoreMockRecorder) ListPreferredCategories(ctx, riderID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListPreferredCategories", reflect.TypeOf((*MockStore)(nil).ListPreferredCategories), ctx, riderID)
+}
+
+// ReleaseOrdersFromBatches mocks base method.
+func (m *MockStore) ReleaseOrdersFromBatches(ctx context.Context, batchIds []string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ReleaseOrdersFromBatches", ctx, batchIds)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ReleaseOrdersFromBatches indicates an expected call of ReleaseOrdersFromBatches.
+func (mr *MockStoreMockRecorder) ReleaseOrdersFromBatches(ctx, batchIds any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleaseOrdersFromBatches", reflect.TypeOf((*MockStore)(nil).ReleaseOrdersFromBatches), ctx, batchIds)
 }
 
 // UpdateRiderAvailability mocks base method.

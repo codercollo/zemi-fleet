@@ -72,13 +72,15 @@ db/query, db/seed      sqlc input SQL, Nairobi seed data                        
 
 - **Response shape:** an envelope with a named key, e.g. `{"batches": [...]}`, `{"matching_orders": [...]}`, `{"error": "..."}` or `{"error": {"field": "msg"}}`. Field names follow the brief exactly (snake_case: `estimated_earnings_kes`, `angle_from_rider_degrees`, …).
 - **Money:** `BIGINT` KES cents in the DB and in Go (`int64`). Convert to KES only in the API DTOs. Never use floats for money.
-- **Distances:** metres (int) in the DB, km in the API. **Bearings:** degrees in `[0, 360)`.
+- **Distances:** metres (int) in the DB, km in the API. **Bearings:** degrees in `[0, 360)`, stored as `DOUBLE PRECISION` (never REAL: float32 leaks noise like 38.70000076293945).
 - **IDs:** app-generated, prefixed and sortable (`ord_…`, `rider_…`, `batch_…`, `ven_…`, `area_…`) to match the brief's `"rider_123"` style.
 - **Concurrency:**
   - Mutable rows have a `version` column. Updates use `WHERE id=$1 AND version=$2`, and 0 rows affected means an edit conflict.
   - Batch acceptance runs in one transaction: lock the rider `FOR UPDATE`, then claim the batch `WHERE status='open' AND version=$v`.
   - Batch creation selects orders with `FOR UPDATE SKIP LOCKED`.
   - DB `CHECK` constraints are the last line of defence (capacity, state/assignment consistency).
+- **Optimistic locking:** `PATCH .../location`, `PATCH .../availability` and `PUT .../preferences` read the rider, then `UPDATE ... WHERE id=$1 AND version=$2 RETURNING *`; no row back = `ErrEditConflict` = 409. The optional `X-Expected-Version` header is compared with the stored version first (stale = 409). PATCH leaves omitted `bearing_degrees` / `speed_kmh` unchanged (pointer fields, ch. 8.1). The preferences PUT locks the rider row `FOR UPDATE` and bumps its version.
+- **Query timeouts:** `DB_QUERY_TIMEOUT` (default 3s) is applied per statement by a DBTX wrapper in `internal/repository/timeout.go`, so every sqlc query is covered. A timeout is an ordinary error and becomes a 500.
 - **Not-found mapping:** the repository wraps the pgx DBTX so every `:one` query returns `domain.ErrNotFound` instead of `pgx.ErrNoRows`. Services just `errors.Is(err, domain.ErrNotFound)`.
 - **Config:** every tunable is an environment variable read in `internal/config` (radius, cone angle, payout bps, average speed, batch TTL, rate limits, weights). Add new keys to `defaults`, `validate()`, `.env.example` and `docker-compose.yml`.
 - **Errors:** wrap with `fmt.Errorf("context: %w", err)`, log once at the edge, and never leak internals in a 500.
@@ -102,6 +104,7 @@ make dev/mock         # mockgen (pinned in the Makefile) -> internal/mock/store.
 make dev/run          # API natively on :4000
 make dev/audit        # what CI runs: tidy -diff, verify, gofmt, vet, staticcheck@v0.8.2, tests
 make dev/test | dev/test/race | dev/test/cover | dev/build
+make dev/test/integration   # -tags=integration against the real DATABASE_URL (concurrent PATCH -> one 200, rest 409; slow query cancelled)
 make dev/db/psql | dev/db/migrations/new name=x | dev/db/migrations/down | dev/db/migrations/version
 make staging/up       # cross-compile bin/linux_amd64/api -> image (target prebuilt) -> compose on :8080 (override with STAGING_API_PORT / STAGING_DB_PORT, e.g. when 8080 or 5433 are taken)
 make staging/smoke | staging/logs | staging/seed | staging/down
@@ -114,7 +117,7 @@ make help
 
 ## Build process (follow it)
 
-The work proceeds **one phase at a time** in `docs/BUILD_PHASES.md`, in Greenlight chapter order. Phases 0 (foundation, ch. 2–5), 1 (tooling, ch. 20–21), 2 (migrations, seed, sqlc config) and 3 (domain, repository, first CRUD) are done. **The next phase is Phase 4** (advanced CRUD: PATCH, optimistic locking, query timeouts).
+The work proceeds **one phase at a time** in `docs/BUILD_PHASES.md`, in Greenlight chapter order. Phases 0 (foundation, ch. 2–5), 1 (tooling, ch. 20–21), 2 (migrations, seed, sqlc config), 3 (domain, repository, first CRUD) and 4 (advanced CRUD: PATCH, optimistic locking, query timeouts) are done. **The next phase is Phase 5** (geo package).
 For each phase:
 
 1. Build only that phase's scope, on top of what already exists. Don't rewrite earlier phases unless they're broken.

@@ -9,6 +9,8 @@ import (
 )
 
 type Querier interface {
+	// Used after replacing preferences, which live in other tables, so clients see the rider change.
+	BumpRiderVersion(ctx context.Context, arg BumpRiderVersionParams) (Rider, error)
 	CreateOrder(ctx context.Context, arg CreateOrderParams) (Order, error)
 	DeletePreferredAreas(ctx context.Context, riderID string) error
 	DeletePreferredCategories(ctx context.Context, riderID string) error
@@ -25,6 +27,9 @@ type Querier interface {
 	InsertPreferredCategories(ctx context.Context, arg InsertPreferredCategoriesParams) error
 	ListPreferredAreas(ctx context.Context, riderID string) ([]string, error)
 	ListPreferredCategories(ctx context.Context, riderID string) ([]string, error)
+	UpdateRiderAvailability(ctx context.Context, arg UpdateRiderAvailabilityParams) (Rider, error)
+	// Optimistic lock (Let's Go Further ch. 8.2): no row comes back when the version moved on.
+	UpdateRiderLocation(ctx context.Context, arg UpdateRiderLocationParams) (Rider, error)
 	UpsertPreferences(ctx context.Context, arg UpsertPreferencesParams) (RiderPreference, error)
 }
 

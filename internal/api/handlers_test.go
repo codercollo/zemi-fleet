@@ -39,9 +39,13 @@ func newStoreHandler(t *testing.T) (http.Handler, *mock.MockStore) {
 	return srv.Routes(), store
 }
 
-func send(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {
+// send performs a request; headers are name, value pairs.
+func send(t *testing.T, h http.Handler, method, path, body string, headers ...string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	for i := 0; i+1 < len(headers); i += 2 {
+		req.Header.Set(headers[i], headers[i+1])
+	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
@@ -82,7 +86,7 @@ func orderRowFrom(p sqlc.CreateOrderParams) sqlc.Order {
 
 func TestCreateOrder(t *testing.T) {
 	validBody := `{"vendor_id":"ven_001","category":"electronics","delivery_location":{"lat":-1.2905,"lng":36.7870},
-		"order_value_kes":4500.50,"delivery_fee_kes":250}`
+		"value_kes":4500.50,"delivery_fee_kes":250}`
 
 	t.Run("201 with Location header and KES amounts", func(t *testing.T) {
 		h, store := newStoreHandler(t)
@@ -104,7 +108,7 @@ func TestCreateOrder(t *testing.T) {
 		order := decode(t, rec)["order"].(map[string]any)
 		assert.Equal(t, "/api/v2/orders/"+order["id"].(string), rec.Header().Get("Location"))
 		assert.Equal(t, "pending", order["status"])
-		assert.InDelta(t, 4500.50, order["order_value_kes"], 0.001)
+		assert.InDelta(t, 4500.50, order["value_kes"], 0.001)
 		assert.InDelta(t, 225.0, order["estimated_earnings_kes"], 0.001)
 		assert.InDelta(t, 25.0, order["platform_fee_kes"], 0.001)
 		assert.InDelta(t, 90.0, order["rider_payout_percent"], 0.001)
@@ -136,17 +140,17 @@ func TestCreateOrder(t *testing.T) {
 			body      string
 			wantField string
 		}{
-			{"missing vendor", `{"category":"food","delivery_location":{"lat":-1.2,"lng":36.8},"order_value_kes":10,"delivery_fee_kes":5}`, "vendor_id"},
-			{"missing category", `{"vendor_id":"ven_001","delivery_location":{"lat":-1.2,"lng":36.8},"order_value_kes":10,"delivery_fee_kes":5}`, "category"},
-			{"missing location", `{"vendor_id":"ven_001","category":"food","order_value_kes":10,"delivery_fee_kes":5}`, "delivery_location"},
-			{"lat too high", `{"vendor_id":"ven_001","category":"food","delivery_location":{"lat":91,"lng":36.8},"order_value_kes":10,"delivery_fee_kes":5}`, "delivery_location.lat"},
-			{"lng too low", `{"vendor_id":"ven_001","category":"food","delivery_location":{"lat":-1.2,"lng":-181},"order_value_kes":10,"delivery_fee_kes":5}`, "delivery_location.lng"},
-			{"lng missing", `{"vendor_id":"ven_001","category":"food","delivery_location":{"lat":-1.2},"order_value_kes":10,"delivery_fee_kes":5}`, "delivery_location.lng"},
-			{"zero value", `{"vendor_id":"ven_001","category":"food","delivery_location":{"lat":-1.2,"lng":36.8},"order_value_kes":0,"delivery_fee_kes":5}`, "order_value_kes"},
-			{"negative value", `{"vendor_id":"ven_001","category":"food","delivery_location":{"lat":-1.2,"lng":36.8},"order_value_kes":-3,"delivery_fee_kes":5}`, "order_value_kes"},
-			{"fraction of a cent", `{"vendor_id":"ven_001","category":"food","delivery_location":{"lat":-1.2,"lng":36.8},"order_value_kes":10.005,"delivery_fee_kes":5}`, "order_value_kes"},
-			{"negative fee", `{"vendor_id":"ven_001","category":"food","delivery_location":{"lat":-1.2,"lng":36.8},"order_value_kes":10,"delivery_fee_kes":-1}`, "delivery_fee_kes"},
-			{"missing fee", `{"vendor_id":"ven_001","category":"food","delivery_location":{"lat":-1.2,"lng":36.8},"order_value_kes":10}`, "delivery_fee_kes"},
+			{"missing vendor", `{"category":"food","delivery_location":{"lat":-1.2,"lng":36.8},"value_kes":10,"delivery_fee_kes":5}`, "vendor_id"},
+			{"missing category", `{"vendor_id":"ven_001","delivery_location":{"lat":-1.2,"lng":36.8},"value_kes":10,"delivery_fee_kes":5}`, "category"},
+			{"missing location", `{"vendor_id":"ven_001","category":"food","value_kes":10,"delivery_fee_kes":5}`, "delivery_location"},
+			{"lat too high", `{"vendor_id":"ven_001","category":"food","delivery_location":{"lat":91,"lng":36.8},"value_kes":10,"delivery_fee_kes":5}`, "delivery_location.lat"},
+			{"lng too low", `{"vendor_id":"ven_001","category":"food","delivery_location":{"lat":-1.2,"lng":-181},"value_kes":10,"delivery_fee_kes":5}`, "delivery_location.lng"},
+			{"lng missing", `{"vendor_id":"ven_001","category":"food","delivery_location":{"lat":-1.2},"value_kes":10,"delivery_fee_kes":5}`, "delivery_location.lng"},
+			{"zero value", `{"vendor_id":"ven_001","category":"food","delivery_location":{"lat":-1.2,"lng":36.8},"value_kes":0,"delivery_fee_kes":5}`, "value_kes"},
+			{"negative value", `{"vendor_id":"ven_001","category":"food","delivery_location":{"lat":-1.2,"lng":36.8},"value_kes":-3,"delivery_fee_kes":5}`, "value_kes"},
+			{"fraction of a cent", `{"vendor_id":"ven_001","category":"food","delivery_location":{"lat":-1.2,"lng":36.8},"value_kes":10.005,"delivery_fee_kes":5}`, "value_kes"},
+			{"negative fee", `{"vendor_id":"ven_001","category":"food","delivery_location":{"lat":-1.2,"lng":36.8},"value_kes":10,"delivery_fee_kes":-1}`, "delivery_fee_kes"},
+			{"missing fee", `{"vendor_id":"ven_001","category":"food","delivery_location":{"lat":-1.2,"lng":36.8},"value_kes":10}`, "delivery_fee_kes"},
 		}
 		for _, tc := range tests {
 			t.Run(tc.name, func(t *testing.T) {
@@ -208,7 +212,7 @@ func TestShowOrder(t *testing.T) {
 		assert.Equal(t, "ord_001", order["id"])
 		assert.InDelta(t, 3.5, order["trip_distance_km"], 0.0001)
 		assert.InDelta(t, 123.4, order["trip_bearing_degrees"], 0.01)
-		assert.InDelta(t, 1500.0, order["order_value_kes"], 0.001)
+		assert.InDelta(t, 1500.0, order["value_kes"], 0.001)
 		assert.InDelta(t, 180.0, order["estimated_earnings_kes"], 0.001)
 		assert.Nil(t, order["batch_id"])
 	})
@@ -234,7 +238,7 @@ func TestShowOrder(t *testing.T) {
 }
 
 func fakeRiderRow(id string) sqlc.Rider {
-	lat, lng, bearing, speed, rate := -1.266, 36.806, float32(95), float32(22), 0.775
+	lat, lng, bearing, speed, rate := -1.266, 36.806, 95.0, 22.0, 0.775
 	return sqlc.Rider{
 		ID: id, FullName: faker.Name(), Phone: "+254722000001", IsAvailable: true,
 		MaxCapacity: 5, CurrentOrdersCount: 2,
@@ -317,7 +321,9 @@ func TestUpdatePreferences(t *testing.T) {
 	t.Run("200 replaces categories and areas in one transaction", func(t *testing.T) {
 		h, store := newStoreHandler(t)
 		ctx := gomock.Any()
-		store.EXPECT().GetRider(ctx, "rider_001").Return(fakeRiderRow("rider_001"), nil).Times(2)
+		bumped := fakeRiderRow("rider_001")
+		bumped.Version = 4
+		store.EXPECT().GetRider(ctx, "rider_001").Return(fakeRiderRow("rider_001"), nil)
 		store.EXPECT().GetCategoriesByCodes(ctx, []string{"food", "groceries"}).
 			Return([]sqlc.Category{{Code: "food"}, {Code: "groceries"}}, nil)
 		store.EXPECT().GetAreasByIDs(ctx, []string{"area_001", "area_002"}).
@@ -333,6 +339,7 @@ func TestUpdatePreferences(t *testing.T) {
 				RiderID: "rider_001", CategoryCodes: []string{"food", "groceries"}}).Return(nil),
 			store.EXPECT().InsertPreferredAreas(ctx, sqlc.InsertPreferredAreasParams{
 				RiderID: "rider_001", AreaIds: []string{"area_001", "area_002"}}).Return(nil),
+			store.EXPECT().BumpRiderVersion(ctx, sqlc.BumpRiderVersionParams{ID: "rider_001", Version: 3}).Return(bumped, nil),
 		)
 		// The response re-reads the stored preferences.
 		store.EXPECT().GetPreferences(ctx, "rider_001").Return(sqlc.RiderPreference{MinOrderValueCents: 75000}, nil)
@@ -342,7 +349,9 @@ func TestUpdatePreferences(t *testing.T) {
 		rec := send(t, h, http.MethodPut, "/api/v2/riders/rider_001/preferences", body)
 
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-		prefs := decode(t, rec)["preferences"].(map[string]any)
+		rider := decode(t, rec)["rider"].(map[string]any)
+		assert.EqualValues(t, 4, rider["version"], "preferences changes bump the rider version")
+		prefs := rider["preferences"].(map[string]any)
 		assert.InDelta(t, 750.0, prefs["min_order_value_kes"], 0.001)
 		assert.Equal(t, []any{"food", "groceries"}, prefs["preferred_categories"])
 	})
@@ -350,12 +359,13 @@ func TestUpdatePreferences(t *testing.T) {
 	t.Run("200 with empty lists clears preferences without inserting", func(t *testing.T) {
 		h, store := newStoreHandler(t)
 		ctx := gomock.Any()
-		store.EXPECT().GetRider(ctx, "rider_001").Return(fakeRiderRow("rider_001"), nil).Times(2)
+		store.EXPECT().GetRider(ctx, "rider_001").Return(fakeRiderRow("rider_001"), nil)
 		expectTx(store)
 		store.EXPECT().GetRiderForUpdate(ctx, "rider_001").Return(fakeRiderRow("rider_001"), nil)
 		store.EXPECT().UpsertPreferences(ctx, sqlc.UpsertPreferencesParams{RiderID: "rider_001"}).Return(sqlc.RiderPreference{}, nil)
 		store.EXPECT().DeletePreferredCategories(ctx, "rider_001").Return(nil)
 		store.EXPECT().DeletePreferredAreas(ctx, "rider_001").Return(nil)
+		store.EXPECT().BumpRiderVersion(ctx, gomock.Any()).Return(fakeRiderRow("rider_001"), nil)
 		store.EXPECT().GetPreferences(ctx, "rider_001").Return(sqlc.RiderPreference{}, nil)
 		store.EXPECT().ListPreferredCategories(ctx, "rider_001").Return(nil, nil)
 		store.EXPECT().ListPreferredAreas(ctx, "rider_001").Return(nil, nil)
@@ -363,7 +373,7 @@ func TestUpdatePreferences(t *testing.T) {
 		rec := send(t, h, http.MethodPut, "/api/v2/riders/rider_001/preferences", `{}`)
 
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-		assert.Equal(t, []any{}, decode(t, rec)["preferences"].(map[string]any)["preferred_areas"])
+		assert.Equal(t, []any{}, decode(t, rec)["rider"].(map[string]any)["preferences"].(map[string]any)["preferred_areas"])
 	})
 
 	t.Run("400 for malformed input", func(t *testing.T) {
@@ -463,4 +473,19 @@ func newGinContext() (*gin.Context, *httptest.ResponseRecorder) {
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
 	return c, rec
+}
+
+func TestUpdatePreferences_VersionConflict(t *testing.T) {
+	t.Run("409 when X-Expected-Version is stale", func(t *testing.T) {
+		h, store := newStoreHandler(t)
+		ctx := gomock.Any()
+		store.EXPECT().GetRider(ctx, "rider_001").Return(fakeRiderRow("rider_001"), nil) // version 3
+		expectTx(store)
+		store.EXPECT().GetRiderForUpdate(ctx, "rider_001").Return(fakeRiderRow("rider_001"), nil)
+
+		rec := send(t, h, http.MethodPut, "/api/v2/riders/rider_001/preferences", `{}`, "X-Expected-Version", "2")
+
+		assert.Equal(t, http.StatusConflict, rec.Code)
+		assert.Equal(t, `{"error":"unable to update the record due to an edit conflict, please try again"}`, strings.TrimSpace(rec.Body.String()))
+	})
 }

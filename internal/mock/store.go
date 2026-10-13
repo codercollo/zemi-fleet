@@ -41,6 +41,21 @@ func (m *MockStore) EXPECT() *MockStoreMockRecorder {
 	return m.recorder
 }
 
+// BumpRiderVersion mocks base method.
+func (m *MockStore) BumpRiderVersion(ctx context.Context, arg sqlc.BumpRiderVersionParams) (sqlc.Rider, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "BumpRiderVersion", ctx, arg)
+	ret0, _ := ret[0].(sqlc.Rider)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// BumpRiderVersion indicates an expected call of BumpRiderVersion.
+func (mr *MockStoreMockRecorder) BumpRiderVersion(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BumpRiderVersion", reflect.TypeOf((*MockStore)(nil).BumpRiderVersion), ctx, arg)
+}
+
 // CreateOrder mocks base method.
 func (m *MockStore) CreateOrder(ctx context.Context, arg sqlc.CreateOrderParams) (sqlc.Order, error) {
 	m.ctrl.T.Helper()
@@ -274,6 +289,36 @@ func (m *MockStore) ListPreferredCategories(ctx context.Context, riderID string)
 func (mr *MockStoreMockRecorder) ListPreferredCategories(ctx, riderID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListPreferredCategories", reflect.TypeOf((*MockStore)(nil).ListPreferredCategories), ctx, riderID)
+}
+
+// UpdateRiderAvailability mocks base method.
+func (m *MockStore) UpdateRiderAvailability(ctx context.Context, arg sqlc.UpdateRiderAvailabilityParams) (sqlc.Rider, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateRiderAvailability", ctx, arg)
+	ret0, _ := ret[0].(sqlc.Rider)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// UpdateRiderAvailability indicates an expected call of UpdateRiderAvailability.
+func (mr *MockStoreMockRecorder) UpdateRiderAvailability(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateRiderAvailability", reflect.TypeOf((*MockStore)(nil).UpdateRiderAvailability), ctx, arg)
+}
+
+// UpdateRiderLocation mocks base method.
+func (m *MockStore) UpdateRiderLocation(ctx context.Context, arg sqlc.UpdateRiderLocationParams) (sqlc.Rider, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateRiderLocation", ctx, arg)
+	ret0, _ := ret[0].(sqlc.Rider)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// UpdateRiderLocation indicates an expected call of UpdateRiderLocation.
+func (mr *MockStoreMockRecorder) UpdateRiderLocation(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateRiderLocation", reflect.TypeOf((*MockStore)(nil).UpdateRiderLocation), ctx, arg)
 }
 
 // UpsertPreferences mocks base method.

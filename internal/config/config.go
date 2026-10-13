@@ -38,6 +38,9 @@ type DBConfig struct {
 	MaxConns        int32         `mapstructure:"DB_MAX_CONNS"`
 	MinConns        int32         `mapstructure:"DB_MIN_CONNS"`
 	MaxConnIdleTime time.Duration `mapstructure:"DB_MAX_CONN_IDLE_TIME"`
+	// QueryTimeout bounds every statement, so a slow query fails with a 500 instead of hanging.
+	// Let's Go Further ch. 8.3.
+	QueryTimeout time.Duration `mapstructure:"DB_QUERY_TIMEOUT"`
 }
 
 // Default settings .
@@ -48,6 +51,7 @@ var defaults = map[string]any{
 	"DB_MAX_CONNS":          25,
 	"DB_MIN_CONNS":          2,
 	"DB_MAX_CONN_IDLE_TIME": "15m",
+	"DB_QUERY_TIMEOUT":      "3s",
 	"RIDER_PAYOUT_BPS":      9000,
 }
 
@@ -97,6 +101,9 @@ func (c Config) validate() error {
 	}
 	if c.RiderPayoutBPS < 0 || c.RiderPayoutBPS > MaxPayoutBPS {
 		errs = append(errs, fmt.Errorf("RIDER_PAYOUT_BPS must be 0-%d (got %d)", MaxPayoutBPS, c.RiderPayoutBPS))
+	}
+	if c.DB.QueryTimeout <= 0 {
+		errs = append(errs, fmt.Errorf("DB_QUERY_TIMEOUT must be greater than zero (got %s)", c.DB.QueryTimeout))
 	}
 	return errors.Join(errs...)
 }

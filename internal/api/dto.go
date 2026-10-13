@@ -43,7 +43,7 @@ type orderDTO struct {
 	DeliveryLocation     locationDTO `json:"delivery_location"`
 	TripDistanceKM       float64     `json:"trip_distance_km"`
 	TripBearingDegrees   float64     `json:"trip_bearing_degrees"`
-	OrderValueKES        float64     `json:"order_value_kes"`
+	ValueKES             float64     `json:"value_kes"`
 	DeliveryFeeKES       float64     `json:"delivery_fee_kes"`
 	RiderPayoutPercent   float64     `json:"rider_payout_percent"`
 	EstimatedEarningsKES float64     `json:"estimated_earnings_kes"`
@@ -64,7 +64,7 @@ func newOrderDTO(o domain.Order) orderDTO {
 		DeliveryLocation:     newLocationDTO(o.Delivery),
 		TripDistanceKM:       float64(o.TripDistanceM) / metresPerKM,
 		TripBearingDegrees:   o.TripBearingDeg,
-		OrderValueKES:        centsToKES(o.ValueCents),
+		ValueKES:             centsToKES(o.ValueCents),
 		DeliveryFeeKES:       centsToKES(o.DeliveryFeeCents),
 		RiderPayoutPercent:   float64(o.RiderPayoutBPS) / 100,
 		EstimatedEarningsKES: centsToKES(o.RiderEarningsCents),
@@ -77,7 +77,7 @@ func newOrderDTO(o domain.Order) orderDTO {
 }
 
 type preferencesDTO struct {
-	MinOrderValueKES    float64  `json:"min_order_value_kes"`
+	MinValueKES         float64  `json:"min_order_value_kes"`
 	PreferredCategories []string `json:"preferred_categories"`
 	PreferredAreas      []string `json:"preferred_areas"`
 }
@@ -85,7 +85,7 @@ type preferencesDTO struct {
 func newPreferencesDTO(p domain.Preferences) preferencesDTO {
 	// Lists are always arrays in JSON, never null.
 	return preferencesDTO{
-		MinOrderValueKES:    centsToKES(p.MinOrderValueCents),
+		MinValueKES:         centsToKES(p.MinOrderValueCents),
 		PreferredCategories: nonNil(p.Categories),
 		PreferredAreas:      nonNil(p.AreaIDs),
 	}

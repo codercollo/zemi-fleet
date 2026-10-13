@@ -18,6 +18,8 @@ REST API for order batching, proximity (60° cone) matching and rider preference
 
 `make dev/sqlc` regenerates the sqlc code and `make dev/mock` regenerates the gomock `Store` (run both after changing `db/query` or the `Store` interface). On staging, `make staging/seed` loads the same data into the Postgres container.
 
+`make dev/test/integration` runs the tests that need the real database (build tag `integration`, uses `DATABASE_URL`).
+
 Run `make help` for all targets (`dev/*` for local work, `staging/*` for Docker).
 
 ## API (so far)
@@ -29,9 +31,13 @@ All under `/api/v2`. Money is KES in JSON (cents in the database).
 | POST | `/orders` | create a pending order, `201` + `Location` |
 | GET | `/orders/:id` | one order |
 | GET | `/riders/:id` | rider with preferences |
-| PUT | `/riders/:id/preferences` | replace categories, areas and minimum order value |
+| PUT | `/riders/:id/preferences` | replace categories, areas and minimum order value; returns the rider |
+| PATCH | `/riders/:id/location` | `latitude`, `longitude`, optional `bearing_degrees`, `speed_kmh`; returns the rider |
+| PATCH | `/riders/:id/availability` | `is_available`; returns the rider |
 
-Errors: `400` malformed JSON, `404` unknown ID, `422` validation (per-field messages).
+Errors: `400` malformed JSON or header, `404` unknown ID, `409` edit conflict, `422` validation (per-field messages).
+
+**Optimistic locking.** Riders carry a `version`. Every write bumps it, and a write that loses a race gets `409`. Send `X-Expected-Version: <n>` on the PATCHes and the preferences PUT to be rejected with `409` when your copy is stale. Every statement is cut off after `DB_QUERY_TIMEOUT` (default 3s).
 
 ## Build phases
 The work is tracked phase by phase in [docs/BUILD_PHASES.md](docs/BUILD_PHASES.md).

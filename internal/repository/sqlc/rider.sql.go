@@ -9,6 +9,44 @@ import (
 	"context"
 )
 
+const bumpRiderVersion = `-- name: BumpRiderVersion :one
+UPDATE riders
+SET version = version + 1
+WHERE id = $1 AND version = $2
+RETURNING id, full_name, phone, is_available, max_capacity, current_orders_count, last_lat, last_lng, last_bearing_deg, last_speed_kmh, location_updated_at, offers_count, accepted_count, acceptance_rate, created_at, updated_at, version
+`
+
+type BumpRiderVersionParams struct {
+	ID      string `json:"id"`
+	Version int32  `json:"version"`
+}
+
+// Used after replacing preferences, which live in other tables, so clients see the rider change.
+func (q *Queries) BumpRiderVersion(ctx context.Context, arg BumpRiderVersionParams) (Rider, error) {
+	row := q.db.QueryRow(ctx, bumpRiderVersion, arg.ID, arg.Version)
+	var i Rider
+	err := row.Scan(
+		&i.ID,
+		&i.FullName,
+		&i.Phone,
+		&i.IsAvailable,
+		&i.MaxCapacity,
+		&i.CurrentOrdersCount,
+		&i.LastLat,
+		&i.LastLng,
+		&i.LastBearingDeg,
+		&i.LastSpeedKmh,
+		&i.LocationUpdatedAt,
+		&i.OffersCount,
+		&i.AcceptedCount,
+		&i.AcceptanceRate,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Version,
+	)
+	return i, err
+}
+
 const getRider = `-- name: GetRider :one
 SELECT id, full_name, phone, is_available, max_capacity, current_orders_count, last_lat, last_lng, last_bearing_deg, last_speed_kmh, location_updated_at, offers_count, accepted_count, acceptance_rate, created_at, updated_at, version FROM riders WHERE id = $1
 `
@@ -45,6 +83,99 @@ SELECT id, full_name, phone, is_available, max_capacity, current_orders_count, l
 // Row lock: serialises concurrent preference replacements for one rider.
 func (q *Queries) GetRiderForUpdate(ctx context.Context, id string) (Rider, error) {
 	row := q.db.QueryRow(ctx, getRiderForUpdate, id)
+	var i Rider
+	err := row.Scan(
+		&i.ID,
+		&i.FullName,
+		&i.Phone,
+		&i.IsAvailable,
+		&i.MaxCapacity,
+		&i.CurrentOrdersCount,
+		&i.LastLat,
+		&i.LastLng,
+		&i.LastBearingDeg,
+		&i.LastSpeedKmh,
+		&i.LocationUpdatedAt,
+		&i.OffersCount,
+		&i.AcceptedCount,
+		&i.AcceptanceRate,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Version,
+	)
+	return i, err
+}
+
+const updateRiderAvailability = `-- name: UpdateRiderAvailability :one
+UPDATE riders
+SET is_available = $1,
+    version = version + 1
+WHERE id = $2 AND version = $3
+RETURNING id, full_name, phone, is_available, max_capacity, current_orders_count, last_lat, last_lng, last_bearing_deg, last_speed_kmh, location_updated_at, offers_count, accepted_count, acceptance_rate, created_at, updated_at, version
+`
+
+type UpdateRiderAvailabilityParams struct {
+	IsAvailable bool   `json:"is_available"`
+	ID          string `json:"id"`
+	Version     int32  `json:"version"`
+}
+
+func (q *Queries) UpdateRiderAvailability(ctx context.Context, arg UpdateRiderAvailabilityParams) (Rider, error) {
+	row := q.db.QueryRow(ctx, updateRiderAvailability, arg.IsAvailable, arg.ID, arg.Version)
+	var i Rider
+	err := row.Scan(
+		&i.ID,
+		&i.FullName,
+		&i.Phone,
+		&i.IsAvailable,
+		&i.MaxCapacity,
+		&i.CurrentOrdersCount,
+		&i.LastLat,
+		&i.LastLng,
+		&i.LastBearingDeg,
+		&i.LastSpeedKmh,
+		&i.LocationUpdatedAt,
+		&i.OffersCount,
+		&i.AcceptedCount,
+		&i.AcceptanceRate,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Version,
+	)
+	return i, err
+}
+
+const updateRiderLocation = `-- name: UpdateRiderLocation :one
+UPDATE riders
+SET last_lat = $1,
+    last_lng = $2,
+    last_bearing_deg = $3,
+    last_speed_kmh = $4,
+    location_updated_at = now(),
+    version = version + 1
+WHERE id = $5 AND version = $6
+RETURNING id, full_name, phone, is_available, max_capacity, current_orders_count, last_lat, last_lng, last_bearing_deg, last_speed_kmh, location_updated_at, offers_count, accepted_count, acceptance_rate, created_at, updated_at, version
+`
+
+type UpdateRiderLocationParams struct {
+	LastLat        *float64 `json:"last_lat"`
+	LastLng        *float64 `json:"last_lng"`
+	LastBearingDeg *float64 `json:"last_bearing_deg"`
+	LastSpeedKmh   *float64 `json:"last_speed_kmh"`
+	ID             string   `json:"id"`
+	Version        int32    `json:"version"`
+}
+
+// Optimistic lock (Let's Go Further ch. 8.2): no row comes back when the version moved on.
+func (q *Queries) UpdateRiderLocation(ctx context.Context, arg UpdateRiderLocationParams) (Rider, error) {
+	row := q.db.QueryRow(ctx, updateRiderLocation,
+		arg.LastLat,
+		arg.LastLng,
+		arg.LastBearingDeg,
+		arg.LastSpeedKmh,
+		arg.ID,
+		arg.Version,
+	)
 	var i Rider
 	err := row.Scan(
 		&i.ID,

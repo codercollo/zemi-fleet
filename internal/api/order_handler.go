@@ -50,7 +50,7 @@ type createOrderRequest struct {
 	VendorID         string         `json:"vendor_id"`
 	Category         string         `json:"category"`
 	DeliveryLocation *locationInput `json:"delivery_location"`
-	OrderValueKES    *float64       `json:"order_value_kes"`
+	ValueKES         *float64       `json:"value_kes"`
 	DeliveryFeeKES   *float64       `json:"delivery_fee_kes"`
 }
 
@@ -71,7 +71,7 @@ func (s *Server) createOrderHandler(c *gin.Context) {
 	v.Check(len(req.Category) <= maxIDLength, "category", "must not be more than 64 characters long")
 	delivery := checkLocation(v, "delivery_location", req.DeliveryLocation)
 
-	valueCents := checkAmount(v, "order_value_kes", req.OrderValueKES, true)
+	valueCents := checkAmount(v, "value_kes", req.ValueKES, true)
 	feeCents := checkAmount(v, "delivery_fee_kes", req.DeliveryFeeKES, false)
 	if !v.Valid() {
 		s.failedValidationResponse(c, v.Errors)

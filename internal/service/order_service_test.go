@@ -23,7 +23,7 @@ func TestOrderService_Create_TripAndPayout(t *testing.T) {
 		delivery     domain.Location
 		payoutBPS    int
 		wantDistance int32
-		wantBearing  float32
+		wantBearing  float64
 	}{
 		{"due north", domain.Location{Lat: sarit.Lat + 0.01, Lng: sarit.Lng}, 9000, 1112, 0},
 		{"due east", domain.Location{Lat: sarit.Lat, Lng: sarit.Lng + 0.01}, 9000, 1112, 90},
@@ -54,8 +54,8 @@ func TestOrderService_Create_TripAndPayout(t *testing.T) {
 			assert.EqualValues(t, tc.payoutBPS, got.RiderPayoutBps)
 			assert.Equal(t, sarit.Lat, got.PickupLat, "pickup is the vendor's location")
 			assert.Regexp(t, `^ord_[0-9A-Z]{20}$`, got.ID)
-			assert.GreaterOrEqual(t, got.TripBearingDeg, float32(0))
-			assert.Less(t, got.TripBearingDeg, float32(360), "bearing must satisfy the column CHECK")
+			assert.GreaterOrEqual(t, got.TripBearingDeg, 0.0)
+			assert.Less(t, got.TripBearingDeg, 360.0, "bearing must satisfy the column CHECK")
 			if tc.name == "Westlands to Karen" {
 				assert.InDelta(t, tc.wantDistance, got.TripDistanceM, 400)
 				assert.InDelta(t, 240, got.TripBearingDeg, 1) // west-south-west

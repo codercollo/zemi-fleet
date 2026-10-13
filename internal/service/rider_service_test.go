@@ -25,7 +25,7 @@ func TestRiderFromRow(t *testing.T) {
 	})
 
 	t.Run("with telemetry", func(t *testing.T) {
-		lat, lng, bearing, speed, rate := -1.29, 36.79, float32(180), float32(18), 0.88
+		lat, lng, bearing, speed, rate := -1.29, 36.79, 180.0, 18.0, 0.88
 
 		rider := riderFromRow(sqlc.Rider{
 			LastLat: &lat, LastLng: &lng, LastBearingDeg: &bearing, LastSpeedKmh: &speed, AcceptanceRate: &rate,
@@ -46,7 +46,7 @@ func TestRiderService_UpdatePreferences_ValidationSkipsTransaction(t *testing.T)
 	store.EXPECT().GetCategoriesByCodes(gomock.Any(), []string{"pizza"}).Return(nil, nil)
 
 	_, err := NewRiderService(store).UpdatePreferences(context.Background(), "rider_001",
-		domain.Preferences{Categories: []string{"pizza"}})
+		domain.Preferences{Categories: []string{"pizza"}}, nil)
 
 	var verr *domain.ValidationError
 	require.ErrorAs(t, err, &verr)
@@ -62,7 +62,7 @@ func TestRiderService_UpdatePreferences_RollsBackOnFailure(t *testing.T) {
 	store.EXPECT().GetRiderForUpdate(gomock.Any(), "rider_001").Return(sqlc.Rider{}, nil)
 	store.EXPECT().UpsertPreferences(gomock.Any(), gomock.Any()).Return(sqlc.RiderPreference{}, boom)
 
-	_, err := NewRiderService(store).UpdatePreferences(context.Background(), "rider_001", domain.Preferences{})
+	_, err := NewRiderService(store).UpdatePreferences(context.Background(), "rider_001", domain.Preferences{}, nil)
 
 	assert.ErrorIs(t, err, boom, "the first failing statement aborts the transaction body")
 }
@@ -73,10 +73,4 @@ func TestUnknown(t *testing.T) {
 	assert.Equal(t, []string{"b", "d"}, unknown([]string{"a", "b", "c", "d"}, known))
 	assert.Empty(t, unknown([]string{"a", "c"}, known))
 	assert.Empty(t, unknown(nil, known))
-}
-
-func TestFloat32ToFloat64(t *testing.T) {
-	assert.Equal(t, 38.7, float32ToFloat64(38.7))
-	assert.Equal(t, 210.6, float32ToFloat64(210.6))
-	assert.Equal(t, 0.0, float32ToFloat64(0))
 }

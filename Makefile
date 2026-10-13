@@ -117,6 +117,11 @@ dev/mock:
 dev/test:
 	go test -count=1 ./...
 
+## dev/test/integration: run tests that need the real database in DATABASE_URL (build tag: integration)
+.PHONY: dev/test/integration
+dev/test/integration:
+	go test -tags=integration -count=1 -run Integration ./...
+
 ## dev/test/race: run tests with the race detector (needs cgo/gcc; CI always runs it)
 .PHONY: dev/test/race
 dev/test/race:

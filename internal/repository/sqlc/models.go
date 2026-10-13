@@ -213,7 +213,7 @@ type Order struct {
 	DeliveryLat        float64     `json:"delivery_lat"`
 	DeliveryLng        float64     `json:"delivery_lng"`
 	TripDistanceM      int32       `json:"trip_distance_m"`
-	TripBearingDeg     float32     `json:"trip_bearing_deg"`
+	TripBearingDeg     float64     `json:"trip_bearing_deg"`
 	ValueCents         int64       `json:"value_cents"`
 	DeliveryFeeCents   int64       `json:"delivery_fee_cents"`
 	RiderPayoutBps     int32       `json:"rider_payout_bps"`
@@ -237,8 +237,8 @@ type Rider struct {
 	CurrentOrdersCount int16      `json:"current_orders_count"`
 	LastLat            *float64   `json:"last_lat"`
 	LastLng            *float64   `json:"last_lng"`
-	LastBearingDeg     *float32   `json:"last_bearing_deg"`
-	LastSpeedKmh       *float32   `json:"last_speed_kmh"`
+	LastBearingDeg     *float64   `json:"last_bearing_deg"`
+	LastSpeedKmh       *float64   `json:"last_speed_kmh"`
 	LocationUpdatedAt  *time.Time `json:"location_updated_at"`
 	OffersCount        int32      `json:"offers_count"`
 	AcceptedCount      int32      `json:"accepted_count"`

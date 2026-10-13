@@ -57,7 +57,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	store := repository.NewStore(pool)
+	store := repository.NewStore(pool, cfg.DB.QueryTimeout)
 	orders := service.NewOrderService(store, cfg.RiderPayoutBPS)
 	riders := service.NewRiderService(store)
 	app := api.NewServer(cfg, logger, pool, orders, riders, version)

@@ -33,7 +33,7 @@ The algorithm packages (`geo`, `batching`, `matching`) are pure Go and are calle
 | 1 | Build tooling: Makefile (dev/staging), versioning, Docker, CI workflows | 20, 21 (moved early) | ✅ done |
 | 2 | Migrations, seed data, sqlc setup | 6 | ✅ done |
 | 3 | Domain models, repository Store, first CRUD (orders, riders, preferences) | 7 | ✅ done |
-| 4 | Advanced CRUD: optimistic locking, query timeouts, partial updates | 8 | |
+| 4 | Advanced CRUD: optimistic locking, query timeouts, partial updates | 8 | ✅ done |
 | 5 | Geo core: haversine, bearing, angle difference | — (algorithm) | |
 | 6 | Proximity matching: 60° cone, `POST /riders/match-orders` | 9 (sorting) | |
 | 7 | Batching: clustering, sequencing, scoring, batch endpoints, exclusive accept | 8, 9 | |
@@ -116,7 +116,7 @@ Target pace (deadline Fri 16 Oct, 22:00): Mon 0–2 · Tue 3–5 · Wed 6–7 ·
 
 **Notes (as built)**
 - Schema cleanup first: migration 000001 was edited in place. `users`, `sessions`, the `user_role` enum and the `citext` extension are gone, `riders.user_id` is replaced by `full_name` (2–120 chars) and a unique `+254` `phone`. Because the old `down` could not unwind the old schema, the local database was reset once; `down`, `up`, `seed` then ran cleanly.
-- `POST /orders` takes `vendor_id`, `category`, `delivery_location`, `order_value_kes`, `delivery_fee_kes`. The pickup point is snapshotted from the vendor. Unknown vendor/category is a 422 (the body referenced something that does not exist); unknown path IDs are a 404.
+- `POST /orders` takes `vendor_id`, `category`, `delivery_location`, `value_kes`, `delivery_fee_kes`. The pickup point is snapshotted from the vendor. Unknown vendor/category is a 422 (the body referenced something that does not exist); unknown path IDs are a 404.
 - `db/query/vendor.sql` was added (not in the original file list) because order creation needs the vendor's coordinates.
 - `Store.ExecTx` passes a `sqlc.Querier` to the callback, so a gomock Store can run the transaction body in tests.
 - `pgx.ErrNoRows` becomes `domain.ErrNotFound` by wrapping the DBTX, which covers every `:one` query, including inside transactions.
@@ -129,13 +129,21 @@ Target pace (deadline Fri 16 Oct, 22:00): Mon 0–2 · Tue 3–5 · Wed 6–7 ·
 
 ---
 
-## Phase 4 — Advanced CRUD
+## Phase 4 — Advanced CRUD ✅
 **Book:** 8 Advanced CRUD Operations
 
 **Scope**
 - `PATCH /riders/:id/location` and `PATCH /riders/:id/availability` (partial updates with pointer fields, as in the book).
 - Optimistic concurrency on `version` (`WHERE id = $1 AND version = $2`, where 0 rows means `ErrEditConflict` and a 409).
 - A per-query `context.WithTimeout` (`DB_QUERY_TIMEOUT`, default 3 s).
+
+**Notes (as built)**
+- Pre-release schema fix: `trip_bearing_deg`, `last_bearing_deg` and `last_speed_kmh` are now `DOUBLE PRECISION` (was REAL), so no float32 conversion helper is needed and bearings read back exactly.
+- `POST /orders` body field is `value_kes` (was `order_value_kes`); the order JSON uses the same name. `PUT /riders/:id/preferences` now returns `{"rider": ...}` like `GET /riders/:id`.
+- PATCH location: `latitude`, `longitude` required; `bearing_degrees` (in [0, 360)) and `speed_kmh` (0-200) optional. Omitted telemetry keeps the stored value. It sets `location_updated_at`.
+- Optimistic locking: versioned `UPDATE ... RETURNING *` (zero rows = `ErrEditConflict` = 409) plus the optional `X-Expected-Version` header. The preferences PUT bumps the rider version inside its transaction, under a `FOR UPDATE` lock.
+- `DB_QUERY_TIMEOUT` is applied per statement in a DBTX wrapper (`internal/repository/timeout.go`); it covers connection acquisition too, so keep it well above connect time.
+- Integration tests (`make dev/test/integration`): 10 concurrent requests with the same expected version give exactly one 200 and nine 409 for location, availability and preferences; without the header every 200 is one version bump; `pg_sleep(2)` is cancelled at the timeout.
 
 **Done when:** two concurrent PATCHes on the same rider give one 200 and one 409.
 

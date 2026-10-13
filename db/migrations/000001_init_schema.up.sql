@@ -68,8 +68,8 @@ CREATE TABLE riders (
     -- last known telemetry (updated by match-orders calls / location pings)
     last_lat              DOUBLE PRECISION CHECK (last_lat BETWEEN -90  AND 90),
     last_lng              DOUBLE PRECISION CHECK (last_lng BETWEEN -180 AND 180),
-    last_bearing_deg      REAL             CHECK (last_bearing_deg >= 0 AND last_bearing_deg < 360),
-    last_speed_kmh        REAL             CHECK (last_speed_kmh >= 0 AND last_speed_kmh <= 200),
+    last_bearing_deg      DOUBLE PRECISION CHECK (last_bearing_deg >= 0 AND last_bearing_deg < 360),
+    last_speed_kmh        DOUBLE PRECISION CHECK (last_speed_kmh >= 0 AND last_speed_kmh <= 200),
     location_updated_at   TIMESTAMPTZ,
     -- acceptance rate = accepted / offered, derived so it can never drift
     offers_count          INTEGER          NOT NULL DEFAULT 0 CHECK (offers_count >= 0),
@@ -187,7 +187,7 @@ CREATE TABLE orders (
     delivery_lng          DOUBLE PRECISION NOT NULL CHECK (delivery_lng BETWEEN -180 AND 180),
     -- precomputed once on insert; used by batching for direction similarity
     trip_distance_m       INTEGER          NOT NULL CHECK (trip_distance_m >= 0),
-    trip_bearing_deg      REAL             NOT NULL CHECK (trip_bearing_deg >= 0 AND trip_bearing_deg < 360),
+    trip_bearing_deg      DOUBLE PRECISION NOT NULL CHECK (trip_bearing_deg >= 0 AND trip_bearing_deg < 360),
     -- money (KES cents)
     value_cents           BIGINT           NOT NULL CHECK (value_cents > 0),       -- goods value (preference filter)
     delivery_fee_cents    BIGINT           NOT NULL CHECK (delivery_fee_cents >= 0),

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -26,30 +27,44 @@ type Store interface {
 // SQLStore is the PostgreSQL implementation of Store.
 type SQLStore struct {
 	*sqlc.Queries
-	pool *pgxpool.Pool
+	pool    *pgxpool.Pool
+	timeout time.Duration
 }
 
 var _ Store = (*SQLStore)(nil)
 
-// NewStore builds a Store on top of a pgx pool.
-func NewStore(pool *pgxpool.Pool) *SQLStore {
-	return &SQLStore{Queries: sqlc.New(notFoundDB{pool}), pool: pool}
+// NewStore builds a Store on top of a pgx pool. queryTimeout bounds every statement.
+func NewStore(pool *pgxpool.Pool, queryTimeout time.Duration) *SQLStore {
+	return &SQLStore{Queries: sqlc.New(wrap(pool, queryTimeout)), pool: pool, timeout: queryTimeout}
+}
+
+// wrap layers the per-statement deadline and the ErrNoRows mapping onto a DBTX.
+func wrap(db sqlc.DBTX, timeout time.Duration) sqlc.DBTX {
+	return notFoundDB{timeoutDB{DBTX: db, timeout: timeout}}
 }
 
 // ExecTx runs fn in a transaction, rolling back on any error.
 func (s *SQLStore) ExecTx(ctx context.Context, fn func(q sqlc.Querier) error) error {
-	tx, err := s.pool.Begin(ctx)
+	beginCtx, cancel := context.WithTimeout(ctx, s.timeout)
+	tx, err := s.pool.Begin(beginCtx)
+	cancel()
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 
-	if err := fn(sqlc.New(notFoundDB{tx})); err != nil {
-		if rbErr := tx.Rollback(ctx); rbErr != nil {
+	if err := fn(sqlc.New(wrap(tx, s.timeout))); err != nil {
+		// Roll back even if ctx is already cancelled, otherwise the connection stays checked out.
+		rbCtx, rbCancel := context.WithTimeout(context.WithoutCancel(ctx), s.timeout)
+		defer rbCancel()
+		if rbErr := tx.Rollback(rbCtx); rbErr != nil {
 			return fmt.Errorf("tx err: %w; rollback err: %w", err, rbErr)
 		}
 		return err
 	}
-	if err := tx.Commit(ctx); err != nil {
+
+	commitCtx, commitCancel := context.WithTimeout(ctx, s.timeout)
+	defer commitCancel()
+	if err := tx.Commit(commitCtx); err != nil {
 		return fmt.Errorf("commit tx: %w", err)
 	}
 	return nil

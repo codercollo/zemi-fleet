@@ -27,6 +27,8 @@ func (s *Server) Routes() http.Handler {
 
 	v2.GET("/riders/:id", s.showRiderHandler)
 	v2.PUT("/riders/:id/preferences", s.updatePreferencesHandler)
+	v2.PATCH("/riders/:id/location", s.updateLocationHandler)
+	v2.PATCH("/riders/:id/availability", s.updateAvailabilityHandler)
 
 	return r
 }

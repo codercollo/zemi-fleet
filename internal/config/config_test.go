@@ -109,3 +109,33 @@ func TestRiderPayoutBPS(t *testing.T) {
 		})
 	}
 }
+
+func TestQueryTimeout(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     string
+		want    time.Duration
+		wantErr bool
+	}{
+		{"default is 3s", "", 3 * time.Second, false},
+		{"custom", "DB_QUERY_TIMEOUT=500ms\n", 500 * time.Millisecond, false},
+		{"zero is rejected", "DB_QUERY_TIMEOUT=0s\n", 0, true},
+		{"negative is rejected", "DB_QUERY_TIMEOUT=-1s\n", 0, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			clearEnv(t)
+			path := writeEnvFile(t, "DATABASE_URL=postgres://u:p@localhost:5432/db\n"+tc.env)
+
+			cfg, err := Load(path)
+
+			if tc.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "DB_QUERY_TIMEOUT")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, cfg.DB.QueryTimeout)
+		})
+	}
+}

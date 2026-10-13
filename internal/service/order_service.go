@@ -69,7 +69,7 @@ func (s *OrderService) Create(ctx context.Context, in CreateOrderInput) (domain.
 		DeliveryLat:      in.Delivery.Lat,
 		DeliveryLng:      in.Delivery.Lng,
 		TripDistanceM:    int32(math.Round(haversineM(pickup, in.Delivery))),
-		TripBearingDeg:   float32(roundBearing(bearingDeg(pickup, in.Delivery))),
+		TripBearingDeg:   roundBearing(bearingDeg(pickup, in.Delivery)),
 		ValueCents:       in.ValueCents,
 		DeliveryFeeCents: in.DeliveryFeeCents,
 		RiderPayoutBps:   int32(s.payoutBPS),

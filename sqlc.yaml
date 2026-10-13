@@ -20,11 +20,6 @@ sql:
             go_type:
               type: "float64"
               pointer: true
-          - db_type: "pg_catalog.float4"
-            nullable: true
-            go_type:
-              type: "float32"
-              pointer: true
           - db_type: "pg_catalog.float8"
             nullable: true
             go_type:

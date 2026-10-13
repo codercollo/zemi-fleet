@@ -11,7 +11,7 @@ import (
 	"github.com/codercollo/zemi-fleet/internal/repository/sqlc"
 )
 
-// RiderService reads riders and manages their preferences.
+// RiderService reads riders, manages their preferences and applies partial updates.
 type RiderService struct {
 	store repository.Store
 }
@@ -27,9 +27,13 @@ func (s *RiderService) Get(ctx context.Context, id string) (domain.Rider, error)
 	if err != nil {
 		return domain.Rider{}, fmt.Errorf("get rider: %w", err)
 	}
-	rider := riderFromRow(row)
+	return s.withPreferences(ctx, row)
+}
 
-	prefs, err := s.loadPreferences(ctx, s.store, id)
+// withPreferences converts a rider row and attaches the rider's preferences.
+func (s *RiderService) withPreferences(ctx context.Context, row sqlc.Rider) (domain.Rider, error) {
+	rider := riderFromRow(row)
+	prefs, err := s.loadPreferences(ctx, s.store, row.ID)
 	if err != nil {
 		return domain.Rider{}, err
 	}
@@ -67,49 +71,112 @@ func (s *RiderService) loadPreferences(ctx context.Context, q sqlc.Querier, ride
 	return prefs, nil
 }
 
+// checkVersion enforces the optional X-Expected-Version: when the client sent one
+// and it is not the rider's current version, the client is editing a stale copy.
+func checkVersion(current int32, expected *int) error {
+	if expected != nil && *expected != int(current) {
+		return domain.ErrEditConflict
+	}
+	return nil
+}
+
+// LocationUpdate is a partial location ping. Latitude and longitude always change;
+// a nil BearingDeg or SpeedKmh leaves the stored value untouched (PATCH semantics,
+// Let's Go Further ch. 8.1).
+type LocationUpdate struct {
+	Lat        float64
+	Lng        float64
+	BearingDeg *float64
+	SpeedKmh   *float64
+}
+
+// UpdateLocation applies a location ping with optimistic locking: the UPDATE only
+// matches the version that was read (or that the client expects), so a concurrent
+// change makes it match no row and the call returns domain.ErrEditConflict.
+// Let's Go Further ch. 8.2.
+func (s *RiderService) UpdateLocation(ctx context.Context, id string, in LocationUpdate, expectedVersion *int) (domain.Rider, error) {
+	cur, err := s.store.GetRider(ctx, id)
+	if err != nil {
+		return domain.Rider{}, fmt.Errorf("get rider: %w", err)
+	}
+	if err := checkVersion(cur.Version, expectedVersion); err != nil {
+		return domain.Rider{}, err
+	}
+
+	bearing, speed := cur.LastBearingDeg, cur.LastSpeedKmh
+	if in.BearingDeg != nil {
+		bearing = in.BearingDeg
+	}
+	if in.SpeedKmh != nil {
+		speed = in.SpeedKmh
+	}
+
+	row, err := s.store.UpdateRiderLocation(ctx, sqlc.UpdateRiderLocationParams{
+		LastLat:        &in.Lat,
+		LastLng:        &in.Lng,
+		LastBearingDeg: bearing,
+		LastSpeedKmh:   speed,
+		ID:             id,
+		Version:        cur.Version,
+	})
+	if err != nil {
+		return domain.Rider{}, fmt.Errorf("update rider location: %w", versionMiss(err))
+	}
+	return s.withPreferences(ctx, row)
+}
+
+// UpdateAvailability switches a rider on or off shift, with the same optimistic locking.
+func (s *RiderService) UpdateAvailability(ctx context.Context, id string, available bool, expectedVersion *int) (domain.Rider, error) {
+	cur, err := s.store.GetRider(ctx, id)
+	if err != nil {
+		return domain.Rider{}, fmt.Errorf("get rider: %w", err)
+	}
+	if err := checkVersion(cur.Version, expectedVersion); err != nil {
+		return domain.Rider{}, err
+	}
+
+	row, err := s.store.UpdateRiderAvailability(ctx, sqlc.UpdateRiderAvailabilityParams{
+		IsAvailable: available,
+		ID:          id,
+		Version:     cur.Version,
+	})
+	if err != nil {
+		return domain.Rider{}, fmt.Errorf("update rider availability: %w", versionMiss(err))
+	}
+	return s.withPreferences(ctx, row)
+}
+
+// versionMiss turns "no row" from a versioned UPDATE into an edit conflict. The rider
+// was just read, so a missing row means its version moved on, not that it never existed.
+func versionMiss(err error) error {
+	if errors.Is(err, domain.ErrNotFound) {
+		return domain.ErrEditConflict
+	}
+	return err
+}
+
 // UpdatePreferences replaces the rider's whole preference set. Unknown riders give
 // domain.ErrNotFound; unknown category codes or area IDs give a *domain.ValidationError.
 // The replacement runs in one transaction under a row lock on the rider, so two
-// concurrent PUTs cannot interleave their delete-then-insert steps.
-func (s *RiderService) UpdatePreferences(ctx context.Context, riderID string, in domain.Preferences) (domain.Rider, error) {
+// concurrent PUTs cannot interleave their delete-then-insert steps, and it bumps the
+// rider's version so a stale X-Expected-Version is rejected with domain.ErrEditConflict.
+func (s *RiderService) UpdatePreferences(ctx context.Context, riderID string, in domain.Preferences, expectedVersion *int) (domain.Rider, error) {
 	if _, err := s.store.GetRider(ctx, riderID); err != nil {
 		return domain.Rider{}, fmt.Errorf("get rider: %w", err)
 	}
 
-	fields := map[string]string{}
-	if len(in.Categories) > 0 {
-		found, err := s.store.GetCategoriesByCodes(ctx, in.Categories)
-		if err != nil {
-			return domain.Rider{}, fmt.Errorf("get categories: %w", err)
-		}
-		known := make(map[string]struct{}, len(found))
-		for _, c := range found {
-			known[c.Code] = struct{}{}
-		}
-		if missing := unknown(in.Categories, known); len(missing) > 0 {
-			fields["preferred_categories"] = "unknown categories: " + strings.Join(missing, ", ")
-		}
-	}
-	if len(in.AreaIDs) > 0 {
-		found, err := s.store.GetAreasByIDs(ctx, in.AreaIDs)
-		if err != nil {
-			return domain.Rider{}, fmt.Errorf("get areas: %w", err)
-		}
-		known := make(map[string]struct{}, len(found))
-		for _, a := range found {
-			known[a.ID] = struct{}{}
-		}
-		if missing := unknown(in.AreaIDs, known); len(missing) > 0 {
-			fields["preferred_areas"] = "unknown areas: " + strings.Join(missing, ", ")
-		}
-	}
-	if len(fields) > 0 {
-		return domain.Rider{}, &domain.ValidationError{Fields: fields}
+	if err := s.validatePreferences(ctx, in); err != nil {
+		return domain.Rider{}, err
 	}
 
+	var updated sqlc.Rider
 	err := s.store.ExecTx(ctx, func(q sqlc.Querier) error {
-		if _, err := q.GetRiderForUpdate(ctx, riderID); err != nil {
+		locked, err := q.GetRiderForUpdate(ctx, riderID)
+		if err != nil {
 			return fmt.Errorf("lock rider: %w", err)
+		}
+		if err := checkVersion(locked.Version, expectedVersion); err != nil {
+			return err
 		}
 		if _, err := q.UpsertPreferences(ctx, sqlc.UpsertPreferencesParams{
 			RiderID:            riderID,
@@ -137,12 +204,51 @@ func (s *RiderService) UpdatePreferences(ctx context.Context, riderID string, in
 				return fmt.Errorf("insert preferred areas: %w", err)
 			}
 		}
+		updated, err = q.BumpRiderVersion(ctx, sqlc.BumpRiderVersionParams{ID: riderID, Version: locked.Version})
+		if err != nil {
+			return fmt.Errorf("bump rider version: %w", versionMiss(err))
+		}
 		return nil
 	})
 	if err != nil {
 		return domain.Rider{}, fmt.Errorf("update preferences: %w", err)
 	}
-	return s.Get(ctx, riderID)
+	return s.withPreferences(ctx, updated)
+}
+
+// validatePreferences checks that every category code and area ID exists.
+func (s *RiderService) validatePreferences(ctx context.Context, in domain.Preferences) error {
+	fields := map[string]string{}
+	if len(in.Categories) > 0 {
+		found, err := s.store.GetCategoriesByCodes(ctx, in.Categories)
+		if err != nil {
+			return fmt.Errorf("get categories: %w", err)
+		}
+		known := make(map[string]struct{}, len(found))
+		for _, c := range found {
+			known[c.Code] = struct{}{}
+		}
+		if missing := unknown(in.Categories, known); len(missing) > 0 {
+			fields["preferred_categories"] = "unknown categories: " + strings.Join(missing, ", ")
+		}
+	}
+	if len(in.AreaIDs) > 0 {
+		found, err := s.store.GetAreasByIDs(ctx, in.AreaIDs)
+		if err != nil {
+			return fmt.Errorf("get areas: %w", err)
+		}
+		known := make(map[string]struct{}, len(found))
+		for _, a := range found {
+			known[a.ID] = struct{}{}
+		}
+		if missing := unknown(in.AreaIDs, known); len(missing) > 0 {
+			fields["preferred_areas"] = "unknown areas: " + strings.Join(missing, ", ")
+		}
+	}
+	if len(fields) > 0 {
+		return &domain.ValidationError{Fields: fields}
+	}
+	return nil
 }
 
 // unknown returns the wanted values that are not in known, in their original order.

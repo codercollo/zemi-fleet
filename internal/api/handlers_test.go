@@ -32,6 +32,9 @@ const testPayoutBPS = 9000
 // testNow is the fixed instant every handler test runs at.
 var testNow = time.Date(2026, 10, 13, 9, 0, 0, 0, time.UTC)
 
+// testCone mirrors the default CONE_* settings.
+var testCone = config.ConeConfig{RadiusKM: 1, HalfAngleDeg: 30, MinSpeedKMH: 3, MaxResults: 20}
+
 // newStoreHandler builds the real router and services on top of a gomock Store.
 func newStoreHandler(t *testing.T) (http.Handler, *mock.MockStore) {
 	t.Helper()
@@ -39,7 +42,8 @@ func newStoreHandler(t *testing.T) (http.Handler, *mock.MockStore) {
 	store := mock.NewMockStore(gomock.NewController(t))
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := NewServer(config.Config{Env: config.EnvDevelopment, RiderPayoutBPS: testPayoutBPS}, logger,
-		fakeDB{}, service.NewOrderService(store, clock.NewTest(testNow), testPayoutBPS), service.NewRiderService(store, clock.NewTest(testNow)), "test")
+		fakeDB{}, service.NewOrderService(store, clock.NewTest(testNow), testPayoutBPS), service.NewRiderService(store, clock.NewTest(testNow)),
+		service.NewMatchingService(store, clock.NewTest(testNow), logger, testCone), "test")
 	return srv.Routes(), store
 }
 

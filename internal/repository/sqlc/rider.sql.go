@@ -201,3 +201,37 @@ func (q *Queries) UpdateRiderLocation(ctx context.Context, arg UpdateRiderLocati
 	)
 	return i, err
 }
+
+const updateRiderTelemetry = `-- name: UpdateRiderTelemetry :exec
+UPDATE riders
+SET last_lat = $1,
+    last_lng = $2,
+    last_bearing_deg = $3,
+    last_speed_kmh = $4,
+    location_updated_at = $5
+WHERE id = $6
+`
+
+type UpdateRiderTelemetryParams struct {
+	LastLat           *float64   `json:"last_lat"`
+	LastLng           *float64   `json:"last_lng"`
+	LastBearingDeg    *float64   `json:"last_bearing_deg"`
+	LastSpeedKmh      *float64   `json:"last_speed_kmh"`
+	LocationUpdatedAt *time.Time `json:"location_updated_at"`
+	ID                string     `json:"id"`
+}
+
+// Location ping taken from a match-orders call. Deliberately no version check and no version
+// bump: telemetry is last-write-wins and must never fail with an edit conflict, nor make a
+// rider's own versioned PATCHes conflict just because the app polled for orders.
+func (q *Queries) UpdateRiderTelemetry(ctx context.Context, arg UpdateRiderTelemetryParams) error {
+	_, err := q.db.Exec(ctx, updateRiderTelemetry,
+		arg.LastLat,
+		arg.LastLng,
+		arg.LastBearingDeg,
+		arg.LastSpeedKmh,
+		arg.LocationUpdatedAt,
+		arg.ID,
+	)
+	return err
+}

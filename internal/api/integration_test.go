@@ -61,7 +61,8 @@ func integrationEnv(t *testing.T) (h http.Handler, riderID string, pool *pgxpool
 	store := repository.NewStore(pool, dbCfg.QueryTimeout)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := NewServer(config.Config{Env: config.EnvDevelopment, RiderPayoutBPS: 9000, DB: dbCfg}, logger, pool,
-		service.NewOrderService(store, clk, 9000), service.NewRiderService(store, clk), "integration")
+		service.NewOrderService(store, clk, 9000), service.NewRiderService(store, clk),
+		service.NewMatchingService(store, clk, logger, config.ConeConfig{RadiusKM: 1, HalfAngleDeg: 30, MinSpeedKMH: 3, MaxResults: 20}), "integration")
 	return srv.Routes(), riderID, pool
 }
 

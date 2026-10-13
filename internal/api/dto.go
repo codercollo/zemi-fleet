@@ -10,7 +10,7 @@ import (
 // Money is stored as KES cents and shown as KES only in these DTOs.
 const (
 	centsPerKES = 100
-	metresPerKM = 1000
+	metresPerKM = 1000.0
 )
 
 // centsToKES converts for output only; never do arithmetic on the result.

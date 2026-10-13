@@ -26,11 +26,20 @@ type Querier interface {
 	GetVendor(ctx context.Context, id string) (Vendor, error)
 	InsertPreferredAreas(ctx context.Context, arg InsertPreferredAreasParams) error
 	InsertPreferredCategories(ctx context.Context, arg InsertPreferredCategoriesParams) error
+	// Cone-matching candidates: pending pickups inside a lat/lng bounding box. The literal
+	// status = 'pending' lets Postgres use the partial index idx_orders_pending_pickup, and it
+	// keeps orders that are already batched or assigned out. Exact distance and angle are
+	// applied in Go (internal/matching).
+	ListPendingOrdersInBox(ctx context.Context, arg ListPendingOrdersInBoxParams) ([]ListPendingOrdersInBoxRow, error)
 	ListPreferredAreas(ctx context.Context, riderID string) ([]string, error)
 	ListPreferredCategories(ctx context.Context, riderID string) ([]string, error)
 	UpdateRiderAvailability(ctx context.Context, arg UpdateRiderAvailabilityParams) (Rider, error)
 	// Optimistic lock (Let's Go Further ch. 8.2): no row comes back when the version moved on.
 	UpdateRiderLocation(ctx context.Context, arg UpdateRiderLocationParams) (Rider, error)
+	// Location ping taken from a match-orders call. Deliberately no version check and no version
+	// bump: telemetry is last-write-wins and must never fail with an edit conflict, nor make a
+	// rider's own versioned PATCHes conflict just because the app polled for orders.
+	UpdateRiderTelemetry(ctx context.Context, arg UpdateRiderTelemetryParams) error
 	UpsertPreferences(ctx context.Context, arg UpsertPreferencesParams) (RiderPreference, error)
 }
 

@@ -30,7 +30,29 @@ type Config struct {
 	// (9000 = 90%). It is snapshotted on every order, so changing it never
 	// rewrites history.
 	RiderPayoutBPS int `mapstructure:"RIDER_PAYOUT_BPS"`
+
+	Cone ConeConfig `mapstructure:",squash"`
 }
+
+// ConeConfig holds the proximity-matching (60 degree cone) tunables.
+type ConeConfig struct {
+	// RadiusKM is how far from the rider a pickup may be (inclusive).
+	RadiusKM float64 `mapstructure:"CONE_RADIUS_KM"`
+	// HalfAngleDeg is half the cone's opening: 30 gives the brief's 60 degree cone.
+	HalfAngleDeg float64 `mapstructure:"CONE_HALF_ANGLE_DEG"`
+	// MinSpeedKMH is the speed below which a GPS heading is noise, so the cone is skipped.
+	MinSpeedKMH float64 `mapstructure:"CONE_MIN_SPEED_KMH"`
+	// MaxResults caps the matching_orders list.
+	MaxResults int `mapstructure:"CONE_MAX_RESULTS"`
+}
+
+// Limits for validating the cone settings.
+const (
+	maxConeRadiusKM   = 50.0
+	maxConeHalfAngle  = 180.0
+	maxConeMinSpeed   = 200.0
+	maxConeMaxResults = 1000
+)
 
 // MaxPayoutBPS is 100% in basis points.
 const MaxPayoutBPS = 10000
@@ -57,6 +79,10 @@ var defaults = map[string]any{
 	"DB_MAX_CONN_IDLE_TIME": "15m",
 	"DB_QUERY_TIMEOUT":      "3s",
 	"RIDER_PAYOUT_BPS":      9000,
+	"CONE_RADIUS_KM":        1,
+	"CONE_HALF_ANGLE_DEG":   30,
+	"CONE_MIN_SPEED_KMH":    3,
+	"CONE_MAX_RESULTS":      20,
 }
 
 // Load configuration
@@ -112,6 +138,7 @@ func (c Config) validate() error {
 	if c.DB.QueryTimeout <= 0 {
 		errs = append(errs, fmt.Errorf("DB_QUERY_TIMEOUT must be greater than zero (got %s)", c.DB.QueryTimeout))
 	}
+	errs = append(errs, c.Cone.validate()...)
 	return errors.Join(errs...)
 }
 
@@ -123,4 +150,21 @@ func (c Config) Location() *time.Location {
 		return time.UTC
 	}
 	return loc
+}
+
+func (c ConeConfig) validate() []error {
+	var errs []error
+	if c.RadiusKM <= 0 || c.RadiusKM > maxConeRadiusKM {
+		errs = append(errs, fmt.Errorf("CONE_RADIUS_KM must be greater than 0 and at most %v (got %v)", maxConeRadiusKM, c.RadiusKM))
+	}
+	if c.HalfAngleDeg <= 0 || c.HalfAngleDeg > maxConeHalfAngle {
+		errs = append(errs, fmt.Errorf("CONE_HALF_ANGLE_DEG must be greater than 0 and at most %v (got %v)", maxConeHalfAngle, c.HalfAngleDeg))
+	}
+	if c.MinSpeedKMH < 0 || c.MinSpeedKMH > maxConeMinSpeed {
+		errs = append(errs, fmt.Errorf("CONE_MIN_SPEED_KMH must be between 0 and %v (got %v)", maxConeMinSpeed, c.MinSpeedKMH))
+	}
+	if c.MaxResults < 1 || c.MaxResults > maxConeMaxResults {
+		errs = append(errs, fmt.Errorf("CONE_MAX_RESULTS must be between 1 and %d (got %d)", maxConeMaxResults, c.MaxResults))
+	}
+	return errs
 }

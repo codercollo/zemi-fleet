@@ -114,3 +114,62 @@ func (q *Queries) GetOrder(ctx context.Context, id string) (Order, error) {
 	)
 	return i, err
 }
+
+const listPendingOrdersInBox = `-- name: ListPendingOrdersInBox :many
+SELECT id, pickup_lat, pickup_lng, created_at, rider_earnings_cents
+FROM orders
+WHERE status = 'pending'
+  AND pickup_lat BETWEEN $1::float8 AND $2::float8
+  AND pickup_lng BETWEEN $3::float8 AND $4::float8
+ORDER BY created_at, id
+`
+
+type ListPendingOrdersInBoxParams struct {
+	MinLat float64 `json:"min_lat"`
+	MaxLat float64 `json:"max_lat"`
+	MinLng float64 `json:"min_lng"`
+	MaxLng float64 `json:"max_lng"`
+}
+
+type ListPendingOrdersInBoxRow struct {
+	ID                 string    `json:"id"`
+	PickupLat          float64   `json:"pickup_lat"`
+	PickupLng          float64   `json:"pickup_lng"`
+	CreatedAt          time.Time `json:"created_at"`
+	RiderEarningsCents *int64    `json:"rider_earnings_cents"`
+}
+
+// Cone-matching candidates: pending pickups inside a lat/lng bounding box. The literal
+// status = 'pending' lets Postgres use the partial index idx_orders_pending_pickup, and it
+// keeps orders that are already batched or assigned out. Exact distance and angle are
+// applied in Go (internal/matching).
+func (q *Queries) ListPendingOrdersInBox(ctx context.Context, arg ListPendingOrdersInBoxParams) ([]ListPendingOrdersInBoxRow, error) {
+	rows, err := q.db.Query(ctx, listPendingOrdersInBox,
+		arg.MinLat,
+		arg.MaxLat,
+		arg.MinLng,
+		arg.MaxLng,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPendingOrdersInBoxRow
+	for rows.Next() {
+		var i ListPendingOrdersInBoxRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.PickupLat,
+			&i.PickupLng,
+			&i.CreatedAt,
+			&i.RiderEarningsCents,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

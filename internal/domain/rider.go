@@ -2,6 +2,9 @@ package domain
 
 import "time"
 
+// MaxRiderCapacity is the largest max_capacity a rider can have (the riders table CHECKs it).
+const MaxRiderCapacity = 5
+
 // Preferences are a rider's matching preferences. An empty Categories or AreaIDs
 // list means "no preference", which matches everything.
 type Preferences struct {

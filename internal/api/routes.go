@@ -25,6 +25,8 @@ func (s *Server) Routes() http.Handler {
 	v2.POST("/orders", s.createOrderHandler)
 	v2.GET("/orders/:id", s.showOrderHandler)
 
+	// Static path next to the :id routes: Gin matches it first. It is a POST, which has no :id sibling.
+	v2.POST("/riders/match-orders", s.matchOrdersHandler)
 	v2.GET("/riders/:id", s.showRiderHandler)
 	v2.PUT("/riders/:id/preferences", s.updatePreferencesHandler)
 	v2.PATCH("/riders/:id/location", s.updateLocationHandler)

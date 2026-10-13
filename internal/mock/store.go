@@ -261,6 +261,21 @@ func (mr *MockStoreMockRecorder) InsertPreferredCategories(ctx, arg any) *gomock
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InsertPreferredCategories", reflect.TypeOf((*MockStore)(nil).InsertPreferredCategories), ctx, arg)
 }
 
+// ListPendingOrdersInBox mocks base method.
+func (m *MockStore) ListPendingOrdersInBox(ctx context.Context, arg sqlc.ListPendingOrdersInBoxParams) ([]sqlc.ListPendingOrdersInBoxRow, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListPendingOrdersInBox", ctx, arg)
+	ret0, _ := ret[0].([]sqlc.ListPendingOrdersInBoxRow)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListPendingOrdersInBox indicates an expected call of ListPendingOrdersInBox.
+func (mr *MockStoreMockRecorder) ListPendingOrdersInBox(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListPendingOrdersInBox", reflect.TypeOf((*MockStore)(nil).ListPendingOrdersInBox), ctx, arg)
+}
+
 // ListPreferredAreas mocks base method.
 func (m *MockStore) ListPreferredAreas(ctx context.Context, riderID string) ([]string, error) {
 	m.ctrl.T.Helper()
@@ -319,6 +334,20 @@ func (m *MockStore) UpdateRiderLocation(ctx context.Context, arg sqlc.UpdateRide
 func (mr *MockStoreMockRecorder) UpdateRiderLocation(ctx, arg any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateRiderLocation", reflect.TypeOf((*MockStore)(nil).UpdateRiderLocation), ctx, arg)
+}
+
+// UpdateRiderTelemetry mocks base method.
+func (m *MockStore) UpdateRiderTelemetry(ctx context.Context, arg sqlc.UpdateRiderTelemetryParams) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateRiderTelemetry", ctx, arg)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateRiderTelemetry indicates an expected call of UpdateRiderTelemetry.
+func (mr *MockStoreMockRecorder) UpdateRiderTelemetry(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateRiderTelemetry", reflect.TypeOf((*MockStore)(nil).UpdateRiderTelemetry), ctx, arg)
 }
 
 // UpsertPreferences mocks base method.

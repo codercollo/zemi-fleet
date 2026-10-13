@@ -35,7 +35,7 @@ The algorithm packages (`geo`, `batching`, `matching`) are pure Go and are calle
 | 3 | Domain models, repository Store, first CRUD (orders, riders, preferences) | 7 | ✅ done |
 | 4 | Advanced CRUD: optimistic locking, query timeouts, partial updates | 8 | ✅ done |
 | 5 | Geo core: haversine, bearing, angle difference | — (algorithm) | ✅ done |
-| 6 | Proximity matching: 60° cone, `POST /riders/match-orders` | 9 (sorting) | |
+| 6 | Proximity matching: 60° cone, `POST /riders/match-orders` | 9 (sorting) | ✅ done |
 | 7 | Batching: clustering, sequencing, scoring, batch endpoints, exclusive accept | 8, 9 | |
 | 8 | Preference matching: `POST /orders/match-riders` | 9 | |
 | 9 | Structured logging, panic recovery, rate limiting, graceful shutdown | 10, 11, 12 | |
@@ -168,7 +168,7 @@ Target pace (deadline Fri 16 Oct, 22:00): Mon 0–2 · Tue 3–5 · Wed 6–7 ·
 
 ---
 
-## Phase 6 — Proximity matching (60° cone)
+## Phase 6 — Proximity matching (60° cone) ✅
 **Book:** 9 Filtering, Sorting (sorting by distance, then by order age)
 
 **Scope**
@@ -176,6 +176,13 @@ Target pace (deadline Fri 16 Oct, 22:00): Mon 0–2 · Tue 3–5 · Wed 6–7 ·
 - Capacity: `max_additional_orders = max_capacity − current_orders_count`. At capacity, return an empty list and `can_accept_more_orders: false`.
 - Speed below `CONE_MIN_SPEED_KMH`: the bearing is unreliable, so fall back to a full circle (documented).
 - `POST /api/v2/riders/match-orders`, using the brief's exact response shape. This also updates the rider's last known location.
+
+**Notes (as built)**
+- Pure `internal/matching/cone.go` (`MatchCone`), service `matching_service.go`, handler `matching_handler.go`, query `ListPendingOrdersInBox` (uses `idx_orders_pending_pickup`; verified with `EXPLAIN` in an integration test), query `UpdateRiderTelemetry` (no version check, no version bump).
+- Config: `CONE_RADIUS_KM=1`, `CONE_HALF_ANGLE_DEG=30`, `CONE_MIN_SPEED_KMH=3`, `CONE_MAX_RESULTS=20`, validated at startup.
+- Response adds `direction_filter_applied`; `angle_from_rider_degrees` is the absolute angle, `null` when the cone was not applied.
+- Decisions the brief did not fix: unknown speed counts as "slow" (full circle); a rider at capacity or off shift still has their position stored; `direction_filter_applied` is `false` when no filter ran; a pickup within 1 m of the rider counts as in the cone (angle 0); `current_orders_count` is required in the request; ages are floored whole minutes; sorting uses exact distance, so pickups a few metres apart are ordered by distance not age.
+- Algorithm write-up: `docs/DOCUMENTATION.md`, "Algorithm: proximity matching".
 
 **Done when:** tests cover inside/outside the cone, the 0°/360° wraparound, a rider at 5/5, speed 0, and no orders.
 

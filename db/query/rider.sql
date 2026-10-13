@@ -30,3 +30,15 @@ UPDATE riders
 SET version = version + 1
 WHERE id = sqlc.arg(id) AND version = sqlc.arg(version)
 RETURNING *;
+
+-- name: UpdateRiderTelemetry :exec
+-- Location ping taken from a match-orders call. Deliberately no version check and no version
+-- bump: telemetry is last-write-wins and must never fail with an edit conflict, nor make a
+-- rider's own versioned PATCHes conflict just because the app polled for orders.
+UPDATE riders
+SET last_lat = sqlc.arg(last_lat),
+    last_lng = sqlc.arg(last_lng),
+    last_bearing_deg = sqlc.arg(last_bearing_deg),
+    last_speed_kmh = sqlc.arg(last_speed_kmh),
+    location_updated_at = sqlc.arg(location_updated_at)
+WHERE id = sqlc.arg(id);

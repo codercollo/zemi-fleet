@@ -18,15 +18,16 @@ type Pinger interface {
 // Server holds the HTTP layer's dependencies (the book's `application` struct).
 // Let's Go Further ch. 2.3.
 type Server struct {
-	cfg     config.Config
-	logger  *slog.Logger
-	db      Pinger
-	orders  *service.OrderService
-	riders  *service.RiderService
-	version string
+	cfg      config.Config
+	logger   *slog.Logger
+	db       Pinger
+	orders   *service.OrderService
+	riders   *service.RiderService
+	matching *service.MatchingService
+	version  string
 }
 
 // NewServer wires the dependencies together.
-func NewServer(cfg config.Config, logger *slog.Logger, db Pinger, orders *service.OrderService, riders *service.RiderService, version string) *Server {
-	return &Server{cfg: cfg, logger: logger, db: db, orders: orders, riders: riders, version: version}
+func NewServer(cfg config.Config, logger *slog.Logger, db Pinger, orders *service.OrderService, riders *service.RiderService, matching *service.MatchingService, version string) *Server {
+	return &Server{cfg: cfg, logger: logger, db: db, orders: orders, riders: riders, matching: matching, version: version}
 }

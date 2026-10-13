@@ -1,0 +1,119 @@
+// Package service holds the business rules. It calls the repository and never touches HTTP.
+package service
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"math"
+
+	"github.com/codercollo/zemi-fleet/internal/clock"
+	"github.com/codercollo/zemi-fleet/internal/domain"
+	"github.com/codercollo/zemi-fleet/internal/geo"
+	"github.com/codercollo/zemi-fleet/internal/metrics"
+	"github.com/codercollo/zemi-fleet/internal/repository"
+	"github.com/codercollo/zemi-fleet/internal/repository/sqlc"
+	"github.com/codercollo/zemi-fleet/internal/util"
+)
+
+// OrderService creates and reads orders.
+type OrderService struct {
+	store repository.Store
+	clock clock.Clock
+	// payoutBPS is the rider's share of the delivery fee (RIDER_PAYOUT_BPS). It is
+	// copied onto each order so later config changes never alter past earnings.
+	payoutBPS int
+	// minTripM is ORDER_MIN_TRIP_M: shorter pickup-to-delivery trips are rejected.
+	minTripM float64
+	metrics  *metrics.Counters
+}
+
+// NewOrderService wires the service to its store, clock and the configured payout share.
+func NewOrderService(store repository.Store, clk clock.Clock, payoutBPS, minTripM int) *OrderService {
+	return &OrderService{store: store, clock: clk, payoutBPS: payoutBPS, minTripM: float64(minTripM)}
+}
+
+// WithMetrics makes the service count business events in c. Without it nothing is counted.
+func (s *OrderService) WithMetrics(c *metrics.Counters) *OrderService {
+	s.metrics = c
+	return s
+}
+
+// CreateOrderInput is a validated order request. Money is in cents.
+type CreateOrderInput struct {
+	VendorID         string
+	CategoryCode     string
+	Delivery         domain.Location
+	ValueCents       int64
+	DeliveryFeeCents int64
+}
+
+// Create stores a new pending order. The pickup point is snapshotted from the
+// vendor, and trip distance and bearing are computed once here because batching
+// reads them for every pending order.
+func (s *OrderService) Create(ctx context.Context, in CreateOrderInput) (domain.Order, error) {
+	fields := map[string]string{}
+
+	vendor, err := s.store.GetVendor(ctx, in.VendorID)
+	switch {
+	case errors.Is(err, domain.ErrNotFound):
+		fields["vendor_id"] = "vendor does not exist"
+	case err != nil:
+		return domain.Order{}, fmt.Errorf("get vendor: %w", err)
+	}
+
+	if _, err := s.store.GetCategory(ctx, in.CategoryCode); errors.Is(err, domain.ErrNotFound) {
+		fields["category"] = "category does not exist"
+	} else if err != nil {
+		return domain.Order{}, fmt.Errorf("get category: %w", err)
+	}
+
+	pickup := domain.Location{Lat: vendor.Lat, Lng: vendor.Lng}
+	if _, found := fields["vendor_id"]; !found {
+		// A trip this short has no usable direction (batching and matching compare bearings) and is not worth a ride.
+		if d := geo.Haversine(pickup, in.Delivery); d < s.minTripM {
+			fields["delivery_location"] = fmt.Sprintf("must be at least %.0f m from the pickup (the vendor); this one is %.0f m", s.minTripM, d)
+		}
+	}
+
+	if len(fields) > 0 {
+		return domain.Order{}, &domain.ValidationError{Fields: fields}
+	}
+
+	now := s.clock.Now()
+	row, err := s.store.CreateOrder(ctx, sqlc.CreateOrderParams{
+		ID:               util.NewOrderID(now),
+		VendorID:         vendor.ID,
+		CategoryCode:     in.CategoryCode,
+		PickupLat:        pickup.Lat,
+		PickupLng:        pickup.Lng,
+		DeliveryLat:      in.Delivery.Lat,
+		DeliveryLng:      in.Delivery.Lng,
+		TripDistanceM:    int32(math.Round(geo.Haversine(pickup, in.Delivery))),
+		TripBearingDeg:   roundBearing(geo.Bearing(pickup, in.Delivery)),
+		ValueCents:       in.ValueCents,
+		DeliveryFeeCents: in.DeliveryFeeCents,
+		RiderPayoutBps:   int32(s.payoutBPS),
+		CreatedAt:        now,
+	})
+	if err != nil {
+		return domain.Order{}, fmt.Errorf("create order: %w", err)
+	}
+	s.metrics.OrderCreated()
+	return orderFromRow(row), nil
+}
+
+// Get returns one order, or domain.ErrNotFound.
+func (s *OrderService) Get(ctx context.Context, id string) (domain.Order, error) {
+	row, err := s.store.GetOrder(ctx, id)
+	if err != nil {
+		return domain.Order{}, fmt.Errorf("get order: %w", err)
+	}
+	return orderFromRow(row), nil
+}
+
+// roundBearing rounds to one decimal and wraps 360.0 back to 0, because the
+// column is REAL and its CHECK requires [0, 360).
+func roundBearing(deg float64) float64 {
+	return math.Mod(math.Round(deg*10)/10, 360)
+}

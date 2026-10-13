@@ -6,7 +6,7 @@
 
 # CLAUDE.md — Zemi Fleet V2
 
-Context for Claude (and any other contributor) working in this repo. Read this first, then `docs/claude/build-phases.md`.
+Context for Claude (and any other contributor) working in this repo. Read this first, then `docs/BUILD_PHASES.md`.
 
 ## What this is
 
@@ -36,8 +36,8 @@ Code quality 30%, algorithm logic 30% (correctness and edge cases: no orders, ri
 
 ## Stack
 
-Go 1.25 (go.mod; pgx and gin require ≥1.25; the Dockerfile builder image matches) · **Gin** (its router is a fork of httprouter, so don't add httprouter) · PostgreSQL 16 · **pgx/v5** (pool) · **sqlc** · golang-migrate · **Viper** · log/slog · testify · go.uber.org/mock (mockgen) · go-faker/faker.
-Module: `github.com/itscollinsmaina/zemi-fleet`.
+Go 1.26 (go.mod says 1.26.0 because the dependencies require it; the Dockerfile builder image is `golang:1.27-alpine`, and `make dev/audit` wants a toolchain that govulncheck considers patched) · **Gin** (its router is a fork of httprouter, so don't add httprouter) · PostgreSQL 16 · **pgx/v5** (pool) · **sqlc** · golang-migrate · **Viper** · log/slog · testify · go.uber.org/mock (mockgen) · go-faker/faker.
+Module: `github.com/codercollo/zemi-fleet`.
 
 ## How the code is organised
 
@@ -55,7 +55,9 @@ internal/domain        shared types + domain errors (ErrNotFound, ErrEditConflic
 internal/geo           pure: Haversine, Bearing, AngleDiff, BoundingBox                     (Phase 5)
 internal/matching      pure: cone.go, preference.go                                         (Phase 6, 8)
 internal/batching      pure: batcher.go, sequencer.go, scoring.go                           (Phase 7)
-internal/mock          mockgen output for repository.Store                                  (Phase 3)
+internal/mock          mockgen output for repository.Store (`make dev/mock`)                (Phase 3)
+internal/metrics       nil-safe expvar domain counters (orders_created, batches_accepted, ...)        (Phase 11)
+internal/util          prefixed, time-sortable IDs (ord_, rider_, batch_)                   (Phase 3)
 db/migrations          golang-migrate, 000001_init_schema (tested)
 db/query, db/seed      sqlc input SQL, Nairobi seed data                                    (Phase 2-3)
 ```
@@ -71,22 +73,42 @@ db/query, db/seed      sqlc input SQL, Nairobi seed data                        
 
 - **Response shape:** an envelope with a named key, e.g. `{"batches": [...]}`, `{"matching_orders": [...]}`, `{"error": "..."}` or `{"error": {"field": "msg"}}`. Field names follow the brief exactly (snake_case: `estimated_earnings_kes`, `angle_from_rider_degrees`, …).
 - **Money:** `BIGINT` KES cents in the DB and in Go (`int64`). Convert to KES only in the API DTOs. Never use floats for money.
-- **Distances:** metres (int) in the DB, km in the API. **Bearings:** degrees in `[0, 360)`.
+- **Distances:** metres (int) in the DB, km in the API. **Bearings:** degrees in `[0, 360)`, stored as `DOUBLE PRECISION` (never REAL: float32 leaks noise like 38.70000076293945).
 - **IDs:** app-generated, prefixed and sortable (`ord_…`, `rider_…`, `batch_…`, `ven_…`, `area_…`) to match the brief's `"rider_123"` style.
 - **Concurrency:**
   - Mutable rows have a `version` column. Updates use `WHERE id=$1 AND version=$2`, and 0 rows affected means an edit conflict.
   - Batch acceptance runs in one transaction: lock the rider `FOR UPDATE`, then claim the batch `WHERE status='open' AND version=$v`.
   - Batch creation selects orders with `FOR UPDATE SKIP LOCKED`.
   - DB `CHECK` constraints are the last line of defence (capacity, state/assignment consistency).
-- **Config:** every tunable is an environment variable read in `internal/config` (radius, cone angle, payout bps, average speed, batch TTL, rate limits, weights). Add new keys to `defaults`, `validate()`, `.env.example` and `docker-compose.yml`.
+- **Optimistic locking:** `PATCH .../location`, `PATCH .../availability` and `PUT .../preferences` read the rider, then `UPDATE ... WHERE id=$1 AND version=$2 RETURNING *`; no row back = `ErrEditConflict` = 409. The optional `X-Expected-Version` header is compared with the stored version first (stale = 409). In the location PATCH an omitted `bearing_degrees` / `speed_kmh` is stored as NULL (unknown), **not** kept: they describe that one reading, so this deliberately deviates from the book's keep-old-value rule (ch. 8.1) and is commented in `RiderService.UpdateLocation`. The preferences PUT locks the rider row `FOR UPDATE` and bumps its version.
+- **Query timeouts:** `DB_QUERY_TIMEOUT` (default 3s) is applied per statement by a DBTX wrapper in `internal/repository/timeout.go`, so every sqlc query is covered. A timeout is an ordinary error and becomes a 500.
+- **Matching rules worth remembering (Phase 6, full write-up in `docs/DOCUMENTATION.md`):** the DB's `current_orders_count` / `max_capacity` are authoritative; the request's count is validated 0–5 and only logged when it disagrees. The cone is skipped only when the bearing is null, or a speed is reported and is below `CONE_MIN_SPEED_KMH` (full circle: `direction_filter_applied=false`, angle `null`); a bearing with no speed uses the cone. `match-orders` stores the rider's position with no version check and no version bump (telemetry never 409s). Limits and radii are inclusive, with tiny float tolerances.
+- **Batching rules worth remembering (Phase 7a, full write-up in `docs/DOCUMENTATION.md`):** pickups must be within the radius of EVERY other pickup in the batch (pairwise), trip bearings within `BATCH_DIRECTION_TOLERANCE_DEG` of the SEED's, FIFO throughout, max `BATCH_MAX_ORDERS`. Batches are created `open` with no rider; only accepting (7b) assigns one. `CreateBatchesTx` expires stale batches, locks pending orders `FOR UPDATE SKIP LOCKED`, forms and stores batches, and records one `batch_offers` row per (batch, rider). Effective size = `min(max_orders, spare capacity)`. The score is the mean per-order detour (direct trip / distance travelled pickup stop to delivery stop); `distance_saved_km` = solo trips − route.
+- **Preference matching (Phase 8, write-up in `docs/DOCUMENTATION.md`):** preferences are HARD filters (availability, capacity, min order value, category, area, fresh-and-too-far); an empty preference means accepts everything. The score (weights `MATCH_WEIGHT_*`, validated to sum to 1.0) only ranks the survivors: category/area 1.0 explicit or 0.5 neutral, proximity `1 - d/MATCH_MAX_DISTANCE_KM`, acceptance rate. Acceptance in the score is smoothed (accepted+1)/(offers+2). A location older than `RIDER_LOCATION_STALE_AFTER` is unknown (not filtered, proximity 0, distance null). Ranking uses the ROUNDED score, then distance (unknown last), then rider_id. `order_details` wins over a stored `order_id`.
+- **Exclusive accept:** `AcceptBatchTx` locks the rider row FIRST, then claims with `UPDATE batches ... WHERE status='open' AND expires_at > now`; zero rows = lost (409 unless the batch is already this rider's: idempotent 200). Capacity is checked first (422). Fixed lock order (rider, then batch) prevents deadlock. `GET /batches` is read-only and only filters on `expires_at`. Orders must be at least `ORDER_MIN_TRIP_M` from their pickup (422).
+- **JSON key order:** a map encodes alphabetically. Responses whose key order matters (the brief's) are structs; `envelope` is for single-key responses. `writeJSON` takes `any`.
+- **Not-found mapping:** the repository wraps the pgx DBTX so every `:one` query returns `domain.ErrNotFound` instead of `pgx.ErrNoRows`. Services just `errors.Is(err, domain.ErrNotFound)`.
+- **Config:** every tunable is an environment variable read in `internal/config` (timezone, `CONE_*` radius/angle/min speed/max results, `BATCH_*` + `AVG_SPEED_KMH` + `STOP_DWELL_MIN` + `ORDER_MIN_TRIP_M` + `MATCH_*` + `RIDER_LOCATION_STALE_AFTER` + `TEST_DATABASE_URL` (tests only) + `API_KEYS` + `ORDER_MAX_VALUE_KES` / `ORDER_MAX_DELIVERY_FEE_KES` + `IDEMPOTENCY_TTL` / `IDEMPOTENCY_PROCESSING_TIMEOUT` + `CORS_TRUSTED_ORIGINS` + `METRICS_ENABLED`, cone angle, payout bps, average speed, batch TTL, rate limits, weights). Add new keys to `defaults`, `validate()`, `.env.example` and `docker-compose.yml`.
 - **Errors:** wrap with `fmt.Errorf("context: %w", err)`, log once at the edge, and never leak internals in a 500.
+- **Test API key:** every handler, integration and e2e test sends a valid key (`authed(req)` / `testAPIKey` in `internal/api/auth_helpers_test.go`; `e.call` in the e2e harness, where a header value of `""` removes a header, so a scenario can send no key). A raw `http.Get` against a test listener gets a 401: use `getAuthed`.
 - **Tests:** testify (`require` for preconditions, `assert` for checks), table-driven, `t.Run` subtests; gomock Store for handler/service tests; faker for data.
 - **Comments:** explain _why_, and cite the book chapter when following a Greenlight pattern (e.g. `// Let's Go Further ch. 8.2`).
 
+## Time handling
+
+One standard from the database to the API: **UTC everywhere, in code and on the wire.**
+
+- **Storage and sessions are UTC.** `repository.OpenPool` sets the pgx runtime parameter `timezone=UTC` on every connection. Columns are `TIMESTAMPTZ`.
+- **Only `internal/clock` reads the system clock.** No other code calls `time.Now()` (enforced by `TestNoTimeNowOutsideClockPackage`); logging and `http.Server` setup need no timestamps from us. Services take a `clock.Clock` through their constructors, wired in `main.go` with `clock.Real{}` (returns `time.Now().UTC()`). Tests use `clock.NewTest(t)` with `Set` / `Advance`. ID generation takes the time as an argument for the same reason.
+- **Business timestamps come from the clock and are passed as query parameters**, not from `now()` in SQL: `orders.created_at`, `riders.location_updated_at`, and later `batches.expires_at` / `accepted_at`. The column `DEFAULT now()` is only a fallback. (`updated_at` is the one exception: the `set_updated_at` trigger owns it.) The seed file uses SQL `now()` because it is not application code.
+- **Normalise to UTC at the edges.** Reading: the repository wraps DBTX so every scanned `time.Time` / `*time.Time` is `.UTC()` (pgx otherwise returns the process's local zone), and the mappers repeat it. Writing: every DTO calls `.UTC()` before encoding, so JSON is RFC 3339 with a `Z` suffix (`2026-10-13T09:30:15Z`).
+- **`APP_TIMEZONE`** (default `Africa/Nairobi`, validated with `time.LoadLocation` at startup; `time/tzdata` is embedded) is the _business_ zone for presentation and "today" boundaries. It never changes what is stored or serialised. Use `cfg.Location()` when a local wall-clock day is needed, and convert at the last moment.
+- Compare instants with `Equal`/`Before`/`After`, never `==`. Durations (timeouts, TTLs) are plain `time.Duration` from config.
+
 ## Schema (db/migrations/000001_init_schema)
 
-`categories`, `areas` (centre + radius_m), `vendors`, `riders` (capacity, last location/bearing/speed, offers/accepted counters → generated `acceptance_rate`), `rider_preferences` (min_order_value_cents) + `rider_preferred_categories` / `rider_preferred_areas` (no rows = no preference = matches all), `orders` (pickup/delivery coords, precomputed `trip_distance_m` / `trip_bearing_deg`, `value_cents`, `delivery_fee_cents`, `rider_payout_bps` → generated `rider_earnings_cents` / `platform_fee_cents`, status + batch/rider assignment), `batches` (open → accepted → in_progress → completed | expired | cancelled, pickup centroid, score, earnings, `expires_at`), `batch_stops` (sequence, pickup before delivery), `batch_offers` (audit + acceptance rate).
-Enums: `order_status`, `batch_status`, `stop_type`. Auth tables (`users`, `sessions`) are **not** in 000001. They'd come in a later `000002_auth` only if the PASETO stretch goal is built.
+`categories`, `areas` (centre + radius_m), `vendors`, `riders` (`full_name`, unique `+254` `phone`, capacity, last location/bearing/speed, offers/accepted counters → generated `acceptance_rate`), `rider_preferences` (min_order_value_cents) + `rider_preferred_categories` / `rider_preferred_areas` (no rows = no preference = matches all), `orders` (pickup/delivery coords, precomputed `trip_distance_m` / `trip_bearing_deg`, `value_cents`, `delivery_fee_cents`, `rider_payout_bps` → generated `rider_earnings_cents` / `platform_fee_cents`, status + batch/rider assignment), `batches` (open → accepted → in_progress → completed | expired | cancelled, pickup centroid, score, earnings, `expires_at`), `batch_stops` (sequence, pickup before delivery), `batch_offers` (audit + acceptance rate).
+Enums: `order_status`, `batch_status`, `stop_type`. There are **no `users`/`sessions` tables and no `riders.user_id`**: a rider is identified by `full_name` + `phone` alone. If the PASETO stretch goal is ever built, auth would arrive as a later `000002_auth` migration.
 
 ## Commands (Makefile has only dev/_ and staging/_)
 
@@ -94,12 +116,20 @@ Enums: `order_status`, `batch_status`, `stop_type`. Auth tables (`users`, `sessi
 # dev = local PostgreSQL + `go run`, no Docker. DB and role are created by hand (README).
 cp .env.example app.env && go mod tidy     # first time
 make dev/db/migrations/up   # golang-migrate CLI against DATABASE_URL
+make dev/db/seed      # Nairobi sample data (TRUNCATES, re-runnable)
+make dev/sqlc         # sqlc generate (db/query -> internal/repository/sqlc)
+make dev/mock         # mockgen (pinned in the Makefile) -> internal/mock/store.go; rerun after changing Store or queries
 make dev/run          # API natively on :4000
 make dev/audit        # what CI runs: tidy -diff, verify, gofmt, vet, staticcheck@v0.8.2, tests
 make dev/test | dev/test/race | dev/test/cover | dev/build
+make dev/test/integration   # migrates TEST_DATABASE_URL, then -tags=integration against it (never DATABASE_URL)
+make dev/test/e2e           # migrates TEST_DATABASE_URL, then -tags=e2e: whole-API scenarios + SQL invariants
+make dev/test/all           # unit + integration + e2e
 make dev/db/psql | dev/db/migrations/new name=x | dev/db/migrations/down | dev/db/migrations/version
-make staging/up       # cross-compile bin/linux_amd64/api -> image (target prebuilt) -> compose on :8080 (override with STAGING_API_PORT / STAGING_DB_PORT, e.g. when 8080 or 5433 are taken)
-make staging/smoke | staging/logs | staging/down
+make staging/up       # cross-compile bin/linux_amd64/api -> image (target prebuilt) -> compose on :8080 (override with STAGING_API_PORT if 8080 is taken). Postgres is NOT published on the host.
+docker compose --profile demo up --build   # reviewers: builds in Docker and seeds db/seed/seed.sql through the `seed` service (plain `docker compose up` is unseeded)
+make dev/vulncheck    # govulncheck, pinned; warns (exit 0) for stdlib-only findings locally, CI enforces
+make staging/smoke | staging/logs | staging/seed (compose `seed` service) | staging/down
 make help
 ```
 
@@ -107,15 +137,34 @@ make help
 - The **version** is stamped via `-ldflags "-X main.version=$(git describe --always --dirty --tags)"`. A plain `go run` reports `dev`.
 - The Dockerfile's default target `runtime` compiles inside Docker, so a reviewer can run `docker compose up --build` without Go or make.
 
+## Testing rules (details in `docs/TESTING.md`)
+
+- Unit tests (no tag): pure packages; services and handlers over a gomock `Store` with `clock.Test`.
+- Integration (`//go:build integration`) and e2e (`//go:build e2e`) tests use **`TEST_DATABASE_URL` only**, a `*_test` database. `internal/testdb` refuses any other name. Each test calls `testdb.Fresh` (or `Open`/`Reset`/`LoadReference`) so it never depends on run order; add riders with `testdb.AddRider`. Never use `DATABASE_URL` in a test.
+- Tagged packages share one database: run them with `-p 1`, never `t.Parallel` across e2e scenarios.
+- e2e scenarios arrange state through the API (fixtures only for reference data and riders) and finish with `assertInvariants` (SQL checks + every timestamp is UTC). Add a scenario only when features must work _together_.
+- The server is built by `internal/app.Build` (used by `cmd/api` and by the e2e tests), so e2e covers the real wiring.
+- `match-orders` expires stale batches before reading candidates, so a timed-out batch's orders are offered again immediately (found by the e2e expiry scenario).
+- Acceptance in `match-riders` is smoothed: `(accepted+1)/(offers+2)` in the score, raw rate in the response.
+- **Security rules (see "Security" in `docs/DOCUMENTATION.md`):** every ID in a path or body is checked with `checkID` / `pathID` against its pattern in `internal/api/ids.go` (a new ID type needs a pattern); money goes through `kesToCents` and `checkAmount` with the configured bound, never `float` arithmetic or `int64(x*100)`; sums of cents use saturating addition; `POST /orders` and `POST /orders/batch` are wrapped by `s.idempotent()`; a new route that creates something should be too. `govulncheck` is `make dev/vulncheck` (pinned in the Makefile and `test.yml`) and is BLOCKING in CI, which builds with the newest Go 1.27 patch; a finding in a module means upgrade the module, never silence it. Locally a stdlib-only finding is just a warning (install a newer Go).
+- **HTTP middleware order (routes.go):** recoverPanic -> metrics (only when `METRICS_ENABLED`) -> requestID -> securityHeaders -> enableCORS -> accessLog -> rateLimit -> requireAPIKey -> handlers; `idempotent()` only on its two POST routes, after all of those. The router is `gin.New()`, never `gin.Default()` (exactly one recovery, one logger). A test route goes behind the real chain with `s.router(extra...)`.
+- **Authentication (Phase 10, write-up in `docs/DOCUMENTATION.md`):** every route except `GET /api/v2/healthz` needs `X-API-Key`. `API_KEYS` is `name=key,name=key` (names `[a-z0-9_-]{1,32}`; keys >= 16 characters in development, >= 32 in staging/production; unique; the published demo key `zemi-demo-key-not-for-production-0001` is refused in production). `config.Load` keeps only SHA-256 hashes (`cfg.APIKeys`) and clears `APIKeysRaw`. `requireAPIKey` (`internal/api/auth.go`) hashes the header and runs `subtle.ConstantTimeCompare` against EVERY stored hash with no early exit; a missing and a wrong key get the identical 401 with `WWW-Authenticate`; failures log at Warn with `key_fingerprint` (8 hex chars of the SHA-256) and the client IP, never the key; success puts the client name in the request context and the access log (`client=`). Never log, echo or put a key in an error message. A new route is protected automatically (the middleware is global); do not exempt anything else. Compose reads `STAGING_API_KEYS` (default: the demo key), not `API_KEYS`, because `make` exports `app.env`.
+- **CORS (Phase 11, write-up in `docs/DOCUMENTATION.md`):** `CORS_TRUSTED_ORIGINS` = exact origins (validated in `internal/config/cors.go`; empty = no CORS headers). `enableCORS` (`internal/api/cors.go`) always adds `Vary: Origin`, echoes only an exactly matching origin (never `*`, never credentials: auth is the `X-API-Key` header), and answers a trusted origin's preflight with 200 BEFORE the limiter and auth (browsers send no key on a preflight). An untrusted preflight gets no CORS headers and the normal 401. Don't add wildcard or suffix matching.
+- **Metrics (Phase 11):** `GET /debug/vars` (expvar JSON) exists only when `METRICS_ENABLED` (unset: true in development/staging, false in production); it needs the API key and is rate limited. Values live in a per-server `expvar.Map` (never expvar's global registry: duplicate names panic and every test builds a server). Domain counters are `internal/metrics.Counters`, nil-safe; services get them through `WithMetrics` and increment ONLY after the work succeeded (a 409 bumps `batch_accept_conflicts`, not `batches_accepted`). A new business event that matters operationally gets a counter there, a line in the "Metrics" section of `docs/DOCUMENTATION.md`, and a test that it does not move on failure.
+- **Logging (CWE-117):** a log message is a fixed string; every value (IDs, paths, error text, headers) is an slog attribute. Log with the request's context (`InfoContext(c.Request.Context(), ...)`) and the context handler adds `request_id`; `logError` scrubs phone numbers (`logging.ScrubPhones`). The access log records the route TEMPLATE, never the raw path. Time in the HTTP layer comes from the injected clock.
+- **Client IP:** `c.ClientIP()` only; `TRUSTED_PROXIES` (empty = none) decides whether X-Forwarded-For is believed. Never read the header yourself.
+- **Shutdown:** `Server.Serve(ctx, srv, ln, timeout)` drains in-flight requests, stops background tasks (started with `s.background`, which recovers panics), then `main` closes the pool. Background goroutines must go through `s.background`.
+- Don't leave empty files, empty directories, `.gitkeep`s in populated directories, TODOs without a phase, or commented-out code.
+
 ## Build process (follow it)
 
-The work proceeds **one phase at a time** in `docs/claude/build-phases.md`, in Greenlight chapter order. Phase 0 (foundation, ch. 2–5) is done. Phase 1 (tooling, ch. 20–21) is done except one check: `make dev/db/migrations/up` has not yet been run against the user's local Postgres. **The next phase is Phase 2** (migrations, seed data, sqlc).
+The work proceeds **one phase at a time** in `docs/BUILD_PHASES.md`, in Greenlight chapter order. Phases 0 (foundation, ch. 2–5), 1 (tooling, ch. 20–21), 2 (migrations, seed, sqlc config), 3 (domain, repository, first CRUD), 4 (advanced CRUD), 5 (geo + clock) and 6 (proximity matching) are done. **Phase 7 (batching, listing, exclusive accept), Phase 8 (rider preference matching) and Phase 8.5 (integration hardening: test database, e2e scenarios, invariants, dead-file audit) are done. **Phase 9 (logging, rate limiting, shutdown), Phase 10 (API-key authentication) and Phase 11 (CORS, metrics) are done. The next phase is Phase 12** (see `docs/BUILD_PHASES.md`).
 For each phase:
 
 1. Build only that phase's scope, on top of what already exists. Don't rewrite earlier phases unless they're broken.
 2. Keep the repo green: `make dev/audit` passes and the API starts.
 3. Verify for real: run the tests, hit the endpoint with curl, run migrations up/down.
-4. Update the phase's status in `docs/claude/build-phases.md`, and update `README.md` / `.env.example` if commands or config changed.
+4. Update the phase's status in `docs/BUILD_PHASES.md`, and update `README.md` / `.env.example` if commands or config changed.
 5. Finish by stating what changed, how it was verified, and the next phase's prompt.
 
 ## Gotchas

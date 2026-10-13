@@ -10,6 +10,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// clearEnv blanks every setting so tests never see values exported by the shell
+// or by `make` (which exports app.env). Viper treats an empty variable as unset.
+func clearEnv(t *testing.T) {
+	t.Helper()
+	for key := range defaults {
+		t.Setenv(key, "")
+	}
+	t.Setenv("METRICS_ENABLED", "") // not in defaults (its default depends on APP_ENV), so clear it here
+	// API_KEYS is required, so every test that is not about keys gets a valid one; apikeys_test.go overrides it.
+	t.Setenv("API_KEYS", "tests=config-test-key-0123456789abcdef0123")
+}
+
 // Helper to write env file for tests
 func writeEnvFile(t *testing.T, content string) string {
 	t.Helper()
@@ -20,6 +32,7 @@ func writeEnvFile(t *testing.T, content string) string {
 
 // Test loading config from file with defaults
 func TestLoadFromFileWithDefaults(t *testing.T) {
+	clearEnv(t)
 	path := writeEnvFile(t, "DATABASE_URL=postgres://u:p@localhost:5432/db\n")
 
 	cfg, err := Load(path)
@@ -33,6 +46,7 @@ func TestLoadFromFileWithDefaults(t *testing.T) {
 
 // Test environment variables override file values
 func TestEnvironmentOverridesFile(t *testing.T) {
+	clearEnv(t)
 	path := writeEnvFile(t, "DATABASE_URL=postgres://file\nPORT=4000\n")
 	t.Setenv("PORT", "9090")
 	t.Setenv("APP_ENV", EnvStaging)
@@ -46,6 +60,7 @@ func TestEnvironmentOverridesFile(t *testing.T) {
 
 // Test missing file uses environment variables only.
 func TestMissingFileUsesEnvironmentOnly(t *testing.T) {
+	clearEnv(t)
 	t.Setenv("DATABASE_URL", "postgres://from-env")
 
 	cfg, err := Load(filepath.Join(t.TempDir(), "does-not-exist.env"))
@@ -56,6 +71,7 @@ func TestMissingFileUsesEnvironmentOnly(t *testing.T) {
 
 // Test configuration validation errors
 func TestValidationErrors(t *testing.T) {
+	clearEnv(t)
 	path := writeEnvFile(t, "APP_ENV=prod\nPORT=0\nDB_MIN_CONNS=50\n")
 
 	_, err := Load(path)
@@ -63,5 +79,66 @@ func TestValidationErrors(t *testing.T) {
 	require.Error(t, err)
 	for _, want := range []string{"APP_ENV", "PORT", "DATABASE_URL", "DB_MIN_CONNS"} {
 		assert.Contains(t, err.Error(), want)
+	}
+}
+
+func TestRiderPayoutBPS(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     string
+		want    int
+		wantErr string
+	}{
+		{"default is 90%", "", 9000, ""},
+		{"custom value", "RIDER_PAYOUT_BPS=8500\n", 8500, ""},
+		{"zero is allowed", "RIDER_PAYOUT_BPS=0\n", 0, ""},
+		{"above 100% is rejected", "RIDER_PAYOUT_BPS=10001\n", 0, "RIDER_PAYOUT_BPS"},
+		{"negative is rejected", "RIDER_PAYOUT_BPS=-1\n", 0, "RIDER_PAYOUT_BPS"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			clearEnv(t)
+			path := writeEnvFile(t, "DATABASE_URL=postgres://u:p@localhost:5432/db\n"+tc.env)
+
+			cfg, err := Load(path)
+
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, cfg.RiderPayoutBPS)
+		})
+	}
+}
+
+func TestQueryTimeout(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     string
+		want    time.Duration
+		wantErr bool
+	}{
+		{"default is 3s", "", 3 * time.Second, false},
+		{"custom", "DB_QUERY_TIMEOUT=500ms\n", 500 * time.Millisecond, false},
+		{"zero is rejected", "DB_QUERY_TIMEOUT=0s\n", 0, true},
+		{"negative is rejected", "DB_QUERY_TIMEOUT=-1s\n", 0, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			clearEnv(t)
+			path := writeEnvFile(t, "DATABASE_URL=postgres://u:p@localhost:5432/db\n"+tc.env)
+
+			cfg, err := Load(path)
+
+			if tc.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "DB_QUERY_TIMEOUT")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, cfg.DB.QueryTimeout)
+		})
 	}
 }

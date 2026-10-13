@@ -1,3 +1,4 @@
+// Package repository is the data layer: the pgx connection pool now, the sqlc Store later.
 package repository
 
 import (
@@ -10,6 +11,9 @@ import (
 	"github.com/codercollo/zemi-fleet/internal/config"
 )
 
+// SessionTimezone is the time zone set on every database session.
+const SessionTimezone = "UTC"
+
 // pingTimeout bounds the startup connectivity check so a bad DSN fails fast.
 const pingTimeout = 5 * time.Second
 
@@ -20,6 +24,9 @@ func OpenPool(ctx context.Context, cfg config.DBConfig) (*pgxpool.Pool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse database url: %w", err)
 	}
+	// Every session runs in UTC, so timestamptz values and any now() fallback are UTC end to
+	// end; the zone people see (APP_TIMEZONE) is only for presentation and day boundaries.
+	poolCfg.ConnConfig.RuntimeParams["timezone"] = SessionTimezone
 	poolCfg.MaxConns = cfg.MaxConns
 	poolCfg.MinConns = cfg.MinConns
 	poolCfg.MaxConnIdleTime = cfg.MaxConnIdleTime

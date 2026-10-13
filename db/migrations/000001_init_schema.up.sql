@@ -2,12 +2,9 @@
 -- Zemi Fleet V2 - initial schema
 -- PostgreSQL 16
 
-CREATE EXTENSION IF NOT EXISTS citext;
-
 -- -----------------------------------------------------------------------------
 -- Enums
 -- -----------------------------------------------------------------------------
-CREATE TYPE user_role    AS ENUM ('admin', 'dispatcher', 'rider');
 CREATE TYPE order_status AS ENUM ('pending', 'batched', 'assigned', 'picked_up', 'delivered', 'cancelled');
 CREATE TYPE batch_status AS ENUM ('open', 'accepted', 'in_progress', 'completed', 'cancelled', 'expired');
 CREATE TYPE stop_type    AS ENUM ('pickup', 'delivery');
@@ -21,36 +18,6 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
-
--- -----------------------------------------------------------------------------
--- Identity & auth (Simple Bank style: users + refresh-token sessions)
--- -----------------------------------------------------------------------------
-CREATE TABLE users (
-    id               TEXT PRIMARY KEY,
-    full_name        TEXT        NOT NULL CHECK (length(full_name) BETWEEN 2 AND 120),
-    email            CITEXT      NOT NULL UNIQUE,
-    phone            TEXT        NOT NULL UNIQUE CHECK (phone ~ '^\+254[0-9]{9}$'),
-    hashed_password  TEXT        NOT NULL,                    -- bcrypt
-    role             user_role   NOT NULL,
-    is_active        BOOLEAN     NOT NULL DEFAULT TRUE,
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-    version          INTEGER     NOT NULL DEFAULT 1
-);
-CREATE TRIGGER trg_users_updated_at BEFORE UPDATE ON users
-    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-
-CREATE TABLE sessions (
-    id             UUID PRIMARY KEY,                          -- refresh token id
-    user_id        TEXT        NOT NULL REFERENCES users (id) ON DELETE CASCADE,
-    refresh_token  TEXT        NOT NULL,
-    user_agent     TEXT        NOT NULL DEFAULT '',
-    client_ip      INET,
-    is_blocked     BOOLEAN     NOT NULL DEFAULT FALSE,
-    expires_at     TIMESTAMPTZ NOT NULL,
-    created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX idx_sessions_user_id ON sessions (user_id);
 
 -- -----------------------------------------------------------------------------
 -- Reference data
@@ -93,15 +60,16 @@ CREATE TRIGGER trg_vendors_updated_at BEFORE UPDATE ON vendors
 -- -----------------------------------------------------------------------------
 CREATE TABLE riders (
     id                    TEXT PRIMARY KEY,
-    user_id               TEXT             NOT NULL UNIQUE REFERENCES users (id) ON DELETE RESTRICT,
+    full_name             TEXT             NOT NULL CHECK (length(full_name) BETWEEN 2 AND 120),
+    phone                 TEXT             NOT NULL UNIQUE CHECK (phone ~ '^\+254[0-9]{9}$'),
     is_available          BOOLEAN          NOT NULL DEFAULT FALSE,     -- on shift
     max_capacity          SMALLINT         NOT NULL DEFAULT 5  CHECK (max_capacity BETWEEN 1 AND 5),
     current_orders_count  SMALLINT         NOT NULL DEFAULT 0,
     -- last known telemetry (updated by match-orders calls / location pings)
     last_lat              DOUBLE PRECISION CHECK (last_lat BETWEEN -90  AND 90),
     last_lng              DOUBLE PRECISION CHECK (last_lng BETWEEN -180 AND 180),
-    last_bearing_deg      REAL             CHECK (last_bearing_deg >= 0 AND last_bearing_deg < 360),
-    last_speed_kmh        REAL             CHECK (last_speed_kmh >= 0 AND last_speed_kmh <= 200),
+    last_bearing_deg      DOUBLE PRECISION CHECK (last_bearing_deg >= 0 AND last_bearing_deg < 360),
+    last_speed_kmh        DOUBLE PRECISION CHECK (last_speed_kmh >= 0 AND last_speed_kmh <= 200),
     location_updated_at   TIMESTAMPTZ,
     -- acceptance rate = accepted / offered, derived so it can never drift
     offers_count          INTEGER          NOT NULL DEFAULT 0 CHECK (offers_count >= 0),
@@ -219,7 +187,7 @@ CREATE TABLE orders (
     delivery_lng          DOUBLE PRECISION NOT NULL CHECK (delivery_lng BETWEEN -180 AND 180),
     -- precomputed once on insert; used by batching for direction similarity
     trip_distance_m       INTEGER          NOT NULL CHECK (trip_distance_m >= 0),
-    trip_bearing_deg      REAL             NOT NULL CHECK (trip_bearing_deg >= 0 AND trip_bearing_deg < 360),
+    trip_bearing_deg      DOUBLE PRECISION NOT NULL CHECK (trip_bearing_deg >= 0 AND trip_bearing_deg < 360),
     -- money (KES cents)
     value_cents           BIGINT           NOT NULL CHECK (value_cents > 0),       -- goods value (preference filter)
     delivery_fee_cents    BIGINT           NOT NULL CHECK (delivery_fee_cents >= 0),

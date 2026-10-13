@@ -14,13 +14,14 @@ import (
 // maxBodyBytes caps request bodies at 1 MiB.
 const maxBodyBytes = 1_048_576
 
-// envelope wraps every response in a named key, e.g. {"batches": [...]}.
+// envelope wraps single-key responses in a named key, e.g. {"batches": [...]}. Responses with several
+// keys use a struct instead, because a map is encoded in alphabetical key order and the brief's order matters.
 // Let's Go Further ch. 3.3.
 type envelope map[string]any
 
 // writeJSON is used instead of c.JSON so every response is formatted the same way.
 // Let's Go Further ch. 3.2.
-func writeJSON(c *gin.Context, status int, data envelope, headers http.Header) error {
+func writeJSON(c *gin.Context, status int, data any, headers http.Header) error {
 	js, err := json.Marshal(data)
 	if err != nil {
 		return err

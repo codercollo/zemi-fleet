@@ -1,16 +1,22 @@
-# Staging: the full stack on Docker Desktop, using the same image production deploys.
-#   make staging/up              binary built by make, packaged into the image
-#   docker compose up --build    reviewers without Go/make: compiles inside Docker
-# Order: postgres (healthy) -> migrate (runs once, exits 0) -> api
+# The full stack in Docker, using the same image production deploys.
+#   make staging/up                          binary built by make, packaged into the image (unseeded)
+#   docker compose up --build                reviewers without Go/make: compiles inside Docker (unseeded)
+#   docker compose --profile demo up --build the same, plus demo data (db/seed/seed.sql) for the API to serve
+# Order: postgres (healthy) -> migrate (runs once, exits 0) -> [seed, demo profile only] -> api
+#
+# Postgres is NOT published on the host: the API, migrate and seed reach it over the compose network, and
+# `make staging/psql` uses `docker compose exec`. So nothing here can clash with a Postgres on your machine,
+# or between the staging stack and a reviewer's.
+#
+# The fallback values below match .env.example (staging section), so `make staging/up` and a plain
+# `docker compose up` create the same database credentials.
 services:
   postgres:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: ${DB_USER:-zemi}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-zemi_dev_password}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-zemi_staging_password}
       POSTGRES_DB: ${DB_NAME:-zemi_fleet}
-    ports:
-      - "${STAGING_DB_PORT:-5433}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -28,11 +34,37 @@ services:
       - ./db/migrations:/migrations:ro
     command:
       - -path=/migrations
-      - -database=postgres://${DB_USER:-zemi}:${DB_PASSWORD:-zemi_dev_password}@postgres:5432/${DB_NAME:-zemi_fleet}?sslmode=disable
+      - -database=postgres://${DB_USER:-zemi}:${DB_PASSWORD:-zemi_staging_password}@postgres:5432/${DB_NAME:-zemi_fleet}?sslmode=disable
       - up
     depends_on:
       postgres:
         condition: service_healthy
+
+  # Demo data, loaded once when the demo profile is on: `docker compose --profile demo up --build`.
+  # `make staging/seed` runs this same service. It TRUNCATES the data tables first, so it is safe to re-run.
+  seed:
+    profiles: [demo]
+    image: postgres:16-alpine
+    volumes:
+      - ./db/seed:/seed:ro
+    environment:
+      PGPASSWORD: ${DB_PASSWORD:-zemi_staging_password}
+    command:
+      - psql
+      - -v
+      - ON_ERROR_STOP=1
+      - -h
+      - postgres
+      - -U
+      - ${DB_USER:-zemi}
+      - -d
+      - ${DB_NAME:-zemi_fleet}
+      - -f
+      - /seed/seed.sql
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
 
   api:
     build:
@@ -46,15 +78,59 @@ services:
     environment:
       APP_ENV: staging
       PORT: 4000
-      DATABASE_URL: postgres://${DB_USER:-zemi}:${DB_PASSWORD:-zemi_dev_password}@postgres:5432/${DB_NAME:-zemi_fleet}?sslmode=disable
+      DATABASE_URL: postgres://${DB_USER:-zemi}:${DB_PASSWORD:-zemi_staging_password}@postgres:5432/${DB_NAME:-zemi_fleet}?sslmode=disable
+      APP_TIMEZONE: ${APP_TIMEZONE:-Africa/Nairobi}
       DB_MAX_CONNS: ${DB_MAX_CONNS:-25}
       DB_MIN_CONNS: ${DB_MIN_CONNS:-2}
       DB_MAX_CONN_IDLE_TIME: ${DB_MAX_CONN_IDLE_TIME:-15m}
+      DB_QUERY_TIMEOUT: ${DB_QUERY_TIMEOUT:-3s}
+      RIDER_PAYOUT_BPS: ${RIDER_PAYOUT_BPS:-9000}
+      CONE_RADIUS_KM: ${CONE_RADIUS_KM:-1}
+      CONE_HALF_ANGLE_DEG: ${CONE_HALF_ANGLE_DEG:-30}
+      CONE_MIN_SPEED_KMH: ${CONE_MIN_SPEED_KMH:-3}
+      CONE_MAX_RESULTS: ${CONE_MAX_RESULTS:-20}
+      BATCH_MAX_ORDERS: ${BATCH_MAX_ORDERS:-5}
+      BATCH_PICKUP_RADIUS_KM: ${BATCH_PICKUP_RADIUS_KM:-2}
+      BATCH_DIRECTION_TOLERANCE_DEG: ${BATCH_DIRECTION_TOLERANCE_DEG:-45}
+      BATCH_SEARCH_RADIUS_KM: ${BATCH_SEARCH_RADIUS_KM:-5}
+      BATCH_VISIBILITY_RADIUS_KM: ${BATCH_VISIBILITY_RADIUS_KM:-3}
+      ORDER_MIN_TRIP_M: ${ORDER_MIN_TRIP_M:-50}
+      ORDER_MAX_VALUE_KES: ${ORDER_MAX_VALUE_KES:-10000000}
+      ORDER_MAX_DELIVERY_FEE_KES: ${ORDER_MAX_DELIVERY_FEE_KES:-10000000}
+      IDEMPOTENCY_TTL: ${IDEMPOTENCY_TTL:-24h}
+      IDEMPOTENCY_PROCESSING_TIMEOUT: ${IDEMPOTENCY_PROCESSING_TIMEOUT:-2m}
+      MATCH_MAX_DISTANCE_KM: ${MATCH_MAX_DISTANCE_KM:-10}
+      RIDER_LOCATION_STALE_AFTER: ${RIDER_LOCATION_STALE_AFTER:-30m}
+      MATCH_WEIGHT_CATEGORY: ${MATCH_WEIGHT_CATEGORY:-0.25}
+      MATCH_WEIGHT_AREA: ${MATCH_WEIGHT_AREA:-0.20}
+      MATCH_WEIGHT_PROXIMITY: ${MATCH_WEIGHT_PROXIMITY:-0.35}
+      MATCH_WEIGHT_ACCEPTANCE: ${MATCH_WEIGHT_ACCEPTANCE:-0.20}
+      MATCH_MAX_RESULTS: ${MATCH_MAX_RESULTS:-10}
+      BATCH_TTL: ${BATCH_TTL:-10m}
+      AVG_SPEED_KMH: ${AVG_SPEED_KMH:-20}
+      STOP_DWELL_MIN: ${STOP_DWELL_MIN:-2}
+      LIMITER_ENABLED: ${LIMITER_ENABLED:-true}
+      LIMITER_RPS: ${LIMITER_RPS:-10}
+      LIMITER_BURST: ${LIMITER_BURST:-20}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+      SHUTDOWN_TIMEOUT: ${SHUTDOWN_TIMEOUT:-30s}
+      # Exact origins (scheme://host[:port]); empty = no CORS headers.
+      CORS_TRUSTED_ORIGINS: ${CORS_TRUSTED_ORIGINS:-}
+      METRICS_ENABLED: ${METRICS_ENABLED:-true}
+      # name=key pairs. The fallback is the PUBLISHED demo key (README, Postman environment), so the reviewer path
+      # works out of the box; it is >= 32 characters (staging's minimum) and production refuses it. Set
+      # STAGING_API_KEYS to real keys for anything that is not a demo. The variable is not called API_KEYS on
+      # purpose: `make` exports app.env (a short development key), which must not leak into the staging stack.
+      API_KEYS: ${STAGING_API_KEYS:-demo=zemi-demo-key-not-for-production-0001}
     ports:
       - "${STAGING_API_PORT:-8080}:4000"
     depends_on:
       migrate:
         condition: service_completed_successfully
+      # Present only with --profile demo: then the API waits for the demo data. Otherwise (required: false) it is ignored.
+      seed:
+        condition: service_completed_successfully
+        required: false
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:4000/api/v2/healthz"]
       interval: 10s

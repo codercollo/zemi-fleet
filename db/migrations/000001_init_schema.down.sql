@@ -9,12 +9,9 @@ DROP TABLE IF EXISTS riders;
 DROP TABLE IF EXISTS vendors;
 DROP TABLE IF EXISTS areas;
 DROP TABLE IF EXISTS categories;
-DROP TABLE IF EXISTS sessions;
-DROP TABLE IF EXISTS users;
 
 DROP FUNCTION IF EXISTS set_updated_at();
 
 DROP TYPE IF EXISTS stop_type;
 DROP TYPE IF EXISTS batch_status;
 DROP TYPE IF EXISTS order_status;
-DROP TYPE IF EXISTS user_role;

@@ -54,6 +54,16 @@ dev/run:
 dev/db/psql:
 	psql "$(DATABASE_URL)"
 
+## dev/db/seed: reload the Nairobi seed data into the local database (TRUNCATES first)
+.PHONY: dev/db/seed
+dev/db/seed: confirm
+	psql "$(DATABASE_URL)" -v ON_ERROR_STOP=1 -f db/seed/seed.sql
+
+## dev/sqlc: generate Go code from db/query + db/migrations with sqlc
+.PHONY: dev/sqlc
+dev/sqlc:
+	@if ls db/query/*.sql >/dev/null 2>&1; then sqlc generate; else echo 'no queries in db/query yet (added in Phase 3); sqlc rejects an empty set'; fi
+
 ## dev/db/migrations/new name=$1: create a new pair of migration files
 .PHONY: dev/db/migrations/new
 dev/db/migrations/new:
@@ -165,6 +175,11 @@ staging/migrate:
 .PHONY: staging/psql
 staging/psql:
 	$(STAGING_COMPOSE) exec postgres psql -U $(or $(DB_USER),zemi) -d $(or $(DB_NAME),zemi_fleet)
+
+## staging/seed: reload the seed data into the staging Postgres container (TRUNCATES first)
+.PHONY: staging/seed
+staging/seed: confirm
+	$(STAGING_COMPOSE) exec -T postgres psql -U $(or $(DB_USER),zemi) -d $(or $(DB_NAME),zemi_fleet) -v ON_ERROR_STOP=1 < db/seed/seed.sql
 
 ## staging/down: stop staging containers (data is kept)
 .PHONY: staging/down

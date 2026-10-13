@@ -86,7 +86,7 @@ db/query, db/seed      sqlc input SQL, Nairobi seed data                        
 ## Schema (db/migrations/000001_init_schema)
 
 `categories`, `areas` (centre + radius_m), `vendors`, `riders` (capacity, last location/bearing/speed, offers/accepted counters → generated `acceptance_rate`), `rider_preferences` (min_order_value_cents) + `rider_preferred_categories` / `rider_preferred_areas` (no rows = no preference = matches all), `orders` (pickup/delivery coords, precomputed `trip_distance_m` / `trip_bearing_deg`, `value_cents`, `delivery_fee_cents`, `rider_payout_bps` → generated `rider_earnings_cents` / `platform_fee_cents`, status + batch/rider assignment), `batches` (open → accepted → in_progress → completed | expired | cancelled, pickup centroid, score, earnings, `expires_at`), `batch_stops` (sequence, pickup before delivery), `batch_offers` (audit + acceptance rate).
-Enums: `order_status`, `batch_status`, `stop_type`. Auth tables (`users`, `sessions`) are **not** in 000001. They'd come in a later `000002_auth` only if the PASETO stretch goal is built.
+Enums: `order_status`, `batch_status`, `stop_type`. `users` and `sessions` ARE still in 000001 (`riders.user_id` is NOT NULL), so the seed inserts a placeholder user per rider.
 
 ## Commands (Makefile has only dev/_ and staging/_)
 
@@ -94,12 +94,13 @@ Enums: `order_status`, `batch_status`, `stop_type`. Auth tables (`users`, `sessi
 # dev = local PostgreSQL + `go run`, no Docker. DB and role are created by hand (README).
 cp .env.example app.env && go mod tidy     # first time
 make dev/db/migrations/up   # golang-migrate CLI against DATABASE_URL
+make dev/db/seed      # Nairobi sample data (TRUNCATES, re-runnable); dev/sqlc = sqlc generate
 make dev/run          # API natively on :4000
 make dev/audit        # what CI runs: tidy -diff, verify, gofmt, vet, staticcheck@v0.8.2, tests
 make dev/test | dev/test/race | dev/test/cover | dev/build
 make dev/db/psql | dev/db/migrations/new name=x | dev/db/migrations/down | dev/db/migrations/version
 make staging/up       # cross-compile bin/linux_amd64/api -> image (target prebuilt) -> compose on :8080 (override with STAGING_API_PORT / STAGING_DB_PORT, e.g. when 8080 or 5433 are taken)
-make staging/smoke | staging/logs | staging/down
+make staging/smoke | staging/logs | staging/seed | staging/down
 make help
 ```
 
@@ -109,7 +110,7 @@ make help
 
 ## Build process (follow it)
 
-The work proceeds **one phase at a time** in `docs/BUILD_PHASES.md`, in Greenlight chapter order. Phases 0 (foundation, ch. 2–5) and 1 (tooling, ch. 20–21) are done. **The next phase is Phase 2** (migrations, seed data, sqlc).
+The work proceeds **one phase at a time** in `docs/BUILD_PHASES.md`, in Greenlight chapter order. Phases 0 (foundation, ch. 2–5), 1 (tooling, ch. 20–21) and 2 (migrations, seed, sqlc config) are done. **The next phase is Phase 3** (domain, repository, first CRUD).
 For each phase:
 
 1. Build only that phase's scope, on top of what already exists. Don't rewrite earlier phases unless they're broken.

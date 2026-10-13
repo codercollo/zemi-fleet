@@ -31,7 +31,7 @@ The algorithm packages (`geo`, `batching`, `matching`) are pure Go and are calle
 |---|---|---|---|
 | 0 | Foundation: server, JSON in/out, errors, validator, config, DB pool | 2, 3, 4, 5 | ✅ done |
 | 1 | Build tooling: Makefile (dev/staging), versioning, Docker, CI workflows | 20, 21 (moved early) | ✅ done |
-| 2 | Migrations, seed data, sqlc setup | 6 | ⏳ next |
+| 2 | Migrations, seed data, sqlc setup | 6 | ✅ done |
 | 3 | Domain models, repository Store, first CRUD (orders, riders, preferences) | 7 | |
 | 4 | Advanced CRUD: optimistic locking, query timeouts, partial updates | 8 | |
 | 5 | Geo core: haversine, bearing, angle difference | — (algorithm) | |
@@ -80,7 +80,7 @@ Target pace (deadline Fri 16 Oct, 22:00): Mon 0–2 · Tue 3–5 · Wed 6–7 ·
 
 ---
 
-## Phase 2 — Migrations, seed data, sqlc setup
+## Phase 2 — Migrations, seed data, sqlc setup ✅
 **Book:** 6 SQL Migrations
 
 **Scope**
@@ -89,6 +89,12 @@ Target pace (deadline Fri 16 Oct, 22:00): Mon 0–2 · Tue 3–5 · Wed 6–7 ·
 - `sqlc.yaml` (pgx/v5, `emit_interface`, `emit_json_tags`, overrides for numeric/timestamptz).
 - Makefile: `dev/db/seed` (`psql "$(DATABASE_URL)" -f db/seed/seed.sql`), `dev/sqlc`; `staging/seed`.
 - The CI test workflow runs migrations up → down → up.
+
+**Notes (as built)**
+- Schema 000001 still contains `users`/`sessions` and `riders.user_id` is NOT NULL, so the seed creates 10 `users` rows (placeholder hash, no one can log in). `CLAUDE.md` says auth tables are not in 000001; that is out of date.
+- sqlc rejects an empty query set ("no queries contained in paths"), so `make dev/sqlc` prints a notice and does nothing until Phase 3 adds `db/query/*.sql`. The config was validated against a throwaway query: overrides turn `numeric` into `float64` and `timestamptz` into `time.Time` / `*time.Time`.
+- `dev/db/seed` and `staging/seed` TRUNCATE all data tables (not `schema_migrations`) and are behind `confirm`.
+- The CI up → down → up job already existed from Phase 1.
 
 **Done when:** `make dev/db/migrations/up && make dev/db/seed` loads the data into your local database; `make dev/sqlc` generates code that compiles; CI migration step passes.
 

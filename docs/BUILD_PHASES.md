@@ -32,7 +32,7 @@ The algorithm packages (`geo`, `batching`, `matching`) are pure Go and are calle
 | 0 | Foundation: server, JSON in/out, errors, validator, config, DB pool | 2, 3, 4, 5 | ✅ done |
 | 1 | Build tooling: Makefile (dev/staging), versioning, Docker, CI workflows | 20, 21 (moved early) | ✅ done |
 | 2 | Migrations, seed data, sqlc setup | 6 | ✅ done |
-| 3 | Domain models, repository Store, first CRUD (orders, riders, preferences) | 7 | |
+| 3 | Domain models, repository Store, first CRUD (orders, riders, preferences) | 7 | ✅ done |
 | 4 | Advanced CRUD: optimistic locking, query timeouts, partial updates | 8 | |
 | 5 | Geo core: haversine, bearing, angle difference | — (algorithm) | |
 | 6 | Proximity matching: 60° cone, `POST /riders/match-orders` | 9 (sorting) | |
@@ -102,7 +102,7 @@ Target pace (deadline Fri 16 Oct, 22:00): Mon 0–2 · Tue 3–5 · Wed 6–7 ·
 
 ---
 
-## Phase 3 — Domain + repository + first CRUD
+## Phase 3 — Domain + repository + first CRUD ✅
 **Book:** 7 CRUD Operations
 
 **Scope**
@@ -113,6 +113,15 @@ Target pace (deadline Fri 16 Oct, 22:00): Mon 0–2 · Tue 3–5 · Wed 6–7 ·
 - `internal/util/id.go`: prefixed sortable IDs (`ord_`, `rider_`, `batch_`).
 - Endpoints: `POST /orders`, `GET /orders/:id`, `GET /riders/:id`, `PUT /riders/:id/preferences`.
 - Tests: handler tests with a gomock Store and faker data; `make dev/mock`.
+
+**Notes (as built)**
+- Schema cleanup first: migration 000001 was edited in place. `users`, `sessions`, the `user_role` enum and the `citext` extension are gone, `riders.user_id` is replaced by `full_name` (2–120 chars) and a unique `+254` `phone`. Because the old `down` could not unwind the old schema, the local database was reset once; `down`, `up`, `seed` then ran cleanly.
+- `POST /orders` takes `vendor_id`, `category`, `delivery_location`, `order_value_kes`, `delivery_fee_kes`. The pickup point is snapshotted from the vendor. Unknown vendor/category is a 422 (the body referenced something that does not exist); unknown path IDs are a 404.
+- `db/query/vendor.sql` was added (not in the original file list) because order creation needs the vendor's coordinates.
+- `Store.ExecTx` passes a `sqlc.Querier` to the callback, so a gomock Store can run the transaction body in tests.
+- `pgx.ErrNoRows` becomes `domain.ErrNotFound` by wrapping the DBTX, which covers every `:one` query, including inside transactions.
+- `internal/service/geo.go` holds a temporary haversine/bearing (marked TODO); Phase 5 replaces it with `internal/geo`.
+- `domain.ValidationError` was added for checks that need the database (category/area exist). The handler maps it to 422.
 
 **Done when:** an order created over HTTP can be read back; validation errors return 422 with per-field messages; unknown IDs return 404.
 

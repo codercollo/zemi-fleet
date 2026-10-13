@@ -22,5 +22,11 @@ func (s *Server) Routes() http.Handler {
 	v2 := r.Group(apiPrefix)
 	v2.GET("/healthz", s.healthzHandler)
 
+	v2.POST("/orders", s.createOrderHandler)
+	v2.GET("/orders/:id", s.showOrderHandler)
+
+	v2.GET("/riders/:id", s.showRiderHandler)
+	v2.PUT("/riders/:id/preferences", s.updatePreferencesHandler)
+
 	return r
 }

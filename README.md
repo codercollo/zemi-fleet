@@ -16,9 +16,22 @@ REST API for order batching, proximity (60° cone) matching and rider preference
 6. `make dev/run`
 7. Check `http://localhost:4000/api/v2/healthz`
 
-`make dev/sqlc` generates the sqlc code (a no-op until Phase 3 adds queries). On staging, `make staging/seed` loads the same data into the Postgres container.
+`make dev/sqlc` regenerates the sqlc code and `make dev/mock` regenerates the gomock `Store` (run both after changing `db/query` or the `Store` interface). On staging, `make staging/seed` loads the same data into the Postgres container.
 
 Run `make help` for all targets (`dev/*` for local work, `staging/*` for Docker).
+
+## API (so far)
+All under `/api/v2`. Money is KES in JSON (cents in the database).
+
+| Method | Path | |
+|---|---|---|
+| GET | `/healthz` | status + database check |
+| POST | `/orders` | create a pending order, `201` + `Location` |
+| GET | `/orders/:id` | one order |
+| GET | `/riders/:id` | rider with preferences |
+| PUT | `/riders/:id/preferences` | replace categories, areas and minimum order value |
+
+Errors: `400` malformed JSON, `404` unknown ID, `422` validation (per-field messages).
 
 ## Build phases
 The work is tracked phase by phase in [docs/BUILD_PHASES.md](docs/BUILD_PHASES.md).

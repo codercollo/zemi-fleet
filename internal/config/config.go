@@ -22,7 +22,15 @@ type Config struct {
 	Env  string   `mapstructure:"APP_ENV"`
 	Port int      `mapstructure:"PORT"`
 	DB   DBConfig `mapstructure:",squash"`
+
+	// RiderPayoutBPS is the rider's share of each delivery fee in basis points
+	// (9000 = 90%). It is snapshotted on every order, so changing it never
+	// rewrites history.
+	RiderPayoutBPS int `mapstructure:"RIDER_PAYOUT_BPS"`
 }
+
+// MaxPayoutBPS is 100% in basis points.
+const MaxPayoutBPS = 10000
 
 // DBConfig holds the PostgreSQL connection pool settings.
 type DBConfig struct {
@@ -40,6 +48,7 @@ var defaults = map[string]any{
 	"DB_MAX_CONNS":          25,
 	"DB_MIN_CONNS":          2,
 	"DB_MAX_CONN_IDLE_TIME": "15m",
+	"RIDER_PAYOUT_BPS":      9000,
 }
 
 // Load configuration
@@ -85,6 +94,9 @@ func (c Config) validate() error {
 	}
 	if c.DB.MaxConns < 1 || c.DB.MinConns < 0 || c.DB.MinConns > c.DB.MaxConns {
 		errs = append(errs, errors.New("DB_MIN_CONNS must be between 0 and DB_MAX_CONNS, and DB_MAX_CONNS >= 1"))
+	}
+	if c.RiderPayoutBPS < 0 || c.RiderPayoutBPS > MaxPayoutBPS {
+		errs = append(errs, fmt.Errorf("RIDER_PAYOUT_BPS must be 0-%d (got %d)", MaxPayoutBPS, c.RiderPayoutBPS))
 	}
 	return errors.Join(errs...)
 }

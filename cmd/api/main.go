@@ -15,6 +15,7 @@ import (
 	"github.com/codercollo/zemi-fleet/internal/api"
 	"github.com/codercollo/zemi-fleet/internal/config"
 	"github.com/codercollo/zemi-fleet/internal/repository"
+	"github.com/codercollo/zemi-fleet/internal/service"
 )
 
 // version is overridden at build time with
@@ -56,7 +57,10 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	app := api.NewServer(cfg, logger, pool, version)
+	store := repository.NewStore(pool)
+	orders := service.NewOrderService(store, cfg.RiderPayoutBPS)
+	riders := service.NewRiderService(store)
+	app := api.NewServer(cfg, logger, pool, orders, riders, version)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),

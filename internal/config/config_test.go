@@ -78,3 +78,34 @@ func TestValidationErrors(t *testing.T) {
 		assert.Contains(t, err.Error(), want)
 	}
 }
+
+func TestRiderPayoutBPS(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     string
+		want    int
+		wantErr string
+	}{
+		{"default is 90%", "", 9000, ""},
+		{"custom value", "RIDER_PAYOUT_BPS=8500\n", 8500, ""},
+		{"zero is allowed", "RIDER_PAYOUT_BPS=0\n", 0, ""},
+		{"above 100% is rejected", "RIDER_PAYOUT_BPS=10001\n", 0, "RIDER_PAYOUT_BPS"},
+		{"negative is rejected", "RIDER_PAYOUT_BPS=-1\n", 0, "RIDER_PAYOUT_BPS"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			clearEnv(t)
+			path := writeEnvFile(t, "DATABASE_URL=postgres://u:p@localhost:5432/db\n"+tc.env)
+
+			cfg, err := Load(path)
+
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, cfg.RiderPayoutBPS)
+		})
+	}
+}

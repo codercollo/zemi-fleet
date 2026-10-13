@@ -1,10 +1,13 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/codercollo/zemi-fleet/internal/domain"
 )
 
 // logError logs the failure once, at the edge, with enough request context to trace it.
@@ -42,6 +45,29 @@ func (s *Server) badRequestResponse(c *gin.Context, err error) {
 }
 
 // failedValidationResponse returns 422 with per-field messages.
-func (s *Server) failedValidationResponse(c *gin.Context, errors map[string]string) {
-	s.errorResponse(c, http.StatusUnprocessableEntity, errors)
+func (s *Server) failedValidationResponse(c *gin.Context, fields map[string]string) {
+	s.errorResponse(c, http.StatusUnprocessableEntity, fields)
+}
+
+// handleServiceError is the one place domain errors become HTTP statuses:
+// not found -> 404, edit conflict / batch taken -> 409,
+// validation failure / rider at capacity -> 422, anything else -> 500.
+func (s *Server) handleServiceError(c *gin.Context, err error) {
+	var validationErr *domain.ValidationError
+
+	switch {
+	case errors.Is(err, domain.ErrNotFound):
+		s.notFoundResponse(c)
+	case errors.Is(err, domain.ErrEditConflict):
+		s.errorResponse(c, http.StatusConflict,
+			"unable to update the record due to an edit conflict, please try again")
+	case errors.Is(err, domain.ErrBatchTaken):
+		s.errorResponse(c, http.StatusConflict, "this batch has already been accepted by another rider")
+	case errors.Is(err, domain.ErrRiderAtCapacity):
+		s.errorResponse(c, http.StatusUnprocessableEntity, "the rider does not have capacity for these orders")
+	case errors.As(err, &validationErr):
+		s.failedValidationResponse(c, validationErr.Fields)
+	default:
+		s.serverErrorResponse(c, err)
+	}
 }

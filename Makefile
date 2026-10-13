@@ -20,6 +20,7 @@ export MSYS_NO_PATHCONV=1
 VERSION         := $(shell git describe --always --dirty --tags 2>/dev/null || echo dev)
 LDFLAGS         := -s -X main.version=$(VERSION)
 
+MOCKGEN_VERSION := v0.6.0
 EXE             := $(shell go env GOEXE)
 STAGING_COMPOSE := docker compose -p zemi-staging -f docker-compose.yml
 STAGING_URL     := http://localhost:$(or $(STAGING_API_PORT),8080)
@@ -105,6 +106,11 @@ dev/audit:
 	go vet ./...
 	go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
 	go test -vet=off -count=1 ./...
+
+## dev/mock: regenerate the gomock Store in internal/mock (mockgen is pinned, nothing to install)
+.PHONY: dev/mock
+dev/mock:
+	go run go.uber.org/mock/mockgen@$(MOCKGEN_VERSION) -destination=internal/mock/store.go -package=mock github.com/codercollo/zemi-fleet/internal/repository Store
 
 ## dev/test: run all unit tests
 .PHONY: dev/test

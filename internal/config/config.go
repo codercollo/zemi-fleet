@@ -1,3 +1,4 @@
+// Package config loads and validates settings from environment variables, app.env and defaults.
 package config
 
 import (
@@ -16,14 +17,14 @@ const (
 	EnvProduction  = "production"
 )
 
-// App configuration
+// Config holds every application setting.
 type Config struct {
 	Env  string   `mapstructure:"APP_ENV"`
 	Port int      `mapstructure:"PORT"`
 	DB   DBConfig `mapstructure:",squash"`
 }
 
-// Database configuration
+// DBConfig holds the PostgreSQL connection pool settings.
 type DBConfig struct {
 	DSN             string        `mapstructure:"DATABASE_URL"`
 	MaxConns        int32         `mapstructure:"DB_MAX_CONNS"`

@@ -6,7 +6,7 @@
 
 # CLAUDE.md — Zemi Fleet V2
 
-Context for Claude (and any other contributor) working in this repo. Read this first, then `docs/claude/build-phases.md`.
+Context for Claude (and any other contributor) working in this repo. Read this first, then `docs/BUILD_PHASES.md`.
 
 ## What this is
 
@@ -109,13 +109,13 @@ make help
 
 ## Build process (follow it)
 
-The work proceeds **one phase at a time** in `docs/claude/build-phases.md`, in Greenlight chapter order. Phase 0 (foundation, ch. 2–5) is done. Phase 1 (tooling, ch. 20–21) is done except one check: `make dev/db/migrations/up` has not yet been run against the user's local Postgres. **The next phase is Phase 2** (migrations, seed data, sqlc).
+The work proceeds **one phase at a time** in `docs/BUILD_PHASES.md`, in Greenlight chapter order. Phases 0 (foundation, ch. 2–5) and 1 (tooling, ch. 20–21) are done. **The next phase is Phase 2** (migrations, seed data, sqlc).
 For each phase:
 
 1. Build only that phase's scope, on top of what already exists. Don't rewrite earlier phases unless they're broken.
 2. Keep the repo green: `make dev/audit` passes and the API starts.
 3. Verify for real: run the tests, hit the endpoint with curl, run migrations up/down.
-4. Update the phase's status in `docs/claude/build-phases.md`, and update `README.md` / `.env.example` if commands or config changed.
+4. Update the phase's status in `docs/BUILD_PHASES.md`, and update `README.md` / `.env.example` if commands or config changed.
 5. Finish by stating what changed, how it was verified, and the next phase's prompt.
 
 ## Gotchas

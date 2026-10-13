@@ -1,3 +1,4 @@
+// Package repository is the data layer: the pgx connection pool now, the sqlc Store later.
 package repository
 
 import (

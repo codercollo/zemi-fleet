@@ -1,3 +1,4 @@
+// Package validator collects per-field validation errors for request payloads.
 package validator
 
 import (
@@ -53,7 +54,7 @@ func Unique[T comparable](values []T) bool {
 	return true
 }
 
-// Between reports whether min <= value <= max (inclusive).
-func Between[T cmp.Ordered](value, min, max T) bool {
-	return value >= min && value <= max
+// Between reports whether lo <= value <= hi (inclusive).
+func Between[T cmp.Ordered](value, lo, hi T) bool {
+	return value >= lo && value <= hi
 }

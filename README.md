@@ -3,18 +3,19 @@
 REST API for order batching, proximity (60° cone) matching and rider preference matching.
 
 ## Stack
-- Go 1.23, Gin
-- PostgreSQL 16, pgx/v5, sqlc, golang-migrate, Viper
+- Go 1.25, Gin
+- PostgreSQL, pgx/v5, sqlc, golang-migrate, Viper
 - testify, go.uber.org/mock, faker
 
-## Local setup
-1. `cp .env.example app.env` and update local values.
-2. Install Go 1.23+, Docker Compose, `migrate` and `sqlc`.
-3. `make up`
-4. Check `http://localhost:8080/api/v2/healthz`
+## Local setup (no Docker)
+1. Create the database and role in your local PostgreSQL (`zemi_fleet`, owned by `zemi`).
+2. `cp .env.example app.env` and set `DATABASE_URL`.
+3. Install Go 1.25+, `make` and the `migrate` CLI.
+4. `make dev/db/migrations/up`
+5. `make dev/run`
+6. Check `http://localhost:4000/api/v2/healthz`
 
-## Authentication
-Protected routes require the `X-API-Key` header. Configure `API_KEYS` in `app.env`.
+Run `make help` for all targets (`dev/*` for local work, `staging/*` for Docker).
 
-## Documentation
-See [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md).
+## Build phases
+The work is tracked phase by phase in [docs/BUILD_PHASES.md](docs/BUILD_PHASES.md).

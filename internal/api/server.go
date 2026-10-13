@@ -1,3 +1,4 @@
+// Package api is the HTTP layer: routes, handlers, JSON helpers and error responses.
 package api
 
 import (

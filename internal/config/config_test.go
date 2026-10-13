@@ -10,6 +10,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// clearEnv blanks every setting so tests never see values exported by the shell
+// or by `make` (which exports app.env). Viper treats an empty variable as unset.
+func clearEnv(t *testing.T) {
+	t.Helper()
+	for key := range defaults {
+		t.Setenv(key, "")
+	}
+}
+
 // Helper to write env file for tests
 func writeEnvFile(t *testing.T, content string) string {
 	t.Helper()
@@ -20,6 +29,7 @@ func writeEnvFile(t *testing.T, content string) string {
 
 // Test loading config from file with defaults
 func TestLoadFromFileWithDefaults(t *testing.T) {
+	clearEnv(t)
 	path := writeEnvFile(t, "DATABASE_URL=postgres://u:p@localhost:5432/db\n")
 
 	cfg, err := Load(path)
@@ -33,6 +43,7 @@ func TestLoadFromFileWithDefaults(t *testing.T) {
 
 // Test environment variables override file values
 func TestEnvironmentOverridesFile(t *testing.T) {
+	clearEnv(t)
 	path := writeEnvFile(t, "DATABASE_URL=postgres://file\nPORT=4000\n")
 	t.Setenv("PORT", "9090")
 	t.Setenv("APP_ENV", EnvStaging)
@@ -46,6 +57,7 @@ func TestEnvironmentOverridesFile(t *testing.T) {
 
 // Test missing file uses environment variables only.
 func TestMissingFileUsesEnvironmentOnly(t *testing.T) {
+	clearEnv(t)
 	t.Setenv("DATABASE_URL", "postgres://from-env")
 
 	cfg, err := Load(filepath.Join(t.TempDir(), "does-not-exist.env"))
@@ -56,6 +68,7 @@ func TestMissingFileUsesEnvironmentOnly(t *testing.T) {
 
 // Test configuration validation errors
 func TestValidationErrors(t *testing.T) {
+	clearEnv(t)
 	path := writeEnvFile(t, "APP_ENV=prod\nPORT=0\nDB_MIN_CONNS=50\n")
 
 	_, err := Load(path)

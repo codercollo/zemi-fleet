@@ -1,3 +1,4 @@
+// Command api runs the Zemi Fleet V2 HTTP server.
 package main
 
 import (

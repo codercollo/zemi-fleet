@@ -10,6 +10,48 @@ import (
 	"time"
 )
 
+const acceptBatch = `-- name: AcceptBatch :one
+UPDATE batches
+SET status = 'accepted', rider_id = $1, accepted_at = $2, version = version + 1
+WHERE id = $3 AND status = 'open' AND expires_at > $2
+RETURNING id, status, rider_id, pickup_centroid_lat, pickup_centroid_lng, pickup_spread_m, orders_count, total_distance_m, estimated_duration_s, total_delivery_fee_cents, estimated_earnings_cents, route_optimization_score, expires_at, accepted_at, completed_at, created_at, updated_at, version
+`
+
+type AcceptBatchParams struct {
+	RiderID *string    `json:"rider_id"`
+	Now     *time.Time `json:"now"`
+	ID      string     `json:"id"`
+}
+
+// THE exclusivity guarantee. Only a batch that is still open and unexpired can be claimed. Postgres
+// locks the row on UPDATE; a concurrent claim waits, then re-checks the WHERE against the committed
+// row, finds status = 'accepted' and updates nothing.
+func (q *Queries) AcceptBatch(ctx context.Context, arg AcceptBatchParams) (Batch, error) {
+	row := q.db.QueryRow(ctx, acceptBatch, arg.RiderID, arg.Now, arg.ID)
+	var i Batch
+	err := row.Scan(
+		&i.ID,
+		&i.Status,
+		&i.RiderID,
+		&i.PickupCentroidLat,
+		&i.PickupCentroidLng,
+		&i.PickupSpreadM,
+		&i.OrdersCount,
+		&i.TotalDistanceM,
+		&i.EstimatedDurationS,
+		&i.TotalDeliveryFeeCents,
+		&i.EstimatedEarningsCents,
+		&i.RouteOptimizationScore,
+		&i.ExpiresAt,
+		&i.AcceptedAt,
+		&i.CompletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Version,
+	)
+	return i, err
+}
+
 const addRiderOffers = `-- name: AddRiderOffers :exec
 UPDATE riders SET offers_count = offers_count + $1::int WHERE id = $2
 `
@@ -23,6 +65,25 @@ type AddRiderOffersParams struct {
 func (q *Queries) AddRiderOffers(ctx context.Context, arg AddRiderOffersParams) error {
 	_, err := q.db.Exec(ctx, addRiderOffers, arg.Offers, arg.ID)
 	return err
+}
+
+const assignBatchOrdersToRider = `-- name: AssignBatchOrdersToRider :execrows
+UPDATE orders
+SET status = 'assigned', rider_id = $1
+WHERE batch_id = $2 AND status = 'batched'
+`
+
+type AssignBatchOrdersToRiderParams struct {
+	RiderID *string `json:"rider_id"`
+	BatchID *string `json:"batch_id"`
+}
+
+func (q *Queries) AssignBatchOrdersToRider(ctx context.Context, arg AssignBatchOrdersToRiderParams) (int64, error) {
+	result, err := q.db.Exec(ctx, assignBatchOrdersToRider, arg.RiderID, arg.BatchID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const assignOrderToBatch = `-- name: AssignOrderToBatch :execrows
@@ -198,6 +259,36 @@ func (q *Queries) ExpireStaleBatches(ctx context.Context, now time.Time) ([]stri
 	return items, nil
 }
 
+const getBatch = `-- name: GetBatch :one
+SELECT id, status, rider_id, pickup_centroid_lat, pickup_centroid_lng, pickup_spread_m, orders_count, total_distance_m, estimated_duration_s, total_delivery_fee_cents, estimated_earnings_cents, route_optimization_score, expires_at, accepted_at, completed_at, created_at, updated_at, version FROM batches WHERE id = $1
+`
+
+func (q *Queries) GetBatch(ctx context.Context, id string) (Batch, error) {
+	row := q.db.QueryRow(ctx, getBatch, id)
+	var i Batch
+	err := row.Scan(
+		&i.ID,
+		&i.Status,
+		&i.RiderID,
+		&i.PickupCentroidLat,
+		&i.PickupCentroidLng,
+		&i.PickupSpreadM,
+		&i.OrdersCount,
+		&i.TotalDistanceM,
+		&i.EstimatedDurationS,
+		&i.TotalDeliveryFeeCents,
+		&i.EstimatedEarningsCents,
+		&i.RouteOptimizationScore,
+		&i.ExpiresAt,
+		&i.AcceptedAt,
+		&i.CompletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Version,
+	)
+	return i, err
+}
+
 const getBatchesByIDs = `-- name: GetBatchesByIDs :many
 SELECT id, status, rider_id, pickup_centroid_lat, pickup_centroid_lng, pickup_spread_m, orders_count, total_distance_m, estimated_duration_s, total_delivery_fee_cents, estimated_earnings_cents, route_optimization_score, expires_at, accepted_at, completed_at, created_at, updated_at, version FROM batches WHERE id = ANY($1::text[])
 `
@@ -327,6 +418,66 @@ func (q *Queries) ListBatchStops(ctx context.Context, batchIds []string) ([]Batc
 	return items, nil
 }
 
+const listOpenBatchSummaries = `-- name: ListOpenBatchSummaries :many
+SELECT b.id, s.lat AS first_lat, s.lng AS first_lng, MIN(o.created_at)::timestamptz AS oldest_order_at
+FROM batches b
+JOIN batch_stops s ON s.batch_id = b.id AND s.seq = 1
+JOIN orders o ON o.batch_id = b.id
+WHERE b.status = 'open'
+  AND b.expires_at > $1
+  AND s.lat BETWEEN $2::float8 AND $3::float8
+  AND s.lng BETWEEN $4::float8 AND $5::float8
+GROUP BY b.id, s.lat, s.lng
+`
+
+type ListOpenBatchSummariesParams struct {
+	Now    time.Time `json:"now"`
+	MinLat float64   `json:"min_lat"`
+	MaxLat float64   `json:"max_lat"`
+	MinLng float64   `json:"min_lng"`
+	MaxLng float64   `json:"max_lng"`
+}
+
+type ListOpenBatchSummariesRow struct {
+	ID            string    `json:"id"`
+	FirstLat      float64   `json:"first_lat"`
+	FirstLng      float64   `json:"first_lng"`
+	OldestOrderAt time.Time `json:"oldest_order_at"`
+}
+
+// GET /batches candidates: open, unexpired batches whose first pickup is inside a bounding box,
+// with the creation time of their oldest order (for sorting). Read-only: nothing is expired or offered here.
+func (q *Queries) ListOpenBatchSummaries(ctx context.Context, arg ListOpenBatchSummariesParams) ([]ListOpenBatchSummariesRow, error) {
+	rows, err := q.db.Query(ctx, listOpenBatchSummaries,
+		arg.Now,
+		arg.MinLat,
+		arg.MaxLat,
+		arg.MinLng,
+		arg.MaxLng,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOpenBatchSummariesRow
+	for rows.Next() {
+		var i ListOpenBatchSummariesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.FirstLat,
+			&i.FirstLng,
+			&i.OldestOrderAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOpenBatchesNearPoint = `-- name: ListOpenBatchesNearPoint :many
 SELECT b.id, s.lat AS first_lat, s.lng AS first_lng
 FROM batches b
@@ -444,6 +595,45 @@ func (q *Queries) ListPendingOrdersForBatching(ctx context.Context, arg ListPend
 		return nil, err
 	}
 	return items, nil
+}
+
+const markBatchOfferAccepted = `-- name: MarkBatchOfferAccepted :exec
+UPDATE batch_offers
+SET accepted = TRUE, responded_at = $1
+WHERE batch_id = $2 AND rider_id = $3
+`
+
+type MarkBatchOfferAcceptedParams struct {
+	Now     *time.Time `json:"now"`
+	BatchID string     `json:"batch_id"`
+	RiderID string     `json:"rider_id"`
+}
+
+func (q *Queries) MarkBatchOfferAccepted(ctx context.Context, arg MarkBatchOfferAcceptedParams) error {
+	_, err := q.db.Exec(ctx, markBatchOfferAccepted, arg.Now, arg.BatchID, arg.RiderID)
+	return err
+}
+
+const recordRiderAccept = `-- name: RecordRiderAccept :exec
+UPDATE riders
+SET current_orders_count = current_orders_count + $1::int,
+    accepted_count = accepted_count + 1,
+    offers_count = offers_count + $2::int,
+    version = version + 1
+WHERE id = $3
+`
+
+type RecordRiderAcceptParams struct {
+	Orders    int32  `json:"orders"`
+	NewOffers int32  `json:"new_offers"`
+	ID        string `json:"id"`
+}
+
+// The rider takes on n orders and one more accepted offer. The version bump makes a client holding a
+// stale X-Expected-Version conflict, because the rider's state really did change.
+func (q *Queries) RecordRiderAccept(ctx context.Context, arg RecordRiderAcceptParams) error {
+	_, err := q.db.Exec(ctx, recordRiderAccept, arg.Orders, arg.NewOffers, arg.ID)
+	return err
 }
 
 const releaseOrdersFromBatches = `-- name: ReleaseOrdersFromBatches :exec

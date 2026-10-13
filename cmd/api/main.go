@@ -61,7 +61,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 
 	store := repository.NewStore(pool, cfg.DB.QueryTimeout)
 	clk := clock.Real{}
-	orders := service.NewOrderService(store, clk, cfg.RiderPayoutBPS)
+	orders := service.NewOrderService(store, clk, cfg.RiderPayoutBPS, cfg.OrderMinTripM)
 	riders := service.NewRiderService(store, clk)
 	matching := service.NewMatchingService(store, clk, logger, cfg.Cone)
 	batches := service.NewBatchService(store, clk, cfg.Batch)

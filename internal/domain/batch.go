@@ -60,9 +60,22 @@ type Batch struct {
 	RouteOptimizationScore float64
 	ExpiresAt              time.Time
 	CreatedAt              time.Time
-	Version                int
-	Orders                 []BatchOrder // FIFO order
-	Stops                  []BatchStop  // route order
+	// RiderID and AcceptedAt are set once a rider has accepted the batch.
+	RiderID    *string
+	AcceptedAt *time.Time
+	Version    int
+	Orders     []BatchOrder // FIFO order
+	Stops      []BatchStop  // route order
+}
+
+// DistanceSavedM is the sum of the orders' direct trip distances minus the batch's route: how much
+// shorter the batch is than doing each trip alone. It is negative when the batch is longer.
+func (b Batch) DistanceSavedM() int {
+	solo := 0
+	for _, o := range b.Orders {
+		solo += o.TripDistanceM
+	}
+	return solo - b.TotalDistanceM
 }
 
 // FirstPickup is where the suggested route starts.

@@ -226,6 +226,8 @@ func loadBatches(ctx context.Context, q sqlc.Querier, ids []string) ([]domain.Ba
 			RouteOptimizationScore: r.RouteOptimizationScore,
 			ExpiresAt:              r.ExpiresAt,
 			CreatedAt:              r.CreatedAt,
+			RiderID:                r.RiderID,
+			AcceptedAt:             r.AcceptedAt,
 			Version:                int(r.Version),
 		}
 	}

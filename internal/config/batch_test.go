@@ -16,7 +16,7 @@ func TestBatchDefaults(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, BatchConfig{
-		MaxOrders: 5, PickupRadiusKM: 2, DirectionToleranceDeg: 45, SearchRadiusKM: 5,
+		MaxOrders: 5, PickupRadiusKM: 2, DirectionToleranceDeg: 45, SearchRadiusKM: 5, VisibilityRadiusKM: 3,
 		TTL: 10 * time.Minute, AvgSpeedKMH: 20, StopDwellMin: 2,
 	}, cfg.Batch)
 }
@@ -30,7 +30,7 @@ func TestBatchFromFile(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, BatchConfig{
-		MaxOrders: 3, PickupRadiusKM: 1.5, DirectionToleranceDeg: 30, SearchRadiusKM: 8,
+		MaxOrders: 3, PickupRadiusKM: 1.5, DirectionToleranceDeg: 30, SearchRadiusKM: 8, VisibilityRadiusKM: 3,
 		TTL: 90 * time.Second, AvgSpeedKMH: 25, StopDwellMin: 0,
 	}, cfg.Batch)
 }

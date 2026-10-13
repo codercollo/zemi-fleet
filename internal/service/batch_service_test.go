@@ -19,7 +19,7 @@ import (
 )
 
 var batchCfg = config.BatchConfig{
-	MaxOrders: 5, PickupRadiusKM: 2, DirectionToleranceDeg: 45, SearchRadiusKM: 5,
+	MaxOrders: 5, PickupRadiusKM: 2, DirectionToleranceDeg: 45, SearchRadiusKM: 5, VisibilityRadiusKM: 3,
 	TTL: 10 * time.Minute, AvgSpeedKMH: 20, StopDwellMin: 2,
 }
 
@@ -177,4 +177,91 @@ func TestCreateBatches_TransactionErrorIsReturned(t *testing.T) {
 	_, err := f.svc.CreateBatches(context.Background(), CreateBatchesInput{RiderID: "rider_001", MaxOrders: 5, RadiusKM: 2})
 
 	assert.ErrorIs(t, err, boom)
+}
+
+func TestAccept_PassesTheClockAndTheResultThrough(t *testing.T) {
+	f := newBatchFixture(t)
+	rider := "rider_002"
+	want := domain.Batch{ID: "batch_1", Status: domain.BatchAccepted, RiderID: &rider}
+	f.store.EXPECT().AcceptBatchTx(gomock.Any(), repository.AcceptBatchParams{BatchID: "batch_1", RiderID: "rider_002", Now: testNow}).Return(want, nil)
+
+	got, err := f.svc.Accept(context.Background(), "batch_1", "rider_002")
+
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+}
+
+func TestAccept_DomainErrorsSurviveUnchanged(t *testing.T) {
+	for _, sentinel := range []error{domain.ErrNotFound, domain.ErrBatchTaken, domain.ErrRiderAtCapacity, domain.ErrRiderUnavailable} {
+		t.Run(sentinel.Error(), func(t *testing.T) {
+			f := newBatchFixture(t)
+			f.store.EXPECT().AcceptBatchTx(gomock.Any(), gomock.Any()).Return(domain.Batch{}, sentinel)
+
+			_, err := f.svc.Accept(context.Background(), "batch_1", "rider_002")
+
+			assert.ErrorIs(t, err, sentinel)
+		})
+	}
+}
+
+func TestAccept_UsesTheClockAtCallTime(t *testing.T) {
+	f := newBatchFixture(t)
+	var seen []time.Time
+	f.store.EXPECT().AcceptBatchTx(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, p repository.AcceptBatchParams) (domain.Batch, error) {
+			seen = append(seen, p.Now)
+			return domain.Batch{}, domain.ErrBatchTaken
+		}).Times(2)
+
+	_, _ = f.svc.Accept(context.Background(), "b", "r")
+	f.clk.Advance(batchCfg.TTL + time.Second) // past a batch formed at testNow: the transaction will see it as expired
+	_, _ = f.svc.Accept(context.Background(), "b", "r")
+
+	require.Len(t, seen, 2)
+	assert.True(t, seen[0].Equal(testNow))
+	assert.True(t, seen[1].Equal(testNow.Add(batchCfg.TTL+time.Second)))
+}
+
+func TestListBatches(t *testing.T) {
+	t.Run("passes the page and radius, adds the distance to the first pickup", func(t *testing.T) {
+		f := newBatchFixture(t)
+		far := batchOf("b_far", domain.Location{Lat: sarit.Lat + 0.004, Lng: sarit.Lng}, testNow)
+		f.store.EXPECT().ListOpenBatches(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, p repository.ListOpenBatchesParams) ([]domain.Batch, int, error) {
+				assert.Equal(t, sarit, p.Point)
+				assert.Equal(t, 2500.0, p.RadiusM)
+				assert.Equal(t, 3, p.Page)
+				assert.Equal(t, 10, p.PageSize)
+				assert.True(t, p.Now.Equal(testNow))
+				return []domain.Batch{far}, 23, nil
+			})
+
+		page, err := f.svc.ListBatches(context.Background(), ListBatchesInput{Point: sarit, RadiusKM: 2.5, Page: 3, PageSize: 10})
+
+		require.NoError(t, err)
+		assert.Equal(t, 23, page.Total)
+		require.Len(t, page.Offers, 1)
+		assert.InDelta(t, 445, page.Offers[0].DistanceToFirstPickupM, 2)
+	})
+
+	t.Run("an empty page is an empty non-nil slice", func(t *testing.T) {
+		f := newBatchFixture(t)
+		f.store.EXPECT().ListOpenBatches(gomock.Any(), gomock.Any()).Return(nil, 0, nil)
+
+		page, err := f.svc.ListBatches(context.Background(), ListBatchesInput{Point: sarit, RadiusKM: 3, Page: 1, PageSize: 20})
+
+		require.NoError(t, err)
+		assert.NotNil(t, page.Offers)
+		assert.Empty(t, page.Offers)
+	})
+
+	t.Run("store error", func(t *testing.T) {
+		f := newBatchFixture(t)
+		boom := errors.New("boom")
+		f.store.EXPECT().ListOpenBatches(gomock.Any(), gomock.Any()).Return(nil, 0, boom)
+
+		_, err := f.svc.ListBatches(context.Background(), ListBatchesInput{Point: sarit, RadiusKM: 3, Page: 1, PageSize: 20})
+
+		assert.ErrorIs(t, err, boom)
+	})
 }

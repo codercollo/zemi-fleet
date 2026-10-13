@@ -59,10 +59,11 @@ func TestCreateBatches_200(t *testing.T) {
 		batches := body["batches"].([]any)
 		require.Len(t, batches, 1)
 		b := batches[0].(map[string]any)
-		assert.ElementsMatch(t, []string{"batch_id", "orders", "sequence", "total_distance_km", "estimated_earnings_kes",
+		assert.ElementsMatch(t, []string{"batch_id", "orders", "sequence", "total_distance_km", "distance_saved_km", "estimated_earnings_kes",
 			"route_optimization_score", "distance_to_first_pickup_km", "expires_at"}, keys(b))
 		assert.Equal(t, "batch_X1", b["batch_id"])
 		assert.Equal(t, 6.54, b["total_distance_km"])
+		assert.Equal(t, 0.84, b["distance_saved_km"], "solo trips 3.282 + 4.100 km minus the 6.543 km route")
 		assert.Equal(t, 315.0, b["estimated_earnings_kes"])
 		assert.Equal(t, 0.874, b["route_optimization_score"])
 		assert.Equal(t, 0.19, b["distance_to_first_pickup_km"], "rider at -1.2650,36.8038 to the first pickup")
@@ -95,7 +96,7 @@ func TestCreateBatches_200(t *testing.T) {
 		rec := send(t, h, http.MethodPost, batchPath, validBatchBody)
 
 		assertInOrder(t, rec.Body.String(), `"batch_id"`, `"orders"`, `"sequence"`, `"total_distance_km"`,
-			`"estimated_earnings_kes"`, `"route_optimization_score"`, `"distance_to_first_pickup_km"`, `"expires_at"`)
+			`"distance_saved_km"`, `"estimated_earnings_kes"`, `"route_optimization_score"`, `"distance_to_first_pickup_km"`, `"expires_at"`)
 		assertInOrder(t, rec.Body.String(), `"order_id"`, `"pickup"`, `"delivery"`, `"distance_km"`, `"estimated_time_min"`)
 	})
 

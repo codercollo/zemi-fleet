@@ -51,7 +51,7 @@ func (s *Server) failedValidationResponse(c *gin.Context, fields map[string]stri
 
 // handleServiceError is the one place domain errors become HTTP statuses:
 // not found -> 404, edit conflict / batch taken -> 409,
-// validation failure / rider at capacity -> 422, anything else -> 500.
+// validation failure / rider at capacity / rider unavailable -> 422, anything else -> 500.
 func (s *Server) handleServiceError(c *gin.Context, err error) {
 	var validationErr *domain.ValidationError
 
@@ -62,7 +62,9 @@ func (s *Server) handleServiceError(c *gin.Context, err error) {
 		s.errorResponse(c, http.StatusConflict,
 			"unable to update the record due to an edit conflict, please try again")
 	case errors.Is(err, domain.ErrBatchTaken):
-		s.errorResponse(c, http.StatusConflict, "this batch has already been accepted by another rider")
+		s.errorResponse(c, http.StatusConflict, "batch is no longer available")
+	case errors.Is(err, domain.ErrRiderUnavailable):
+		s.errorResponse(c, http.StatusUnprocessableEntity, "rider is not available")
 	case errors.Is(err, domain.ErrRiderAtCapacity):
 		s.errorResponse(c, http.StatusUnprocessableEntity, "the rider does not have capacity for these orders")
 	case errors.As(err, &validationErr):

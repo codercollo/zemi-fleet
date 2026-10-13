@@ -22,11 +22,13 @@ type OrderService struct {
 	// payoutBPS is the rider's share of the delivery fee (RIDER_PAYOUT_BPS). It is
 	// copied onto each order so later config changes never alter past earnings.
 	payoutBPS int
+	// minTripM is ORDER_MIN_TRIP_M: shorter pickup-to-delivery trips are rejected.
+	minTripM float64
 }
 
 // NewOrderService wires the service to its store, clock and the configured payout share.
-func NewOrderService(store repository.Store, clk clock.Clock, payoutBPS int) *OrderService {
-	return &OrderService{store: store, clock: clk, payoutBPS: payoutBPS}
+func NewOrderService(store repository.Store, clk clock.Clock, payoutBPS, minTripM int) *OrderService {
+	return &OrderService{store: store, clock: clk, payoutBPS: payoutBPS, minTripM: float64(minTripM)}
 }
 
 // CreateOrderInput is a validated order request. Money is in cents.
@@ -58,11 +60,18 @@ func (s *OrderService) Create(ctx context.Context, in CreateOrderInput) (domain.
 		return domain.Order{}, fmt.Errorf("get category: %w", err)
 	}
 
+	pickup := domain.Location{Lat: vendor.Lat, Lng: vendor.Lng}
+	if _, found := fields["vendor_id"]; !found {
+		// A trip this short has no usable direction (batching and matching compare bearings) and is not worth a ride.
+		if d := geo.Haversine(pickup, in.Delivery); d < s.minTripM {
+			fields["delivery_location"] = fmt.Sprintf("must be at least %.0f m from the pickup (the vendor); this one is %.0f m", s.minTripM, d)
+		}
+	}
+
 	if len(fields) > 0 {
 		return domain.Order{}, &domain.ValidationError{Fields: fields}
 	}
 
-	pickup := domain.Location{Lat: vendor.Lat, Lng: vendor.Lng}
 	now := s.clock.Now()
 	row, err := s.store.CreateOrder(ctx, sqlc.CreateOrderParams{
 		ID:               util.NewOrderID(now),

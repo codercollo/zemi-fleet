@@ -72,7 +72,7 @@ func TestIntegration_OrderCreatedAtComesFromClock(t *testing.T) {
 	}
 
 	fixed := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC) // years in the past: now() could never produce it
-	svc := NewOrderService(repository.NewStore(pool, 3*time.Second), clock.NewTest(fixed), 9000)
+	svc := NewOrderService(repository.NewStore(pool, 3*time.Second), clock.NewTest(fixed), 9000, 50)
 
 	order, err := svc.Create(ctx, CreateOrderInput{
 		VendorID: vendorID, CategoryCode: category,

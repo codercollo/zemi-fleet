@@ -78,3 +78,48 @@ ON CONFLICT (batch_id, rider_id) DO NOTHING;
 -- name: AddRiderOffers :exec
 -- offers_count feeds acceptance_rate. No version bump: like telemetry, it must not cause edit conflicts.
 UPDATE riders SET offers_count = offers_count + sqlc.arg(offers)::int WHERE id = sqlc.arg(id);
+
+-- name: GetBatch :one
+SELECT * FROM batches WHERE id = $1;
+
+-- name: ListOpenBatchSummaries :many
+-- GET /batches candidates: open, unexpired batches whose first pickup is inside a bounding box,
+-- with the creation time of their oldest order (for sorting). Read-only: nothing is expired or offered here.
+SELECT b.id, s.lat AS first_lat, s.lng AS first_lng, MIN(o.created_at)::timestamptz AS oldest_order_at
+FROM batches b
+JOIN batch_stops s ON s.batch_id = b.id AND s.seq = 1
+JOIN orders o ON o.batch_id = b.id
+WHERE b.status = 'open'
+  AND b.expires_at > sqlc.arg(now)
+  AND s.lat BETWEEN sqlc.arg(min_lat)::float8 AND sqlc.arg(max_lat)::float8
+  AND s.lng BETWEEN sqlc.arg(min_lng)::float8 AND sqlc.arg(max_lng)::float8
+GROUP BY b.id, s.lat, s.lng;
+
+-- name: AcceptBatch :one
+-- THE exclusivity guarantee. Only a batch that is still open and unexpired can be claimed. Postgres
+-- locks the row on UPDATE; a concurrent claim waits, then re-checks the WHERE against the committed
+-- row, finds status = 'accepted' and updates nothing.
+UPDATE batches
+SET status = 'accepted', rider_id = sqlc.arg(rider_id), accepted_at = sqlc.arg(now), version = version + 1
+WHERE id = sqlc.arg(id) AND status = 'open' AND expires_at > sqlc.arg(now)
+RETURNING *;
+
+-- name: AssignBatchOrdersToRider :execrows
+UPDATE orders
+SET status = 'assigned', rider_id = sqlc.arg(rider_id)
+WHERE batch_id = sqlc.arg(batch_id) AND status = 'batched';
+
+-- name: MarkBatchOfferAccepted :exec
+UPDATE batch_offers
+SET accepted = TRUE, responded_at = sqlc.arg(now)
+WHERE batch_id = sqlc.arg(batch_id) AND rider_id = sqlc.arg(rider_id);
+
+-- name: RecordRiderAccept :exec
+-- The rider takes on n orders and one more accepted offer. The version bump makes a client holding a
+-- stale X-Expected-Version conflict, because the rider's state really did change.
+UPDATE riders
+SET current_orders_count = current_orders_count + sqlc.arg(orders)::int,
+    accepted_count = accepted_count + 1,
+    offers_count = offers_count + sqlc.arg(new_offers)::int,
+    version = version + 1
+WHERE id = sqlc.arg(id);

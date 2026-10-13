@@ -10,8 +10,13 @@ import (
 )
 
 type Querier interface {
+	// THE exclusivity guarantee. Only a batch that is still open and unexpired can be claimed. Postgres
+	// locks the row on UPDATE; a concurrent claim waits, then re-checks the WHERE against the committed
+	// row, finds status = 'accepted' and updates nothing.
+	AcceptBatch(ctx context.Context, arg AcceptBatchParams) (Batch, error)
 	// offers_count feeds acceptance_rate. No version bump: like telemetry, it must not cause edit conflicts.
 	AddRiderOffers(ctx context.Context, arg AddRiderOffersParams) error
+	AssignBatchOrdersToRider(ctx context.Context, arg AssignBatchOrdersToRiderParams) (int64, error)
 	// Only a still-pending order can be batched; zero rows means it changed under us.
 	AssignOrderToBatch(ctx context.Context, arg AssignOrderToBatchParams) (int64, error)
 	// Used after replacing preferences, which live in other tables, so clients see the rider change.
@@ -28,6 +33,7 @@ type Querier interface {
 	// Open batches past their TTL are no longer on offer.
 	ExpireStaleBatches(ctx context.Context, now time.Time) ([]string, error)
 	GetAreasByIDs(ctx context.Context, ids []string) ([]Area, error)
+	GetBatch(ctx context.Context, id string) (Batch, error)
 	GetBatchesByIDs(ctx context.Context, ids []string) ([]Batch, error)
 	GetCategoriesByCodes(ctx context.Context, codes []string) ([]Category, error)
 	GetCategory(ctx context.Context, code string) (Category, error)
@@ -41,6 +47,9 @@ type Querier interface {
 	InsertPreferredCategories(ctx context.Context, arg InsertPreferredCategoriesParams) error
 	ListBatchOrders(ctx context.Context, batchIds []string) ([]ListBatchOrdersRow, error)
 	ListBatchStops(ctx context.Context, batchIds []string) ([]BatchStop, error)
+	// GET /batches candidates: open, unexpired batches whose first pickup is inside a bounding box,
+	// with the creation time of their oldest order (for sorting). Read-only: nothing is expired or offered here.
+	ListOpenBatchSummaries(ctx context.Context, arg ListOpenBatchSummariesParams) ([]ListOpenBatchSummariesRow, error)
 	// Open, unexpired batches whose first pickup (stop 1) is inside a bounding box and that fit max_orders.
 	ListOpenBatchesNearPoint(ctx context.Context, arg ListOpenBatchesNearPointParams) ([]ListOpenBatchesNearPointRow, error)
 	// Pending pickups inside a bounding box, oldest first, row-locked. SKIP LOCKED means a concurrent
@@ -53,6 +62,10 @@ type Querier interface {
 	ListPendingOrdersInBox(ctx context.Context, arg ListPendingOrdersInBoxParams) ([]ListPendingOrdersInBoxRow, error)
 	ListPreferredAreas(ctx context.Context, riderID string) ([]string, error)
 	ListPreferredCategories(ctx context.Context, riderID string) ([]string, error)
+	MarkBatchOfferAccepted(ctx context.Context, arg MarkBatchOfferAcceptedParams) error
+	// The rider takes on n orders and one more accepted offer. The version bump makes a client holding a
+	// stale X-Expected-Version conflict, because the rider's state really did change.
+	RecordRiderAccept(ctx context.Context, arg RecordRiderAcceptParams) error
 	// Orders of expired batches go back to the pending pool.
 	ReleaseOrdersFromBatches(ctx context.Context, batchIds []string) error
 	UpdateRiderAvailability(ctx context.Context, arg UpdateRiderAvailabilityParams) (Rider, error)

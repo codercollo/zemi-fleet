@@ -160,8 +160,18 @@ it is `internal/repository/tx_create_batches.go`.
 7. **Sort** by `distance_to_first_pickup_km` (rider to the route's first stop), then by the batch's
    oldest order (FIFO).
 
-A batch stays `open`, assigned to nobody, until a rider accepts it (Phase 7b). Anyone near the vendor may
-see it; the first to accept gets it exclusively.
+A batch stays `open`, assigned to nobody, until a rider accepts it (see "Exclusive batch acceptance"). Anyone
+near the vendor may see it; the first to accept gets it exclusively.
+
+### Listing open batches (`GET /api/v2/batches`)
+
+`?lat=&lng=` (required), `radius_km` (default `BATCH_VISIBILITY_RADIUS_KM`, at most `BATCH_SEARCH_RADIUS_KM`),
+`page` (default 1) and `page_size` (default 20, 1 to 50). It returns the open batches with `expires_at > now`
+whose first pickup is within the radius, in the same shape as `POST /orders/batch` (so each carries
+`distance_to_first_pickup_km` from the given point), sorted by that distance, then the oldest order's
+`created_at`, then `batch_id`, with the book's `metadata` block (`current_page`, `page_size`, `first_page`,
+`last_page`, `total_records`; `metadata` is `{}` when nothing matches, as in the book). It is **read-only**: it
+records no offers and expires nothing, it only filters on `expires_at`.
 
 ### Forming batches (`Form`)
 
@@ -201,14 +211,28 @@ Ties go to a pickup before a delivery, then to the older order, so the result is
 
 ```
 route_distance           = sum of the stop-to-stop legs (the first stop has leg 0)
-trip_distance(order)     = haversine(order pickup, order delivery)
-route_optimization_score = min(1, sum(trip_distance) / route_distance)
-                           = "useful loaded km per km driven"; 1.0 for a batch of one
+direct(order)            = haversine(order pickup, order delivery)
+along(order)             = distance travelled along the route from the order's PICKUP stop
+                           to its DELIVERY stop
+detour(order)            = min(1, direct(order) / along(order))
+route_optimization_score = mean of detour(order) over the batch's orders        (a batch of one = 1.0)
+distance_saved_km        = sum(direct(order)) - route_distance                  (negative if batching costs distance)
 stop_time (seconds)      = cumulative_distance_to_stop / AVG_SPEED_KMH
                            + STOP_DWELL_MIN * 60 * (number of EARLIER stops)
 estimated_time_min       = stop_time of that order's delivery, in minutes (the API rounds up)
 estimated_earnings       = sum(rider_earnings_cents)   # 90% of the delivery fees
 ```
+
+**Why a detour score.** The earlier "sum of trips / route" ratio hit its 1.0 cap for almost every
+same-direction batch, so it could not tell batches apart. The detour score asks, per order, "how far does
+this parcel actually travel between pickup and drop-off compared with the straight line?" An order delivered
+straight after its pickup scores 1.0; one that rides along while the rider visits other stops scores less. The
+mean over the batch then genuinely varies. A sequence that delivers immediately after each pickup scores
+higher than "pick everything up, then deliver everything" (tested). `distance_saved_km` reports the other
+side: how much shorter the batch route is than doing the trips one by one.
+
+The score ignores the deadhead between one order's drop-off and the next pickup, and the distance from the rider
+to the first pickup (that is `distance_to_first_pickup_km`).
 
 ### Worked example (seed data, fresh seed, `rider_001` at -1.2650, 36.8038)
 
@@ -219,16 +243,28 @@ and `ord_020` (Westlands Bites to Eastleigh again). That is five orders, so the 
 
 ```
 batch   [ord_002, ord_003, ord_009, ord_020, ord_029]          (FIFO order)
-route   1P:002 > 2P:009 > 3P:029 > 4P:003 > 5P:020 > 6D:003 > 7D:020 > 8D:002 > 9D:009 > 10D:029
-trips   11.32 + 4.72 + 11.32 + 4.72 + 11.32 = 43.41 km          route 13.15 km
-score   min(1, 43.41 / 13.15 = 3.30) = 1.0
+route   1P:002 > 2P:009 > 3P:029 > 4P:003 > 5P:020 > 6D:003 > 7D:020 > 8D:002 > 9D:009 > 10D:029    (13.15 km)
+
+order    direct   along the route (pickup stop -> delivery stop)   detour
+ord_002  11.32 km   13.15 km  (stop 1 -> stop 8)                    0.861
+ord_003   4.72 km    4.72 km  (stop 4 -> stop 6)                    1.000
+ord_009  11.32 km   13.15 km  (stop 2 -> stop 9)                    0.861
+ord_020   4.72 km    4.72 km  (stop 5 -> stop 7)                    1.000
+ord_029  11.32 km   13.15 km  (stop 3 -> stop 10)                   0.861
+
+score   (0.861 + 1.000 + 0.861 + 1.000 + 0.861) / 5 = 0.917
+saved   43.41 km of separate trips - 13.15 km route = 30.26 km
 time    ord_003 is delivered at stop 6: 16 min of driving + 5 earlier stops x 2 min = 26 min
 earn    216 + 396 + 396 + 216 + 396 = 1,620 KES
 ```
 
+The other batches from the same request score 0.881 to 1.0, e.g. `ord_034` + `ord_035` = 0.881 (one
+parcel waits while the rider picks up the second) and `ord_036` + `ord_040` = 1.0.
+
 The next oldest unused order, `ord_004` (Yaya Centre to Madaraka, bearing 121), is both too far from Sarit
-(about 3.6 km) and heading a different way (55 degrees off the seed), so it seeds a different batch (`ord_004`, `ord_005`, `ord_010`, `ord_011`, `ord_013`), and so on.
-`ord_018` is left over from that cluster (6 Yaya orders, capacity 5) and becomes a batch of one.
+(about 3.6 km) and heading a different way (55 degrees off the seed), so it seeds a different batch (`ord_004`,
+`ord_005`, `ord_010`, `ord_011`, `ord_013`), and so on. `ord_018` is left over from that cluster (6 Yaya
+orders, capacity 5) and becomes a batch of one.
 
 ### Configuration
 
@@ -238,6 +274,8 @@ The next oldest unused order, `ord_004` (Yaya Centre to Madaraka, bearing 121), 
 | `BATCH_PICKUP_RADIUS_KM` | 2 | Largest `radius_km` a request may use (the pairwise pickup radius) |
 | `BATCH_DIRECTION_TOLERANCE_DEG` | 45 | Largest bearing difference from the seed's trip |
 | `BATCH_SEARCH_RADIUS_KM` | 5 | How far from the rider orders are batched and open batches are shown |
+| `BATCH_VISIBILITY_RADIUS_KM` | 3 | Default `radius_km` of `GET /batches` (a request may use up to the search radius) |
+| `ORDER_MIN_TRIP_M` | 50 | Shortest allowed pickup-to-delivery distance; shorter orders are rejected with 422 |
 | `BATCH_TTL` | 10m | How long an open batch is offered before it expires |
 | `AVG_SPEED_KMH` | 20 | Driving speed for the time estimates |
 | `STOP_DWELL_MIN` | 2 | Minutes spent at each earlier stop |
@@ -252,10 +290,10 @@ The next oldest unused order, `ord_004` (Yaya Centre to Madaraka, bearing 121), 
 - A batch's route starts at its first pickup; `distance_to_first_pickup_km` is the rider-specific leg
   to get there.
 - `estimated_time_min` is rounded **up** to a whole minute so the estimate never under-promises.
-- The score saturates at 1.0 whenever the route is shorter than the sum of the separate trips, which is
-  the case for nearly every same-direction batch. It separates "efficient" from "wasteful" batches, not
-  good from great ones.
-- A batch of only zero-length trips (pickup equals delivery) can score 0; such orders are not meaningful.
+- `POST /orders` rejects an order whose pickup (the vendor) and delivery are closer than `ORDER_MIN_TRIP_M`
+  (default 50 m). A trip that short has no usable direction, and batching and matching compare bearings.
+  The batching code still guards against a zero-length trip (no divide by zero), but cannot meet one.
+- `distance_saved_km` can be negative: a batch whose route is longer than its separate trips is reported honestly.
 - Batching does not record the rider's position (only `match-orders` does).
 
 ### Limitations (for Improvements)
@@ -266,8 +304,87 @@ The next oldest unused order, `ord_004` (Yaya Centre to Madaraka, bearing 121), 
   the grouping, the sequence and the time estimates. Out of scope per the brief.
 - **Greedy FIFO grouping** is not an optimal partition: it never trades a slightly worse seed batch for a
   better overall result, and it does not look at delivery clustering, only direction.
-- **Scoring** compares loaded distance to route distance; it ignores the distance from the rider to the
-  first pickup, order value or urgency, and saturates at 1.0 (see above).
+- **Scoring** measures per-order detour only; it ignores the deadhead between a drop-off and the next
+  pickup, the distance from the rider to the first pickup, and order value or urgency.
 - **Concurrent requests** skip locked orders rather than wait, so a rider who asks at the same instant as
   another may not see the other's brand-new batches until their next request.
 - **No re-batching of open batches.** Orders stay in their batch until it is accepted or expires.
+
+---
+
+## Exclusive batch acceptance
+
+`POST /api/v2/batches/:id/accept` with `{"rider_id": "..."}`. Per the client, a batch is an open offer: any
+eligible rider near the vendor can see it, and **the first rider to accept gets it exclusively**; everyone
+after that gets `409`. The whole decision is one transaction (`internal/repository/tx_accept_batch.go`).
+
+### Steps
+
+1. **Lock the rider** (`SELECT ... FROM riders WHERE id = $1 FOR UPDATE`). Unknown rider: `404`. Off shift:
+   `422 "rider is not available"`.
+2. **Read the batch.** Unknown batch: `404`. If this rider already holds it, return it with `200`
+   (**idempotent retry**: a client whose response was lost can safely ask again).
+3. **Capacity.** `current_orders_count + batch.orders_count > max_capacity` is `422` (`ErrRiderAtCapacity`).
+4. **Claim**:
+
+   ```sql
+   UPDATE batches
+   SET status = 'accepted', rider_id = $rider, accepted_at = $now, version = version + 1
+   WHERE id = $batch AND status = 'open' AND expires_at > $now
+   RETURNING *;
+   ```
+5. **No row back?** Re-read the batch: gone is `404`; held by this rider is `200` (idempotent); otherwise
+   `409 "batch is no longer available"` (taken by someone else, or expired).
+6. **Row back (we won):** set the batch's orders to `assigned` with `rider_id`; `riders.current_orders_count += n`,
+   `accepted_count += 1`, `version += 1`; upsert the `batch_offers` row (`accepted = true`, `responded_at = now`),
+   inserting it, and counting it in `offers_count`, if the rider was never shown this batch.
+
+All times come from the injected clock.
+
+### Why the conditional UPDATE guarantees one winner
+
+The exclusivity lives in the `WHERE status = 'open'` of one statement, not in application code. When two
+transactions run that UPDATE on the same batch, Postgres lets the first take the row lock and makes the second
+**wait**. When the first commits, the second re-evaluates its `WHERE` against the committed row (this is how
+`READ COMMITTED` treats a blocked UPDATE), finds `status = 'accepted'`, and updates **zero** rows. There is no
+window between "check it is open" and "mark it taken" because they are the same statement. Zero rows is how a
+loser learns it lost. Expiry is part of the same predicate (`expires_at > $now`), so an expired batch cannot be
+claimed even before anything has marked it `expired`.
+
+### Lock order
+
+Every accept takes locks in the same order: **rider row first, then batch row**. A transaction never holds a
+batch lock while waiting for a rider lock, so two accepts cannot wait on each other in a cycle: no deadlock.
+Locking the rider first also serialises two concurrent accepts by the *same* rider, so the second one's
+capacity check sees the first one's result and can never push the rider past `max_capacity` (the table's CHECK
+constraint is the last line of defence). Different riders racing for one batch only contend on the batch row.
+
+### Two riders racing
+
+```
+ Rider A (tx A)                              Rider B (tx B)                           batches row
+ --------------                              --------------                           -----------
+ BEGIN                                       BEGIN                                    status=open
+ lock rider A FOR UPDATE                     lock rider B FOR UPDATE                  (different rows: no wait)
+ read batch; capacity ok                     read batch; capacity ok
+ UPDATE batches ... WHERE status='open'
+   -> takes the row lock, sets accepted ---> UPDATE batches ... WHERE status='open'   LOCKED by A
+ assign orders, bump rider A, offer          ...blocked, waiting for A...
+ COMMIT -----------------------------------> lock released; B re-checks its WHERE     status=accepted, rider=A
+                                             status is 'accepted': 0 rows updated
+                                             re-read batch: held by A, not B
+                                             ROLLBACK, return 409
+```
+
+Rider B leaves no trace: nothing is assigned, no counter moves, no offer is recorded.
+
+### Decisions beyond the brief
+
+- A successful accept bumps the rider's `version` (their order count really changed), so a client holding a
+  stale `X-Expected-Version` will get a `409` on its next versioned write. Telemetry and offer counting do not bump it.
+- A rider who accepts a batch they were never shown gets an offer recorded for it, so `acceptance_rate =
+  accepted_count / offers_count` stays at most 1.
+- Capacity is checked before the claim, as specified, so a rider already at capacity who tries a batch that is
+  also taken gets `422`, not `409`.
+- Other riders' unanswered offers for an accepted batch stay as they are (`accepted IS NULL`).
+- Orders in an accepted batch are no longer offered by `match-orders`, `GET /batches` or `POST /orders/batch`.

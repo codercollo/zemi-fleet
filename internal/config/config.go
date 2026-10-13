@@ -31,6 +31,10 @@ type Config struct {
 	// rewrites history.
 	RiderPayoutBPS int `mapstructure:"RIDER_PAYOUT_BPS"`
 
+	// OrderMinTripM is the shortest allowed pickup-to-delivery distance in metres. A shorter trip has
+	// no meaningful direction and is not worth a rider; creating one is a 422.
+	OrderMinTripM int `mapstructure:"ORDER_MIN_TRIP_M"`
+
 	Cone  ConeConfig  `mapstructure:",squash"`
 	Batch BatchConfig `mapstructure:",squash"`
 }
@@ -45,6 +49,8 @@ type BatchConfig struct {
 	DirectionToleranceDeg float64 `mapstructure:"BATCH_DIRECTION_TOLERANCE_DEG"`
 	// SearchRadiusKM is how far from the rider pending orders and open batches are looked up.
 	SearchRadiusKM float64 `mapstructure:"BATCH_SEARCH_RADIUS_KM"`
+	// VisibilityRadiusKM is the default radius_km of GET /batches; a request may use up to SearchRadiusKM.
+	VisibilityRadiusKM float64 `mapstructure:"BATCH_VISIBILITY_RADIUS_KM"`
 	// TTL is how long an open batch stays on offer before it expires and its orders return to pending.
 	TTL time.Duration `mapstructure:"BATCH_TTL"`
 	// AvgSpeedKMH and StopDwellMin drive the delivery time estimates.
@@ -59,6 +65,7 @@ const (
 	maxBatchDwellMin  = 60.0
 	maxBatchAvgSpeed  = 200.0
 	maxBatchTolerance = 180.0
+	maxOrderMinTripM  = 10_000
 )
 
 // ConeConfig holds the proximity-matching (60 degree cone) tunables.
@@ -115,6 +122,8 @@ var defaults = map[string]any{
 	"BATCH_PICKUP_RADIUS_KM":        2,
 	"BATCH_DIRECTION_TOLERANCE_DEG": 45,
 	"BATCH_SEARCH_RADIUS_KM":        5,
+	"BATCH_VISIBILITY_RADIUS_KM":    3,
+	"ORDER_MIN_TRIP_M":              50,
 	"BATCH_TTL":                     "10m",
 	"AVG_SPEED_KMH":                 20,
 	"STOP_DWELL_MIN":                2,
@@ -167,6 +176,9 @@ func (c Config) validate() error {
 	if c.DB.MaxConns < 1 || c.DB.MinConns < 0 || c.DB.MinConns > c.DB.MaxConns {
 		errs = append(errs, errors.New("DB_MIN_CONNS must be between 0 and DB_MAX_CONNS, and DB_MAX_CONNS >= 1"))
 	}
+	if c.OrderMinTripM < 0 || c.OrderMinTripM > maxOrderMinTripM {
+		errs = append(errs, fmt.Errorf("ORDER_MIN_TRIP_M must be between 0 and %d (got %d)", maxOrderMinTripM, c.OrderMinTripM))
+	}
 	if c.RiderPayoutBPS < 0 || c.RiderPayoutBPS > MaxPayoutBPS {
 		errs = append(errs, fmt.Errorf("RIDER_PAYOUT_BPS must be 0-%d (got %d)", MaxPayoutBPS, c.RiderPayoutBPS))
 	}
@@ -218,6 +230,9 @@ func (b BatchConfig) validate() []error {
 	}
 	if b.SearchRadiusKM <= 0 || b.SearchRadiusKM > maxBatchRadiusKM {
 		errs = append(errs, fmt.Errorf("BATCH_SEARCH_RADIUS_KM must be greater than 0 and at most %v (got %v)", maxBatchRadiusKM, b.SearchRadiusKM))
+	}
+	if b.VisibilityRadiusKM <= 0 || b.VisibilityRadiusKM > b.SearchRadiusKM {
+		errs = append(errs, fmt.Errorf("BATCH_VISIBILITY_RADIUS_KM must be greater than 0 and at most BATCH_SEARCH_RADIUS_KM (got %v, search radius %v)", b.VisibilityRadiusKM, b.SearchRadiusKM))
 	}
 	if b.TTL <= 0 {
 		errs = append(errs, fmt.Errorf("BATCH_TTL must be greater than zero (got %s)", b.TTL))

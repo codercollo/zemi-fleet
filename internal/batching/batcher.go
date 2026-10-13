@@ -12,10 +12,6 @@ import (
 	"github.com/codercollo/zemi-fleet/internal/geo"
 )
 
-// coincidentM: a trip shorter than this has no meaningful direction (the bearing flips with
-// rounding), so it is compatible with any other trip's direction.
-const coincidentM = 1.0
-
 // Order is a pending order as the batcher sees it.
 type Order struct {
 	ID                 string
@@ -99,11 +95,10 @@ func fits(candidate, seed Order, members []Order, p Params) bool {
 	return directionCompatible(seed, candidate, p.DirectionToleranceDeg)
 }
 
-// directionCompatible reports whether two trips head in similar directions.
+// directionCompatible reports whether two trips head in similar directions. Order creation rejects
+// trips shorter than ORDER_MIN_TRIP_M, so every trip has a real direction; should a zero-length trip
+// ever get here, geo.Bearing returns 0 for it rather than failing.
 func directionCompatible(a, b Order, toleranceDeg float64) bool {
-	if geo.Haversine(a.Pickup, a.Delivery) < coincidentM || geo.Haversine(b.Pickup, b.Delivery) < coincidentM {
-		return true
-	}
 	diff := geo.AngleDiff(geo.Bearing(a.Pickup, a.Delivery), geo.Bearing(b.Pickup, b.Delivery))
 	return diff <= toleranceDeg && diff >= -toleranceDeg
 }

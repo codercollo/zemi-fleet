@@ -29,6 +29,8 @@ All under `/api/v2`. Money is KES in JSON (cents in the database).
 |---|---|---|
 | GET | `/healthz` | status + database check |
 | POST | `/orders/batch` | form batches of up to 5 pending orders (pickups pairwise within `radius_km`, similar directions, oldest first) near a rider and return the open batches on offer, each with a suggested stop sequence |
+| GET | `/batches` | open batches near `lat`,`lng` (`radius_km`, `page`, `page_size`), nearest first, with pagination `metadata`; read-only |
+| POST | `/batches/:id/accept` | `{rider_id}`: the first rider to accept gets the batch exclusively (`409` after that, `422` if over capacity or off shift); a retry by the holder is `200` |
 | POST | `/orders` | create a pending order, `201` + `Location` |
 | GET | `/orders/:id` | one order |
 | GET | `/riders/:id` | rider with preferences |

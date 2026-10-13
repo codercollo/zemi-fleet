@@ -27,13 +27,16 @@ import (
 	"github.com/codercollo/zemi-fleet/internal/service"
 )
 
-const testPayoutBPS = 9000
+const (
+	testPayoutBPS = 9000
+	testMinTripM  = 50
+)
 
 // testNow is the fixed instant every handler test runs at.
 var testNow = time.Date(2026, 10, 13, 9, 0, 0, 0, time.UTC)
 
 // testBatchCfg mirrors the default BATCH_* settings.
-var testBatchCfg = config.BatchConfig{MaxOrders: 5, PickupRadiusKM: 2, DirectionToleranceDeg: 45, SearchRadiusKM: 5, TTL: 10 * time.Minute, AvgSpeedKMH: 20, StopDwellMin: 2}
+var testBatchCfg = config.BatchConfig{MaxOrders: 5, PickupRadiusKM: 2, DirectionToleranceDeg: 45, SearchRadiusKM: 5, VisibilityRadiusKM: 3, TTL: 10 * time.Minute, AvgSpeedKMH: 20, StopDwellMin: 2}
 
 // testCone mirrors the default CONE_* settings.
 var testCone = config.ConeConfig{RadiusKM: 1, HalfAngleDeg: 30, MinSpeedKMH: 3, MaxResults: 20}
@@ -45,7 +48,7 @@ func newStoreHandler(t *testing.T) (http.Handler, *mock.MockStore) {
 	store := mock.NewMockStore(gomock.NewController(t))
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := NewServer(config.Config{Env: config.EnvDevelopment, RiderPayoutBPS: testPayoutBPS, Batch: testBatchCfg}, logger,
-		fakeDB{}, service.NewOrderService(store, clock.NewTest(testNow), testPayoutBPS), service.NewRiderService(store, clock.NewTest(testNow)),
+		fakeDB{}, service.NewOrderService(store, clock.NewTest(testNow), testPayoutBPS, testMinTripM), service.NewRiderService(store, clock.NewTest(testNow)),
 		service.NewMatchingService(store, clock.NewTest(testNow), logger, testCone),
 		service.NewBatchService(store, clock.NewTest(testNow), testBatchCfg), "test")
 	return srv.Routes(), store
@@ -503,4 +506,18 @@ func TestUpdatePreferences_VersionConflict(t *testing.T) {
 		assert.Equal(t, http.StatusConflict, rec.Code)
 		assert.Equal(t, `{"error":"unable to update the record due to an edit conflict, please try again"}`, strings.TrimSpace(rec.Body.String()))
 	})
+}
+
+func TestCreateOrder_422WhenTripIsTooShort(t *testing.T) {
+	h, store := newStoreHandler(t)
+	vendor := fakeVendor() // Sarit Centre
+	store.EXPECT().GetVendor(gomock.Any(), "ven_001").Return(vendor, nil)
+	store.EXPECT().GetCategory(gomock.Any(), "food").Return(sqlc.Category{Code: "food"}, nil)
+	// CreateOrder must not be called.
+
+	rec := send(t, h, http.MethodPost, "/api/v2/orders",
+		`{"vendor_id":"ven_001","category":"food","delivery_location":{"lat":-1.2635,"lng":36.8030},"value_kes":100,"delivery_fee_kes":50}`)
+
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	assert.Contains(t, errFields(t, rec)["delivery_location"], "at least 50 m")
 }

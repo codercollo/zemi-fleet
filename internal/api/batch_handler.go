@@ -107,13 +107,15 @@ type stopDTO struct {
 	Location locationDTO `json:"location"`
 }
 
-// batchDTO is the brief's batch plus sequence (the suggested route), distance_to_first_pickup_km
-// (specific to the asking rider) and expires_at.
+// batchDTO is the brief's batch plus sequence (the suggested route), distance_saved_km (solo trips minus
+// the batch's route; negative when batching costs distance), distance_to_first_pickup_km (specific to
+// the asking rider or the query point) and expires_at.
 type batchDTO struct {
 	BatchID                 string          `json:"batch_id"`
 	Orders                  []batchOrderDTO `json:"orders"`
 	Sequence                []stopDTO       `json:"sequence"`
 	TotalDistanceKM         float64         `json:"total_distance_km"`
+	DistanceSavedKM         float64         `json:"distance_saved_km"`
 	EstimatedEarningsKES    float64         `json:"estimated_earnings_kes"`
 	RouteOptimizationScore  float64         `json:"route_optimization_score"`
 	DistanceToFirstPickupKM float64         `json:"distance_to_first_pickup_km"`
@@ -157,6 +159,7 @@ func newBatchDTO(o service.BatchOffer) batchDTO {
 		Orders:                  orders,
 		Sequence:                stops,
 		TotalDistanceKM:         roundTo(float64(b.TotalDistanceM)/metresPerKM, kmDecimals),
+		DistanceSavedKM:         roundTo(float64(b.DistanceSavedM())/metresPerKM, kmDecimals),
 		EstimatedEarningsKES:    centsToKES(b.EstimatedEarningsCents),
 		RouteOptimizationScore:  b.RouteOptimizationScore,
 		DistanceToFirstPickupKM: roundTo(o.DistanceToFirstPickupM/metresPerKM, kmDecimals),

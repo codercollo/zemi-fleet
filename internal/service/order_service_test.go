@@ -34,7 +34,6 @@ func TestOrderService_Create_TripAndPayout(t *testing.T) {
 		{"due east", domain.Location{Lat: sarit.Lat, Lng: sarit.Lng + 0.01}, 9000, 1112, 90},
 		{"due south", domain.Location{Lat: sarit.Lat - 0.01, Lng: sarit.Lng}, 8500, 1112, 180},
 		{"due west", domain.Location{Lat: sarit.Lat, Lng: sarit.Lng - 0.01}, 10000, 1112, 270},
-		{"same point has no direction", sarit, 9000, 0, 0},
 		{"Westlands to Karen", domain.Location{Lat: -1.3190, Lng: 36.7070}, 9000, 12_030, 0}, // distance and bearing checked loosely below
 	}
 	for _, tc := range tests {
@@ -48,7 +47,7 @@ func TestOrderService_Create_TripAndPayout(t *testing.T) {
 					got = p
 					return sqlc.Order{ID: p.ID, RiderPayoutBps: p.RiderPayoutBps, TripDistanceM: p.TripDistanceM}, nil
 				})
-			svc := NewOrderService(store, clock.NewTest(testNow), tc.payoutBPS)
+			svc := NewOrderService(store, clock.NewTest(testNow), tc.payoutBPS, 50)
 
 			order, err := svc.Create(context.Background(), CreateOrderInput{
 				VendorID: "ven_001", CategoryCode: "food", Delivery: tc.delivery, ValueCents: 100000, DeliveryFeeCents: 20000,
@@ -88,11 +87,11 @@ func TestOrderService_Create_Validation(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			store := mock.NewMockStore(gomock.NewController(t))
-			store.EXPECT().GetVendor(gomock.Any(), gomock.Any()).Return(sqlc.Vendor{}, tc.vendorErr)
+			store.EXPECT().GetVendor(gomock.Any(), gomock.Any()).Return(sqlc.Vendor{Lat: sarit.Lat, Lng: sarit.Lng}, tc.vendorErr)
 			store.EXPECT().GetCategory(gomock.Any(), gomock.Any()).Return(sqlc.Category{}, tc.catErr)
-			svc := NewOrderService(store, clock.NewTest(testNow), 9000)
+			svc := NewOrderService(store, clock.NewTest(testNow), 9000, 50)
 
-			_, err := svc.Create(context.Background(), CreateOrderInput{VendorID: "v", CategoryCode: "c"})
+			_, err := svc.Create(context.Background(), CreateOrderInput{VendorID: "v", CategoryCode: "c", Delivery: domain.Location{Lat: sarit.Lat + 0.01, Lng: sarit.Lng}})
 
 			var verr *domain.ValidationError
 			require.ErrorAs(t, err, &verr)
@@ -109,7 +108,7 @@ func TestOrderService_Create_StoreFailure(t *testing.T) {
 	boom := errors.New("boom")
 	store.EXPECT().GetVendor(gomock.Any(), gomock.Any()).Return(sqlc.Vendor{}, boom) // a real failure stops before the category lookup
 
-	_, err := NewOrderService(store, clock.NewTest(testNow), 9000).Create(context.Background(), CreateOrderInput{})
+	_, err := NewOrderService(store, clock.NewTest(testNow), 9000, 50).Create(context.Background(), CreateOrderInput{})
 
 	require.ErrorIs(t, err, boom)
 	var verr *domain.ValidationError
@@ -126,7 +125,7 @@ func TestOrderService_Get(t *testing.T) {
 			TripDistanceM: 2500, TripBearingDeg: 45.5,
 		}, nil)
 
-		order, err := NewOrderService(store, clock.NewTest(testNow), 9000).Get(context.Background(), "ord_1")
+		order, err := NewOrderService(store, clock.NewTest(testNow), 9000, 50).Get(context.Background(), "ord_1")
 
 		require.NoError(t, err)
 		assert.Equal(t, domain.OrderBatched, order.Status)
@@ -141,7 +140,7 @@ func TestOrderService_Get(t *testing.T) {
 		store := mock.NewMockStore(gomock.NewController(t))
 		store.EXPECT().GetOrder(gomock.Any(), "x").Return(sqlc.Order{}, domain.ErrNotFound)
 
-		_, err := NewOrderService(store, clock.NewTest(testNow), 9000).Get(context.Background(), "x")
+		_, err := NewOrderService(store, clock.NewTest(testNow), 9000, 50).Get(context.Background(), "x")
 
 		assert.ErrorIs(t, err, domain.ErrNotFound)
 	})
@@ -150,4 +149,49 @@ func TestOrderService_Get(t *testing.T) {
 func TestRoundBearing(t *testing.T) {
 	assert.Equal(t, 0.0, roundBearing(359.97), "rounds up to 360 and wraps to 0")
 	assert.Equal(t, 123.5, roundBearing(123.46))
+}
+
+func TestOrderService_Create_RejectsTooShortTrips(t *testing.T) {
+	// 0.0003 degrees of latitude is about 33 m; 0.0006 is about 67 m (the minimum is 50 m).
+	tests := []struct {
+		name     string
+		delivery domain.Location
+		wantErr  bool
+	}{
+		{"delivery at the vendor", sarit, true},
+		{"33 m away", domain.Location{Lat: sarit.Lat + 0.0003, Lng: sarit.Lng}, true},
+		{"67 m away", domain.Location{Lat: sarit.Lat + 0.0006, Lng: sarit.Lng}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := mock.NewMockStore(gomock.NewController(t))
+			store.EXPECT().GetVendor(gomock.Any(), "ven_001").Return(sqlc.Vendor{ID: "ven_001", Lat: sarit.Lat, Lng: sarit.Lng}, nil)
+			store.EXPECT().GetCategory(gomock.Any(), "food").Return(sqlc.Category{Code: "food"}, nil)
+			if !tc.wantErr {
+				store.EXPECT().CreateOrder(gomock.Any(), gomock.Any()).Return(sqlc.Order{ID: "ord_1"}, nil)
+			} // otherwise CreateOrder must NOT be called
+			svc := NewOrderService(store, clock.NewTest(testNow), 9000, 50)
+
+			_, err := svc.Create(context.Background(), CreateOrderInput{VendorID: "ven_001", CategoryCode: "food", Delivery: tc.delivery})
+
+			if tc.wantErr {
+				var verr *domain.ValidationError
+				require.ErrorAs(t, err, &verr)
+				assert.Contains(t, verr.Fields["delivery_location"], "at least 50 m")
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+
+	t.Run("a minimum of 0 allows anything", func(t *testing.T) {
+		store := mock.NewMockStore(gomock.NewController(t))
+		store.EXPECT().GetVendor(gomock.Any(), gomock.Any()).Return(sqlc.Vendor{Lat: sarit.Lat, Lng: sarit.Lng}, nil)
+		store.EXPECT().GetCategory(gomock.Any(), gomock.Any()).Return(sqlc.Category{}, nil)
+		store.EXPECT().CreateOrder(gomock.Any(), gomock.Any()).Return(sqlc.Order{}, nil)
+
+		_, err := NewOrderService(store, clock.NewTest(testNow), 9000, 0).Create(context.Background(), CreateOrderInput{Delivery: sarit})
+
+		assert.NoError(t, err)
+	})
 }

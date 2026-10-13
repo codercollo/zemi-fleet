@@ -33,5 +33,8 @@ func (s *Server) Routes() http.Handler {
 	v2.PATCH("/riders/:id/location", s.updateLocationHandler)
 	v2.PATCH("/riders/:id/availability", s.updateAvailabilityHandler)
 
+	v2.GET("/batches", s.listBatchesHandler)
+	v2.POST("/batches/:id/accept", s.acceptBatchHandler)
+
 	return r
 }

@@ -26,6 +26,12 @@ type Store interface {
 	// CreateBatchesTx forms batches near a rider and returns the open batches on offer to them
 	// (tx_create_batches.go).
 	CreateBatchesTx(ctx context.Context, arg CreateBatchesParams) ([]domain.Batch, error)
+
+	// AcceptBatchTx lets a rider claim an open batch exclusively (tx_accept_batch.go).
+	AcceptBatchTx(ctx context.Context, arg AcceptBatchParams) (domain.Batch, error)
+
+	// ListOpenBatches pages through open, unexpired batches near a point, read-only (batch_listing.go).
+	ListOpenBatches(ctx context.Context, arg ListOpenBatchesParams) ([]domain.Batch, int, error)
 }
 
 // SQLStore is the PostgreSQL implementation of Store.

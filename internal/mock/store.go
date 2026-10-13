@@ -44,6 +44,36 @@ func (m *MockStore) EXPECT() *MockStoreMockRecorder {
 	return m.recorder
 }
 
+// AcceptBatch mocks base method.
+func (m *MockStore) AcceptBatch(ctx context.Context, arg sqlc.AcceptBatchParams) (sqlc.Batch, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AcceptBatch", ctx, arg)
+	ret0, _ := ret[0].(sqlc.Batch)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// AcceptBatch indicates an expected call of AcceptBatch.
+func (mr *MockStoreMockRecorder) AcceptBatch(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AcceptBatch", reflect.TypeOf((*MockStore)(nil).AcceptBatch), ctx, arg)
+}
+
+// AcceptBatchTx mocks base method.
+func (m *MockStore) AcceptBatchTx(ctx context.Context, arg repository.AcceptBatchParams) (domain.Batch, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AcceptBatchTx", ctx, arg)
+	ret0, _ := ret[0].(domain.Batch)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// AcceptBatchTx indicates an expected call of AcceptBatchTx.
+func (mr *MockStoreMockRecorder) AcceptBatchTx(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AcceptBatchTx", reflect.TypeOf((*MockStore)(nil).AcceptBatchTx), ctx, arg)
+}
+
 // AddRiderOffers mocks base method.
 func (m *MockStore) AddRiderOffers(ctx context.Context, arg sqlc.AddRiderOffersParams) error {
 	m.ctrl.T.Helper()
@@ -56,6 +86,21 @@ func (m *MockStore) AddRiderOffers(ctx context.Context, arg sqlc.AddRiderOffersP
 func (mr *MockStoreMockRecorder) AddRiderOffers(ctx, arg any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddRiderOffers", reflect.TypeOf((*MockStore)(nil).AddRiderOffers), ctx, arg)
+}
+
+// AssignBatchOrdersToRider mocks base method.
+func (m *MockStore) AssignBatchOrdersToRider(ctx context.Context, arg sqlc.AssignBatchOrdersToRiderParams) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AssignBatchOrdersToRider", ctx, arg)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// AssignBatchOrdersToRider indicates an expected call of AssignBatchOrdersToRider.
+func (mr *MockStoreMockRecorder) AssignBatchOrdersToRider(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AssignBatchOrdersToRider", reflect.TypeOf((*MockStore)(nil).AssignBatchOrdersToRider), ctx, arg)
 }
 
 // AssignOrderToBatch mocks base method.
@@ -232,6 +277,21 @@ func (m *MockStore) GetAreasByIDs(ctx context.Context, ids []string) ([]sqlc.Are
 func (mr *MockStoreMockRecorder) GetAreasByIDs(ctx, ids any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAreasByIDs", reflect.TypeOf((*MockStore)(nil).GetAreasByIDs), ctx, ids)
+}
+
+// GetBatch mocks base method.
+func (m *MockStore) GetBatch(ctx context.Context, id string) (sqlc.Batch, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetBatch", ctx, id)
+	ret0, _ := ret[0].(sqlc.Batch)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetBatch indicates an expected call of GetBatch.
+func (mr *MockStoreMockRecorder) GetBatch(ctx, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetBatch", reflect.TypeOf((*MockStore)(nil).GetBatch), ctx, id)
 }
 
 // GetBatchesByIDs mocks base method.
@@ -412,6 +472,37 @@ func (mr *MockStoreMockRecorder) ListBatchStops(ctx, batchIds any) *gomock.Call 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListBatchStops", reflect.TypeOf((*MockStore)(nil).ListBatchStops), ctx, batchIds)
 }
 
+// ListOpenBatchSummaries mocks base method.
+func (m *MockStore) ListOpenBatchSummaries(ctx context.Context, arg sqlc.ListOpenBatchSummariesParams) ([]sqlc.ListOpenBatchSummariesRow, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListOpenBatchSummaries", ctx, arg)
+	ret0, _ := ret[0].([]sqlc.ListOpenBatchSummariesRow)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListOpenBatchSummaries indicates an expected call of ListOpenBatchSummaries.
+func (mr *MockStoreMockRecorder) ListOpenBatchSummaries(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListOpenBatchSummaries", reflect.TypeOf((*MockStore)(nil).ListOpenBatchSummaries), ctx, arg)
+}
+
+// ListOpenBatches mocks base method.
+func (m *MockStore) ListOpenBatches(ctx context.Context, arg repository.ListOpenBatchesParams) ([]domain.Batch, int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListOpenBatches", ctx, arg)
+	ret0, _ := ret[0].([]domain.Batch)
+	ret1, _ := ret[1].(int)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// ListOpenBatches indicates an expected call of ListOpenBatches.
+func (mr *MockStoreMockRecorder) ListOpenBatches(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListOpenBatches", reflect.TypeOf((*MockStore)(nil).ListOpenBatches), ctx, arg)
+}
+
 // ListOpenBatchesNearPoint mocks base method.
 func (m *MockStore) ListOpenBatchesNearPoint(ctx context.Context, arg sqlc.ListOpenBatchesNearPointParams) ([]sqlc.ListOpenBatchesNearPointRow, error) {
 	m.ctrl.T.Helper()
@@ -485,6 +576,34 @@ func (m *MockStore) ListPreferredCategories(ctx context.Context, riderID string)
 func (mr *MockStoreMockRecorder) ListPreferredCategories(ctx, riderID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListPreferredCategories", reflect.TypeOf((*MockStore)(nil).ListPreferredCategories), ctx, riderID)
+}
+
+// MarkBatchOfferAccepted mocks base method.
+func (m *MockStore) MarkBatchOfferAccepted(ctx context.Context, arg sqlc.MarkBatchOfferAcceptedParams) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MarkBatchOfferAccepted", ctx, arg)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// MarkBatchOfferAccepted indicates an expected call of MarkBatchOfferAccepted.
+func (mr *MockStoreMockRecorder) MarkBatchOfferAccepted(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkBatchOfferAccepted", reflect.TypeOf((*MockStore)(nil).MarkBatchOfferAccepted), ctx, arg)
+}
+
+// RecordRiderAccept mocks base method.
+func (m *MockStore) RecordRiderAccept(ctx context.Context, arg sqlc.RecordRiderAcceptParams) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RecordRiderAccept", ctx, arg)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RecordRiderAccept indicates an expected call of RecordRiderAccept.
+func (mr *MockStoreMockRecorder) RecordRiderAccept(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordRiderAccept", reflect.TypeOf((*MockStore)(nil).RecordRiderAccept), ctx, arg)
 }
 
 // ReleaseOrdersFromBatches mocks base method.

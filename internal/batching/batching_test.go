@@ -189,12 +189,6 @@ func TestForm_DirectionTolerance(t *testing.T) {
 
 		assert.Equal(t, [][]string{{"s", "m"}, {"e"}}, batchIDs(Form(orders, params)))
 	})
-
-	t.Run("a zero-length trip has no direction and joins anything", func(t *testing.T) {
-		orders := []Order{rotatedTrip("seed", origin, 0, 0), ord("here", at(100, 0), at(100, 0), 1)}
-
-		assert.Equal(t, [][]string{{"seed", "here"}}, batchIDs(Form(orders, params)))
-	})
 }
 
 func TestSequence(t *testing.T) {
@@ -264,9 +258,29 @@ func TestSequence(t *testing.T) {
 	})
 }
 
+// stopsFor builds a stop list visiting the given (type, order index) steps in order, with real leg distances.
+func stopsFor(orders []Order, steps ...[2]int) []Stop {
+	var stops []Stop
+	var prev domain.Location
+	for i, st := range steps {
+		o := orders[st[1]]
+		typ, at := StopPickup, o.Pickup
+		if st[0] == 1 {
+			typ, at = StopDelivery, o.Delivery
+		}
+		leg := 0.0
+		if i > 0 {
+			leg = geo.Haversine(prev, at)
+		}
+		stops = append(stops, Stop{Seq: i + 1, Type: typ, OrderID: o.ID, Location: at, LegDistanceM: leg})
+		prev = at
+	}
+	return stops
+}
+
 func TestScoring(t *testing.T) {
-	t.Run("route distance is the sum of the legs and the score is trips divided by route", func(t *testing.T) {
-		// o2 travels the opposite way, so the combined route is much longer than the trips alone.
+	t.Run("route distance is the sum of the legs; the score is the mean detour", func(t *testing.T) {
+		// o2 travels the opposite way: stops are P1 P2 D1 D2 with legs 0, 500, 3500, 7500.
 		o1 := ord("o1", at(0, 0), at(0, 4000), 0)
 		o2 := ord("o2", at(0, 500), at(0, -3500), 1)
 
@@ -274,18 +288,55 @@ func TestScoring(t *testing.T) {
 
 		assert.InDelta(t, 0.5+3.5+7.5, b.RouteDistanceM/1000, 0.01)
 		assert.InDelta(t, 8000, b.TripDistanceM, 2)
-		assert.InDelta(t, 8000.0/11500, b.Score, 0.001)
+		assert.InDelta(t, -3500, b.DistanceSavedM, 2, "trips 8 km, route 11.5 km: the batch costs 3.5 km")
+		// o1: 4000 / 4000 = 1.0.  o2: 4000 / (3500 + 7500) = 0.3636.  Mean 0.6818.
+		assert.InDelta(t, (1.0+4000.0/11000)/2, b.Score, 0.001)
 		assert.Greater(t, b.Score, 0.0)
 		assert.Less(t, b.Score, 1.0)
 	})
 
-	t.Run("a route shorter than the sum of the trips is capped at 1", func(t *testing.T) {
+	t.Run("orders that ride along without a detour still score 1", func(t *testing.T) {
 		o1 := ord("o1", at(0, 0), at(0, 5000), 0)
-		o2 := ord("o2", at(0, 1000), at(0, 6000), 1) // route 6 km for 10 km of trips
+		o2 := ord("o2", at(0, 1000), at(0, 6000), 1) // same line: P1 P2 D1 D2 has no detour for either
 
 		b := build([]Order{o1, o2}, params)
 
+		assert.InDelta(t, 1.0, b.Score, 1e-9)
+		assert.InDelta(t, 4000, b.DistanceSavedM, 2, "trips 10 km, route 6 km")
+	})
+
+	t.Run("delivering straight after pickup scores higher than collecting everything first", func(t *testing.T) {
+		o1 := ord("o1", at(0, 0), at(3000, 0), 0)
+		o2 := ord("o2", at(0, 200), at(0, 3000), 1)
+		orders := []Order{o1, o2}
+		// 0 = pickup, 1 = delivery; the second number is the order index.
+		immediate := stopsFor(orders, [2]int{0, 0}, [2]int{1, 0}, [2]int{0, 1}, [2]int{1, 1}) // P1 D1 P2 D2
+		allFirst := stopsFor(orders, [2]int{0, 0}, [2]int{0, 1}, [2]int{1, 0}, [2]int{1, 1})  // P1 P2 D1 D2
+
+		scoreImmediate := detourScore(orders, immediate)
+		scoreAllFirst := detourScore(orders, allFirst)
+
+		assert.InDelta(t, 1.0, scoreImmediate, 1e-9)
+		assert.Less(t, scoreAllFirst, scoreImmediate)
+		// Collecting everything first: o1 rides 200 + 3006.7 for a 3000 m trip (0.9356) and o2 rides
+		// 3006.7 + 4242.6 for a 2800 m trip (0.3862); the mean is 0.661.
+		assert.InDelta(t, 0.661, scoreAllFirst, 0.005)
+	})
+
+	t.Run("a batch of one scores exactly 1", func(t *testing.T) {
+		b := build([]Order{ord("o1", at(0, 0), at(1234, 5678), 0)}, params)
+
 		assert.Equal(t, 1.0, b.Score)
+		assert.Equal(t, 0.0, b.DistanceSavedM)
+	})
+
+	t.Run("a zero-length trip (rejected at order creation) is guarded, not divided by", func(t *testing.T) {
+		p := at(10, 10)
+
+		b := build([]Order{ord("o1", p, p, 0)}, params)
+
+		assert.Equal(t, 1.0, b.Score)
+		assert.Equal(t, 1.0, detourScore(nil, nil), "an empty batch scores 1 rather than NaN")
 	})
 
 	t.Run("estimated minutes: distance at the average speed plus dwell per earlier stop", func(t *testing.T) {
@@ -347,12 +398,6 @@ func TestScoring(t *testing.T) {
 		assert.InDelta(t, at(600, 0).Lng, b.Centroid.Lng, 1e-9)
 		assert.InDelta(t, 1200, b.PickupSpreadM, 1)
 	})
-
-	t.Run("an empty route scores 1", func(t *testing.T) {
-		assert.Equal(t, 1.0, score(0, 0))
-		assert.Equal(t, 1.0, score(5, 0))
-		assert.Equal(t, 0.5, score(1, 2))
-	})
 }
 
 // Property: for random inputs, Form always returns a valid partition.
@@ -372,8 +417,8 @@ func TestForm_Properties(t *testing.T) {
 		for i := range n {
 			pickup := at(r.Float64()*6000-3000, r.Float64()*6000-3000)
 			delivery := at(r.Float64()*10000-5000, r.Float64()*10000-5000)
-			if r.IntN(10) == 0 {
-				delivery = pickup // some zero-length trips
+			if geo.Haversine(pickup, delivery) < 50 { // order creation rejects trips this short
+				delivery = at(r.Float64()*10000+60, 0)
 			}
 			fee := int64(10000 + r.IntN(40000))
 			orders = append(orders, Order{
@@ -437,12 +482,9 @@ func TestForm_Properties(t *testing.T) {
 			require.InDelta(t, route, b.RouteDistanceM, 1e-6, ctx)
 
 			// score in (0, 1]
-			if b.TripDistanceM > 0 {
-				require.Greater(t, b.Score, 0.0, ctx)
-			} else {
-				require.GreaterOrEqual(t, b.Score, 0.0, ctx+": only degenerate zero-length trips may score 0")
-			}
+			require.Greater(t, b.Score, 0.0, ctx)
 			require.LessOrEqual(t, b.Score, 1.0, ctx)
+			require.InDelta(t, b.TripDistanceM-b.RouteDistanceM, b.DistanceSavedM, 1e-6, ctx)
 			if len(b.Orders) == 1 {
 				require.Equal(t, 1.0, b.Score, ctx)
 			}

@@ -15,7 +15,9 @@ var (
 	ErrNotFound        = errors.New("record not found")
 	ErrEditConflict    = errors.New("edit conflict")
 	ErrRiderAtCapacity = errors.New("rider is at capacity")
-	ErrBatchTaken      = errors.New("batch has already been accepted")
+	ErrBatchTaken      = errors.New("batch is no longer available")
+	// ErrRiderUnavailable: the rider is off shift and cannot accept work.
+	ErrRiderUnavailable = errors.New("rider is not available")
 )
 
 // ValidationError carries per-field messages for checks that need the database

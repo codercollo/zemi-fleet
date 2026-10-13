@@ -96,3 +96,44 @@ func (s *BatchService) CreateBatches(ctx context.Context, in CreateBatchesInput)
 	})
 	return offers, nil
 }
+
+// Accept lets a rider claim an open batch exclusively. The whole decision happens in one repository
+// transaction (see repository.AcceptBatchTx); this only supplies the clock's time.
+// Errors: domain.ErrNotFound (rider or batch), ErrRiderUnavailable, ErrRiderAtCapacity, ErrBatchTaken.
+func (s *BatchService) Accept(ctx context.Context, batchID, riderID string) (domain.Batch, error) {
+	return s.store.AcceptBatchTx(ctx, repository.AcceptBatchParams{BatchID: batchID, RiderID: riderID, Now: s.clock.Now()})
+}
+
+// ListBatchesInput is a validated GET /batches request.
+type ListBatchesInput struct {
+	Point    domain.Location
+	RadiusKM float64
+	Page     int
+	PageSize int
+}
+
+// BatchPage is one page of batches plus the total number of matches.
+type BatchPage struct {
+	Offers []BatchOffer
+	Total  int
+}
+
+// ListBatches pages through the open, unexpired batches whose first pickup is near the given point.
+// It is read-only: no offers are recorded and nothing is expired (expired batches are just not listed).
+func (s *BatchService) ListBatches(ctx context.Context, in ListBatchesInput) (BatchPage, error) {
+	batches, total, err := s.store.ListOpenBatches(ctx, repository.ListOpenBatchesParams{
+		Point:    in.Point,
+		RadiusM:  in.RadiusKM * metresPerKM,
+		Now:      s.clock.Now(),
+		Page:     in.Page,
+		PageSize: in.PageSize,
+	})
+	if err != nil {
+		return BatchPage{}, err
+	}
+	offers := make([]BatchOffer, 0, len(batches))
+	for _, b := range batches {
+		offers = append(offers, BatchOffer{Batch: b, DistanceToFirstPickupM: geo.Haversine(in.Point, b.FirstPickup())})
+	}
+	return BatchPage{Offers: offers, Total: total}, nil
+}

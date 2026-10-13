@@ -248,30 +248,27 @@ func TestMetrics_IdempotentReplaysCounted(t *testing.T) {
 }
 
 func TestMetrics_BatchAcceptCounters(t *testing.T) {
-	freshlyAccepted := acceptedBatch("rider_002")
-	at := testNow
-	freshlyAccepted.AcceptedAt = &at
-
 	tests := []struct {
 		name string
 		// result of the store call, and what each counter should read afterwards
 		batch                         domain.Batch
+		held                          bool
 		err                           error
 		wantStatus                    int
 		accepted, conflicts, capacity float64
 	}{
-		{"a win counts as accepted", freshlyAccepted, nil, http.StatusOK, 1, 0, 0},
-		{"an idempotent retry by the winner is not a second win", acceptedBatch("rider_002"), nil, http.StatusOK, 0, 0, 0},
-		{"a lost race counts as a conflict, not as accepted", domain.Batch{}, fmt.Errorf("accept batch: %w", domain.ErrBatchTaken), http.StatusConflict, 0, 1, 0},
-		{"no room counts as a capacity rejection", domain.Batch{}, fmt.Errorf("accept batch: %w", domain.ErrRiderAtCapacity), http.StatusUnprocessableEntity, 0, 0, 1},
-		{"an unknown batch counts as nothing", domain.Batch{}, fmt.Errorf("accept batch: %w", domain.ErrNotFound), http.StatusNotFound, 0, 0, 0},
-		{"an unavailable rider counts as nothing", domain.Batch{}, fmt.Errorf("accept batch: %w", domain.ErrRiderUnavailable), http.StatusUnprocessableEntity, 0, 0, 0},
-		{"a server error counts as nothing", domain.Batch{}, fmt.Errorf("accept batch: boom"), http.StatusInternalServerError, 0, 0, 0},
+		{"a win counts as accepted", acceptedBatch("rider_002"), false, nil, http.StatusOK, 1, 0, 0},
+		{"an idempotent retry by the winner is not a second win", acceptedBatch("rider_002"), true, nil, http.StatusOK, 0, 0, 0},
+		{"a lost race counts as a conflict, not as accepted", domain.Batch{}, false, fmt.Errorf("accept batch: %w", domain.ErrBatchTaken), http.StatusConflict, 0, 1, 0},
+		{"no room counts as a capacity rejection", domain.Batch{}, false, fmt.Errorf("accept batch: %w", domain.ErrRiderAtCapacity), http.StatusUnprocessableEntity, 0, 0, 1},
+		{"an unknown batch counts as nothing", domain.Batch{}, false, fmt.Errorf("accept batch: %w", domain.ErrNotFound), http.StatusNotFound, 0, 0, 0},
+		{"an unavailable rider counts as nothing", domain.Batch{}, false, fmt.Errorf("accept batch: %w", domain.ErrRiderUnavailable), http.StatusUnprocessableEntity, 0, 0, 0},
+		{"a server error counts as nothing", domain.Batch{}, false, fmt.Errorf("accept batch: boom"), http.StatusInternalServerError, 0, 0, 0},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			h, store := newMetricsHandler(t, nil)
-			store.EXPECT().AcceptBatchTx(gomock.Any(), gomock.Any()).Return(tc.batch, tc.err)
+			store.EXPECT().AcceptBatchTx(gomock.Any(), gomock.Any()).Return(tc.batch, tc.held, tc.err)
 
 			rec := send(t, h, http.MethodPost, acceptPath("batch_X1"), `{"rider_id":"rider_002"}`)
 

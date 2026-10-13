@@ -2,7 +2,7 @@
 #
 # Two machines, two target groups:
 #   dev/*      your machine: the API (`go run`) and your locally installed PostgreSQL, no Docker.
-#              Create the database and role once by hand (README "Development"), then set
+#              Create the database and role once by hand (README "Local development"), then set
 #              DATABASE_URL in app.env. Needs the golang-migrate CLI on PATH.
 #   staging/*  Docker Desktop: a Linux binary is built here, baked into the image and run
 #              with Compose. That image is exactly what production runs.
@@ -21,6 +21,8 @@ VERSION         := $(shell git describe --always --dirty --tags 2>/dev/null || e
 LDFLAGS         := -s -X main.version=$(VERSION)
 
 MOCKGEN_VERSION := v0.6.0
+# newman (the Postman command-line runner), pinned for staging/postman.
+NEWMAN_VERSION  := 6.2.3
 # govulncheck, pinned. It must be a release built for the Go toolchain in use (v1.1.x crashes on Go 1.27).
 # CI runs the same version as a BLOCKING step (.github/workflows/test.yml).
 GOVULNCHECK_VERSION := v1.9.0
@@ -72,7 +74,7 @@ dev/db/seed: confirm
 ## dev/sqlc: generate Go code from db/query + db/migrations with sqlc
 .PHONY: dev/sqlc
 dev/sqlc:
-	@if ls db/query/*.sql >/dev/null 2>&1; then sqlc generate; else echo 'no queries in db/query yet (added in Phase 3); sqlc rejects an empty set'; fi
+	@if ls db/query/*.sql >/dev/null 2>&1; then sqlc generate; else echo 'no queries in db/query; sqlc rejects an empty set'; fi
 
 ## dev/db/migrations/new name=$1: create a new pair of migration files
 .PHONY: dev/db/migrations/new
@@ -196,14 +198,18 @@ staging/up: staging/build
 	API_BUILD_TARGET=prebuilt $(STAGING_COMPOSE) up -d --wait
 	@echo 'Staging API $(VERSION): $(STAGING_URL)/api/v2/healthz'
 
-## staging/smoke: check the healthcheck, that a missing key is refused (401) and that the key is accepted (200)
+## staging/smoke: call every endpoint once with the key and check its status (needs the demo seed: make staging/seed)
 .PHONY: staging/smoke
 staging/smoke:
-	curl --fail --silent --show-error $(STAGING_URL)/api/v2/healthz
-	@echo
-	@test "$$(curl --silent --output /dev/null --write-out '%{http_code}' $(STAGING_URL)/api/v2/batches)" = 401 		|| (echo 'smoke: a request without a key was not refused with 401' && exit 1)
-	@test "$$(curl --silent --output /dev/null --write-out '%{http_code}' -H 'X-API-Key: $(STAGING_API_KEY)' $(STAGING_URL)/api/v2/riders/rider_nobody)" = 404 		|| (echo 'smoke: the API key was not accepted (expected the request to reach the handler: 404 for an unknown rider)' && exit 1)
-	@echo 'smoke: ok (healthz 200, no key 401, key accepted)'
+	BASE_URL=$(STAGING_URL) API_KEY=$(STAGING_API_KEY) bash scripts/smoke_test.sh
+
+## staging/postman: run the Postman collection against the running stack with newman (needs the demo seed; reseed between runs)
+.PHONY: staging/postman
+staging/postman:
+	npx --yes newman@$(NEWMAN_VERSION) run postman/Zemi_Fleet_V2.postman_collection.json \
+		--environment postman/Zemi_Fleet_V2.postman_environment.json \
+		--env-var base_url=$(STAGING_URL) --env-var api_key=$(STAGING_API_KEY) \
+		--color off --delay-request 120
 
 ## staging/logs: follow the API container logs
 .PHONY: staging/logs

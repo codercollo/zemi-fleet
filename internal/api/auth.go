@@ -21,6 +21,10 @@ const (
 	noKeyFingerprint = "none"
 )
 
+// publicRoutes are the GET routes that need no key: the load balancers' health check and the API documentation
+// (the docs describe the API; they hold no data). Every other route, /debug/vars included, is protected.
+var publicRoutes = map[string]bool{apiPrefix + "/healthz": true, docsPath: true, specPath: true}
+
 type clientNameKey struct{}
 
 // clientFromContext returns the name of the authenticated API client in ctx, or "" if the request is not authenticated.
@@ -29,8 +33,8 @@ func clientFromContext(ctx context.Context) string {
 	return name
 }
 
-// requireAPIKey rejects every request that does not carry a valid X-API-Key, except GET /healthz (load balancers
-// poll it). It sits after rateLimit, so guessing keys is rate-limited, and before idempotency and the handlers, so
+// requireAPIKey rejects every request that does not carry a valid X-API-Key, except the public routes (GET /healthz, which load
+// balancers poll, and the documentation pages). It sits after rateLimit, so guessing keys is rate-limited, and before idempotency and the handlers, so
 // an unauthenticated request never reaches a service. Let's Go Further ch. 16 (authentication middleware).
 //
 // The key is hashed with SHA-256 and the hash is compared with every stored hash using
@@ -38,7 +42,7 @@ func clientFromContext(ctx context.Context) string {
 // matched nor on how many leading bytes were right.
 func (s *Server) requireAPIKey() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if c.Request.Method == http.MethodGet && c.FullPath() == apiPrefix+"/healthz" {
+		if c.Request.Method == http.MethodGet && publicRoutes[c.FullPath()] {
 			c.Next()
 			return
 		}

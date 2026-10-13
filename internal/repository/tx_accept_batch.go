@@ -40,41 +40,46 @@ type AcceptBatchParams struct {
 //
 // If step 4 matches nothing, the batch is re-read: ours already is 200 (idempotent), gone is
 // ErrNotFound, otherwise ErrBatchTaken (taken by someone else, or expired).
-func (s *SQLStore) AcceptBatchTx(ctx context.Context, arg AcceptBatchParams) (domain.Batch, error) {
+//
+// alreadyHeld is true when the batch was already this rider's (the idempotent retry): nothing changed and the caller
+// must not count a new win.
+func (s *SQLStore) AcceptBatchTx(ctx context.Context, arg AcceptBatchParams) (domain.Batch, bool, error) {
 	var result domain.Batch
+	var held bool
 	err := s.ExecTx(ctx, func(q sqlc.Querier) error {
 		var err error
-		result, err = acceptBatch(ctx, q, arg)
+		result, held, err = acceptBatch(ctx, q, arg)
 		return err
 	})
 	if err != nil {
-		return domain.Batch{}, fmt.Errorf("accept batch: %w", err)
+		return domain.Batch{}, false, fmt.Errorf("accept batch: %w", err)
 	}
-	return result, nil
+	return result, held, nil
 }
 
-func acceptBatch(ctx context.Context, q sqlc.Querier, arg AcceptBatchParams) (domain.Batch, error) {
+func acceptBatch(ctx context.Context, q sqlc.Querier, arg AcceptBatchParams) (domain.Batch, bool, error) {
 	// 1. rider first (the fixed lock order)
 	rider, err := q.GetRiderForUpdate(ctx, arg.RiderID)
 	if err != nil {
-		return domain.Batch{}, fmt.Errorf("lock rider: %w", err)
+		return domain.Batch{}, false, fmt.Errorf("lock rider: %w", err)
 	}
 	if !rider.IsAvailable {
-		return domain.Batch{}, domain.ErrRiderUnavailable
+		return domain.Batch{}, false, domain.ErrRiderUnavailable
 	}
 
 	// 2. the batch, plus the idempotent retry
 	existing, err := q.GetBatch(ctx, arg.BatchID)
 	if err != nil {
-		return domain.Batch{}, fmt.Errorf("get batch: %w", err)
+		return domain.Batch{}, false, fmt.Errorf("get batch: %w", err)
 	}
 	if heldBy(existing, arg.RiderID) {
-		return loadOne(ctx, q, existing.ID)
+		b, err := loadOne(ctx, q, existing.ID)
+		return b, true, err
 	}
 
 	// 3. capacity
 	if int(rider.CurrentOrdersCount)+int(existing.OrdersCount) > int(rider.MaxCapacity) {
-		return domain.Batch{}, domain.ErrRiderAtCapacity
+		return domain.Batch{}, false, domain.ErrRiderAtCapacity
 	}
 
 	// 4. the claim
@@ -83,26 +88,27 @@ func acceptBatch(ctx context.Context, q sqlc.Querier, arg AcceptBatchParams) (do
 	if errors.Is(err, domain.ErrNotFound) {
 		current, getErr := q.GetBatch(ctx, arg.BatchID)
 		if getErr != nil {
-			return domain.Batch{}, fmt.Errorf("re-read batch: %w", getErr)
+			return domain.Batch{}, false, fmt.Errorf("re-read batch: %w", getErr)
 		}
 		if heldBy(current, arg.RiderID) {
-			return loadOne(ctx, q, current.ID)
+			b, err := loadOne(ctx, q, current.ID)
+			return b, true, err
 		}
-		return domain.Batch{}, domain.ErrBatchTaken
+		return domain.Batch{}, false, domain.ErrBatchTaken
 	}
 	if err != nil {
-		return domain.Batch{}, fmt.Errorf("claim batch: %w", err)
+		return domain.Batch{}, false, fmt.Errorf("claim batch: %w", err)
 	}
 
 	// 5. consequences of winning
 	batchID := claimed.ID
 	n, err := q.AssignBatchOrdersToRider(ctx, sqlc.AssignBatchOrdersToRiderParams{RiderID: &rid, BatchID: &batchID})
 	if err != nil {
-		return domain.Batch{}, fmt.Errorf("assign orders: %w", err)
+		return domain.Batch{}, false, fmt.Errorf("assign orders: %w", err)
 	}
 	if int(n) != int(claimed.OrdersCount) {
 		// We own the batch row and its orders are 'batched' by construction; this guards the invariant.
-		return domain.Batch{}, fmt.Errorf("assign orders: expected %d, assigned %d", claimed.OrdersCount, n)
+		return domain.Batch{}, false, fmt.Errorf("assign orders: expected %d, assigned %d", claimed.OrdersCount, n)
 	}
 
 	var distance int32 // rider to the batch's pickup centroid; unknown location counts as 0
@@ -115,18 +121,19 @@ func acceptBatch(ctx context.Context, q sqlc.Querier, arg AcceptBatchParams) (do
 		BatchID: claimed.ID, RiderID: arg.RiderID, DistanceM: distance, OfferedAt: arg.Now,
 	})
 	if err != nil {
-		return domain.Batch{}, fmt.Errorf("create offer: %w", err)
+		return domain.Batch{}, false, fmt.Errorf("create offer: %w", err)
 	}
 	if err := q.MarkBatchOfferAccepted(ctx, sqlc.MarkBatchOfferAcceptedParams{Now: &arg.Now, BatchID: claimed.ID, RiderID: arg.RiderID}); err != nil {
-		return domain.Batch{}, fmt.Errorf("mark offer accepted: %w", err)
+		return domain.Batch{}, false, fmt.Errorf("mark offer accepted: %w", err)
 	}
 	if err := q.RecordRiderAccept(ctx, sqlc.RecordRiderAcceptParams{
 		Orders: int32(n), NewOffers: int32(inserted), ID: arg.RiderID,
 	}); err != nil {
-		return domain.Batch{}, fmt.Errorf("update rider: %w", err)
+		return domain.Batch{}, false, fmt.Errorf("update rider: %w", err)
 	}
 
-	return loadOne(ctx, q, claimed.ID)
+	b, err := loadOne(ctx, q, claimed.ID)
+	return b, false, err
 }
 
 // heldBy reports whether the batch has already been accepted by this rider.

@@ -30,11 +30,11 @@ func TestAcceptBatch_200(t *testing.T) {
 	t.Run("returns the accepted batch with rider and time", func(t *testing.T) {
 		h, store := newStoreHandler(t)
 		store.EXPECT().AcceptBatchTx(gomock.Any(), gomock.Any()).DoAndReturn(
-			func(_ context.Context, p repository.AcceptBatchParams) (domain.Batch, error) {
+			func(_ context.Context, p repository.AcceptBatchParams) (domain.Batch, bool, error) {
 				assert.Equal(t, "batch_X1", p.BatchID)
 				assert.Equal(t, "rider_002", p.RiderID)
 				assert.True(t, p.Now.Equal(testNow), "the clock's time")
-				return acceptedBatch("rider_002"), nil
+				return acceptedBatch("rider_002"), false, nil
 			})
 
 		rec := send(t, h, http.MethodPost, acceptPath("batch_X1"), `{"rider_id":"rider_002"}`)
@@ -55,7 +55,7 @@ func TestAcceptBatch_200(t *testing.T) {
 
 	t.Run("a retry by the same rider is the same 200 (idempotent)", func(t *testing.T) {
 		h, store := newStoreHandler(t)
-		store.EXPECT().AcceptBatchTx(gomock.Any(), gomock.Any()).Return(acceptedBatch("rider_002"), nil).Times(2)
+		store.EXPECT().AcceptBatchTx(gomock.Any(), gomock.Any()).Return(acceptedBatch("rider_002"), false, nil).Times(2)
 
 		first := send(t, h, http.MethodPost, acceptPath("batch_X1"), `{"rider_id":"rider_002"}`)
 		second := send(t, h, http.MethodPost, acceptPath("batch_X1"), `{"rider_id":"rider_002"}`)
@@ -82,7 +82,7 @@ func TestAcceptBatch_Errors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			h, store := newStoreHandler(t)
-			store.EXPECT().AcceptBatchTx(gomock.Any(), gomock.Any()).Return(domain.Batch{}, tc.err)
+			store.EXPECT().AcceptBatchTx(gomock.Any(), gomock.Any()).Return(domain.Batch{}, false, tc.err)
 
 			rec := send(t, h, http.MethodPost, acceptPath("batch_X1"), `{"rider_id":"rider_002"}`)
 

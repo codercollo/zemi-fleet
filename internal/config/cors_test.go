@@ -87,3 +87,27 @@ func TestMetricsEnabledFromEnvironmentVariable(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, cfg.MetricsEnabled)
 }
+
+func TestDocsEnabledDefaultsByEnvironment(t *testing.T) {
+	const key = "API_KEYS=tests=config-test-key-0123456789abcdef0123\n"
+	tests := []struct {
+		name, extra string
+		want        bool
+	}{
+		{"development", "APP_ENV=development\n", true},
+		{"staging", "APP_ENV=staging\n" + key, true},
+		{"production", "APP_ENV=production\n" + key, false},
+		{"production, switched on", "APP_ENV=production\nDOCS_ENABLED=true\n" + key, true},
+		{"development, switched off", "DOCS_ENABLED=false\n", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			clearEnv(t)
+
+			cfg, err := Load(writeEnvFile(t, baseEnv+tc.extra))
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, cfg.DocsEnabled)
+		})
+	}
+}

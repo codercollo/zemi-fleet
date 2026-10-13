@@ -24,11 +24,12 @@ type Store interface {
 	ExecTx(ctx context.Context, fn func(q sqlc.Querier) error) error
 
 	// CreateBatchesTx forms batches near a rider and returns the open batches on offer to them
-	// (tx_create_batches.go).
-	CreateBatchesTx(ctx context.Context, arg CreateBatchesParams) ([]domain.Batch, error)
+	// (tx_create_batches.go), plus how many of them this call newly formed (the rest were already open).
+	CreateBatchesTx(ctx context.Context, arg CreateBatchesParams) (batches []domain.Batch, formed int, err error)
 
-	// AcceptBatchTx lets a rider claim an open batch exclusively (tx_accept_batch.go).
-	AcceptBatchTx(ctx context.Context, arg AcceptBatchParams) (domain.Batch, error)
+	// AcceptBatchTx lets a rider claim an open batch exclusively (tx_accept_batch.go). alreadyHeld is true when the
+	// rider had accepted this batch before: an idempotent retry that changed nothing.
+	AcceptBatchTx(ctx context.Context, arg AcceptBatchParams) (batch domain.Batch, alreadyHeld bool, err error)
 
 	// ExpireBatchesTx expires stale open batches and releases their orders (tx_expire_batches.go).
 	ExpireBatchesTx(ctx context.Context, now time.Time) (int, error)

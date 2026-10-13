@@ -60,12 +60,13 @@ func (mr *MockStoreMockRecorder) AcceptBatch(ctx, arg any) *gomock.Call {
 }
 
 // AcceptBatchTx mocks base method.
-func (m *MockStore) AcceptBatchTx(ctx context.Context, arg repository.AcceptBatchParams) (domain.Batch, error) {
+func (m *MockStore) AcceptBatchTx(ctx context.Context, arg repository.AcceptBatchParams) (domain.Batch, bool, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "AcceptBatchTx", ctx, arg)
 	ret0, _ := ret[0].(domain.Batch)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret1, _ := ret[1].(bool)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // AcceptBatchTx indicates an expected call of AcceptBatchTx.
@@ -207,12 +208,13 @@ func (mr *MockStoreMockRecorder) CreateBatchStop(ctx, arg any) *gomock.Call {
 }
 
 // CreateBatchesTx mocks base method.
-func (m *MockStore) CreateBatchesTx(ctx context.Context, arg repository.CreateBatchesParams) ([]domain.Batch, error) {
+func (m *MockStore) CreateBatchesTx(ctx context.Context, arg repository.CreateBatchesParams) ([]domain.Batch, int, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "CreateBatchesTx", ctx, arg)
 	ret0, _ := ret[0].([]domain.Batch)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret1, _ := ret[1].(int)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // CreateBatchesTx indicates an expected call of CreateBatchesTx.

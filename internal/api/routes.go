@@ -26,7 +26,7 @@ func (s *Server) Routes() http.Handler { return s.router() }
 //	                 preflight is answered here; Vary: Origin is on every response
 //	accessLog        wraps the rest, so the line records the final status (rate-limited and panicked requests too)
 //	rateLimit        before any work is done for the client; /healthz is exempt
-//	requireAPIKey    after the limiter, so guessing keys is rate-limited; only GET /healthz is exempt; before any handler
+//	requireAPIKey    after the limiter, so guessing keys is rate-limited; only GET /healthz and the docs pages are exempt; before any handler
 //	                 or idempotency, so an unauthenticated request never reaches a service
 //	idempotency      on its two POST routes only, after everything above
 //	handlers
@@ -52,6 +52,12 @@ func (s *Server) router(extra ...func(*gin.Engine)) *gin.Engine {
 		r.Use(s.metricsMiddleware())
 	}
 	r.Use(s.requestID(), s.securityHeaders(), s.enableCORS(), s.accessLog(), s.rateLimit(), s.requireAPIKey())
+
+	// Documentation: public (no API key) but rate limited. Disabled means no routes (404).
+	if s.cfg.DocsEnabled {
+		r.GET(docsPath, s.docsHandler)
+		r.GET(specPath, s.specHandler)
+	}
 
 	// Behind the same chain as everything else: it needs the API key and is rate limited. Disabled means no route (404).
 	if s.cfg.MetricsEnabled {

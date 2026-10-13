@@ -117,6 +117,7 @@ services:
       # Exact origins (scheme://host[:port]); empty = no CORS headers.
       CORS_TRUSTED_ORIGINS: ${CORS_TRUSTED_ORIGINS:-}
       METRICS_ENABLED: ${METRICS_ENABLED:-true}
+      DOCS_ENABLED: ${DOCS_ENABLED:-true}
       # name=key pairs. The fallback is the PUBLISHED demo key (README, Postman environment), so the reviewer path
       # works out of the box; it is >= 32 characters (staging's minimum) and production refuses it. Set
       # STAGING_API_KEYS to real keys for anything that is not a demo. The variable is not called API_KEYS on

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/codercollo/zemi-fleet/internal/batching"
 	"github.com/codercollo/zemi-fleet/internal/clock"
@@ -71,7 +70,7 @@ func (s *BatchService) CreateBatches(ctx context.Context, in CreateBatchesInput)
 	size := min(in.MaxOrders, spare)
 
 	now := s.clock.Now()
-	batches, err := s.store.CreateBatchesTx(ctx, repository.CreateBatchesParams{
+	batches, formed, err := s.store.CreateBatchesTx(ctx, repository.CreateBatchesParams{
 		RiderID:       rider.ID,
 		RiderLocation: in.RiderLocation,
 		Now:           now,
@@ -89,13 +88,7 @@ func (s *BatchService) CreateBatches(ctx context.Context, in CreateBatchesInput)
 		return nil, err
 	}
 
-	// The transaction returns every open batch on offer, new or not. The ones it just formed carry this call's time.
-	formed := 0
-	for _, b := range batches {
-		if sameInstant(b.CreatedAt, now) {
-			formed++
-		}
-	}
+	// The transaction returns every open batch on offer, new or not; formed counts only the ones it just created.
 	s.metrics.BatchesFormed(formed)
 
 	offers := make([]BatchOffer, 0, len(batches))
@@ -122,21 +115,18 @@ func (s *BatchService) CreateBatches(ctx context.Context, in CreateBatchesInput)
 // Errors: domain.ErrNotFound (rider or batch), ErrRiderUnavailable, ErrRiderAtCapacity, ErrBatchTaken.
 func (s *BatchService) Accept(ctx context.Context, batchID, riderID string) (domain.Batch, error) {
 	now := s.clock.Now()
-	batch, err := s.store.AcceptBatchTx(ctx, repository.AcceptBatchParams{BatchID: batchID, RiderID: riderID, Now: now})
+	batch, alreadyHeld, err := s.store.AcceptBatchTx(ctx, repository.AcceptBatchParams{BatchID: batchID, RiderID: riderID, Now: now})
 	switch {
 	case errors.Is(err, domain.ErrBatchTaken):
 		s.metrics.BatchAcceptConflict()
 	case errors.Is(err, domain.ErrRiderAtCapacity):
 		s.metrics.BatchCapacityRejection()
-	case err == nil && batch.AcceptedAt != nil && sameInstant(*batch.AcceptedAt, now):
-		// An idempotent retry by the winner also returns 200, but its accepted_at is the first call's time.
+	case err == nil && !alreadyHeld:
+		// An idempotent retry by the winner also returns 200, but it is not a second win.
 		s.metrics.BatchAccepted()
 	}
 	return batch, err
 }
-
-// sameInstant reports whether two times are the same moment up to the database's microsecond precision.
-func sameInstant(a, b time.Time) bool { return a.Sub(b).Abs() < time.Millisecond }
 
 // ListBatchesInput is a validated GET /batches request.
 type ListBatchesInput struct {

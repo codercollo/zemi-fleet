@@ -60,6 +60,10 @@ type Config struct {
 	// development and staging and false in production, decided in Load. Disabled means the route is not registered (404).
 	MetricsEnabled bool `mapstructure:"-"`
 
+	// DocsEnabled turns on GET /docs (Swagger UI) and GET /openapi.yaml. When DOCS_ENABLED is not set it is true in
+	// development and staging and false in production. Disabled means the routes are not registered (404).
+	DocsEnabled bool `mapstructure:"-"`
+
 	// ShutdownTimeout is how long SIGINT/SIGTERM waits for in-flight requests to finish before the server gives up.
 	ShutdownTimeout time.Duration `mapstructure:"SHUTDOWN_TIMEOUT"`
 
@@ -246,10 +250,8 @@ func Load(path string) (Config, error) {
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
 	}
-	cfg.MetricsEnabled = cfg.Env != EnvProduction
-	if v.IsSet("METRICS_ENABLED") {
-		cfg.MetricsEnabled = v.GetBool("METRICS_ENABLED")
-	}
+	cfg.MetricsEnabled = onUnlessProduction(v, "METRICS_ENABLED", cfg.Env)
+	cfg.DocsEnabled = onUnlessProduction(v, "DOCS_ENABLED", cfg.Env)
 	cfg.APIKeys, _ = parseAPIKeys(cfg.APIKeysRaw, cfg.Env) // validate() has already reported any problem
 	cfg.APIKeysRaw = ""
 	return cfg, nil
@@ -305,6 +307,15 @@ func (c Config) validate() error {
 	errs = append(errs, c.Batch.validate()...)
 	errs = append(errs, c.Match.validate()...)
 	return errors.Join(errs...)
+}
+
+// onUnlessProduction reads a boolean switch whose default depends on the environment: on in development and staging,
+// off in production, unless the variable is set. It is not in defaults because a default cannot depend on APP_ENV.
+func onUnlessProduction(v *viper.Viper, key, env string) bool {
+	if v.IsSet(key) {
+		return v.GetBool(key)
+	}
+	return env != EnvProduction
 }
 
 // Location returns the business time zone. Load has already validated it, so the UTC

@@ -1,0 +1,1145 @@
+openapi: 3.0.3
+info:
+  title: Zemi Fleet V2 API
+  version: 2.0.0
+  description: |
+    REST API behind the Zemi Fleet rider app: order batching, proximity matching and preference matching.
+
+    **Conventions**
+
+    * Every route except `GET /healthz` and these documentation pages needs the `X-API-Key` header.
+    * Success bodies are an object with one named key (`{"order": ...}`) or, for the matching endpoints, the shape in the
+      brief. Errors are always `{"error": ...}`: a string, or an object of field name to message for validation failures.
+    * Money is in KES with at most two decimals. Distances are in kilometres, bearings in degrees `[0, 360)`.
+    * Every timestamp is UTC, RFC 3339 with a `Z` suffix.
+    * Every response carries an `X-Request-ID` (yours is echoed when it is 1 to 64 characters from `A-Za-z0-9._-`).
+    * Each client IP is rate limited; over the limit the answer is `429` with `Retry-After`.
+    * `POST /orders` and `POST /orders/batch` accept an `Idempotency-Key` header, so a retry never creates a second order or batch.
+    * `PUT /riders/{id}/preferences`, `PATCH /riders/{id}/location` and `PATCH /riders/{id}/availability` accept
+      `X-Expected-Version` for optimistic locking; a stale version is `409`.
+  contact:
+    name: Zemi Africa
+servers:
+  - url: /api/v2
+    description: This server
+security:
+  - ApiKeyAuth: []
+tags:
+  - name: Health
+  - name: Orders
+  - name: Order Batching
+  - name: Batches
+  - name: Proximity Matching
+  - name: Rider Matching
+  - name: Riders
+  - name: Operations
+  - name: Documentation
+paths:
+  /healthz:
+    get:
+      tags: [Health]
+      summary: Health check
+      description: Reports the service and database state. Needs no API key and is exempt from rate limiting, so load balancers can poll it.
+      operationId: healthz
+      security: []
+      responses:
+        '200':
+          description: The service and the database are up.
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Health'}
+              example:
+                status: available
+                system_info: {environment: staging, version: v0.1.0-11-gbaa5f5f, database: up}
+        '503':
+          description: The database does not answer.
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Health'}
+              example:
+                status: unavailable
+                system_info: {environment: staging, version: v0.1.0-11-gbaa5f5f, database: down}
+  /orders:
+    post:
+      tags: [Orders]
+      summary: Create an order
+      description: |
+        Stores a new `pending` order. The pickup point is the vendor's location; trip distance and bearing are computed once.
+        The rider earns the configured share of `delivery_fee_kes` (90% by default), snapshotted on the order.
+        The delivery must be at least `ORDER_MIN_TRIP_M` (50 m by default) from the vendor.
+      operationId: createOrder
+      parameters:
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+        - {$ref: '#/components/parameters/RequestIdHeader'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateOrderRequest'}
+            example:
+              vendor_id: ven_001
+              category: electronics
+              delivery_location: {lat: -1.25, lng: 36.83}
+              value_kes: 4500.5
+              delivery_fee_kes: 250
+      responses:
+        '201':
+          description: 'The order was created (or, with `Idempotent-Replay: true`, this is the stored answer to an earlier identical request).'
+          headers:
+            Location: {$ref: '#/components/headers/Location'}
+            Idempotent-Replay: {$ref: '#/components/headers/IdempotentReplay'}
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OrderResponse'}
+              example:
+                order:
+                  id: ord_01M4VAZKXGA1E9CMZT8A
+                  vendor_id: ven_001
+                  category: electronics
+                  status: pending
+                  pickup_location: {lat: -1.2635, lng: 36.803}
+                  delivery_location: {lat: -1.25, lng: 36.83}
+                  trip_distance_km: 3.356
+                  trip_bearing_degrees: 63.4
+                  value_kes: 4500.5
+                  delivery_fee_kes: 250
+                  rider_payout_percent: 90
+                  estimated_earnings_kes: 225
+                  platform_fee_kes: 25
+                  batch_id: null
+                  rider_id: null
+                  created_at: '2026-10-13T19:14:14.06467Z'
+                  version: 1
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '409':
+          description: Another request with the same `Idempotency-Key` is still being processed; retry shortly.
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+              example: {error: 'a request with this Idempotency-Key is still being processed; retry shortly'}
+        '422':
+          description: A field is invalid, the vendor or category does not exist, the trip is too short, or the `Idempotency-Key` was already used with a different body.
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+              examples:
+                invalidFields:
+                  summary: Invalid fields
+                  value:
+                    error: {delivery_fee_kes: must be provided, value_kes: must be greater than zero}
+                keyReused:
+                  summary: Idempotency-Key reused with a different body
+                  value:
+                    error: {idempotency_key: this key was already used with a different request body}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '500': {$ref: '#/components/responses/ServerError'}
+  /orders/{id}:
+    get:
+      tags: [Orders]
+      summary: Get an order
+      operationId: getOrder
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, pattern: '^ord_[0-9A-Za-z]{1,40}$'}
+          example: ord_01M4VAZKXGA1E9CMZT8A
+      responses:
+        '200':
+          description: The order.
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OrderResponse'}
+              example:
+                order:
+                  id: ord_01M4VAZKXGA1E9CMZT8A
+                  vendor_id: ven_001
+                  category: electronics
+                  status: pending
+                  pickup_location: {lat: -1.2635, lng: 36.803}
+                  delivery_location: {lat: -1.25, lng: 36.83}
+                  trip_distance_km: 3.356
+                  trip_bearing_degrees: 63.4
+                  value_kes: 4500.5
+                  delivery_fee_kes: 250
+                  rider_payout_percent: 90
+                  estimated_earnings_kes: 225
+                  platform_fee_kes: 25
+                  batch_id: null
+                  rider_id: null
+                  created_at: '2026-10-13T19:14:14.06467Z'
+                  version: 1
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '500': {$ref: '#/components/responses/ServerError'}
+  /orders/batch:
+    post:
+      tags: [Order Batching]
+      summary: Form and offer batches near a rider
+      description: |
+        Groups pending orders into batches of up to `max_orders` (at most 5): pickups within `radius_km` (at most 2) of
+        every other pickup in the batch, trips heading in similar directions, oldest orders first (FIFO). Returns every
+        open batch on offer to the rider, nearest first, each with a suggested pickup and delivery sequence, total
+        distance, the rider's earnings and a `route_optimization_score` in `[0, 1]`.
+
+        Batches are open offers: nobody owns one until a rider accepts it (`POST /batches/{id}/accept`). The batch size is
+        capped by the rider's spare capacity. A rider who is off shift or at capacity gets an empty list.
+      operationId: createBatches
+      parameters:
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+        - {$ref: '#/components/parameters/RequestIdHeader'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateBatchesRequest'}
+            example:
+              rider_id: rider_001
+              rider_location: {latitude: -1.266, longitude: 36.806}
+              max_orders: 5
+              radius_km: 2
+      responses:
+        '200':
+          description: The batches on offer (an empty list when there are none).
+          headers:
+            Idempotent-Replay: {$ref: '#/components/headers/IdempotentReplay'}
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BatchesResponse'}
+              examples:
+                batches:
+                  summary: One batch of three orders
+                  value:
+                    batches:
+                      - batch_id: batch_01M4VAZM1FP5814BSE24
+                        orders:
+                          - order_id: ord_034
+                            pickup: {lat: -1.266, lng: 36.8045}
+                            delivery: {lat: -1.275, lng: 36.846}
+                            distance_km: 4.72
+                            estimated_time_min: 29
+                          - order_id: ord_035
+                            pickup: {lat: -1.2635, lng: 36.803}
+                            delivery: {lat: -1.222, lng: 36.896}
+                            distance_km: 11.32
+                            estimated_time_min: 56
+                          - order_id: ord_01M4VAZKXGA1E9CMZT8A
+                            pickup: {lat: -1.2635, lng: 36.803}
+                            delivery: {lat: -1.25, lng: 36.83}
+                            distance_km: 3.36
+                            estimated_time_min: 18
+                        sequence:
+                          - {seq: 1, type: pickup, order_id: ord_034, location: {lat: -1.266, lng: 36.8045}}
+                          - {seq: 2, type: pickup, order_id: ord_035, location: {lat: -1.2635, lng: 36.803}}
+                          - {seq: 3, type: pickup, order_id: ord_01M4VAZKXGA1E9CMZT8A, location: {lat: -1.2635, lng: 36.803}}
+                          - {seq: 4, type: delivery, order_id: ord_01M4VAZKXGA1E9CMZT8A, location: {lat: -1.25, lng: 36.83}}
+                          - {seq: 5, type: delivery, order_id: ord_034, location: {lat: -1.275, lng: 36.846}}
+                          - {seq: 6, type: delivery, order_id: ord_035, location: {lat: -1.222, lng: 36.896}}
+                        total_distance_km: 15.08
+                        distance_saved_km: 4.32
+                        estimated_earnings_kes: 837
+                        route_optimization_score: 0.814
+                        distance_to_first_pickup_km: 0.17
+                        expires_at: '2026-10-13T19:24:14.191606Z'
+                none:
+                  summary: Nothing to offer (no pending orders nearby, or the rider is at capacity)
+                  value: {batches: []}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: Another request with the same `Idempotency-Key` is still being processed; retry shortly.
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+              example: {error: 'a request with this Idempotency-Key is still being processed; retry shortly'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '500': {$ref: '#/components/responses/ServerError'}
+  /orders/match-riders:
+    post:
+      tags: [Rider Matching]
+      summary: Rank riders for an order
+      description: |
+        Ranks the riders who suit an order, best match first. Send an existing `order_id`, or `order_details` for an order that
+        is not saved yet (details win when both are sent). Preferences are hard filters (availability, spare capacity, minimum
+        order value, preferred categories and areas, and a fresh location that is too far away); an empty preference accepts
+        everything. The score ranks the survivors by category, area, proximity and acceptance rate. `distance_to_pickup_km`
+        is `null` when the rider's location is older than `RIDER_LOCATION_STALE_AFTER`.
+      operationId: matchRiders
+      parameters:
+        - {$ref: '#/components/parameters/RequestIdHeader'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/MatchRidersRequest'}
+            examples:
+              byOrderId:
+                summary: A saved order
+                value: {order_id: ord_01M4VAZKXGA1E9CMZT8A}
+              byDetails:
+                summary: An order that is not saved yet
+                value:
+                  order_details:
+                    category: electronics
+                    pickup_location: {lat: -1.2635, lng: 36.803}
+                    delivery_location: {lat: -1.25, lng: 36.83}
+                    value_kes: 4500
+      responses:
+        '200':
+          description: The ranked riders (an empty list when nobody qualifies).
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MatchRidersResponse'}
+              example:
+                matching_riders:
+                  - {rider_id: rider_001, match_score: 0.94, matching_preferences: [electronics, Parklands, Westlands], current_orders_count: 0, distance_to_pickup_km: 0.43, acceptance_rate: 0.775}
+                  - {rider_id: rider_004, match_score: 0.74, matching_preferences: [], current_orders_count: 1, distance_to_pickup_km: 0.23, acceptance_rate: 0.917}
+                  - {rider_id: rider_008, match_score: 0.33, matching_preferences: [], current_orders_count: 0, distance_to_pickup_km: null, acceptance_rate: 0}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '500': {$ref: '#/components/responses/ServerError'}
+  /batches:
+    get:
+      tags: [Batches]
+      summary: List open batches near a point
+      description: Read-only. Lists open, unexpired batches whose first pickup is within `radius_km` of the point, nearest first, paginated.
+      operationId: listBatches
+      parameters:
+        - {name: lat, in: query, required: true, schema: {type: number, minimum: -90, maximum: 90}, example: -1.266}
+        - {name: lng, in: query, required: true, schema: {type: number, minimum: -180, maximum: 180}, example: 36.806}
+        - name: radius_km
+          in: query
+          description: Search radius; defaults to `BATCH_VISIBILITY_RADIUS_KM` (3) and may not exceed `BATCH_SEARCH_RADIUS_KM` (5).
+          schema: {type: number, exclusiveMinimum: true, minimum: 0, maximum: 5}
+          example: 3
+        - {name: page, in: query, schema: {type: integer, minimum: 1, default: 1}}
+        - {name: page_size, in: query, schema: {type: integer, minimum: 1, maximum: 50, default: 20}}
+        - {$ref: '#/components/parameters/RequestIdHeader'}
+      responses:
+        '200':
+          description: One page of batches. `metadata` is empty when there are none.
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ListBatchesResponse'}
+              examples:
+                page:
+                  summary: A page with one batch
+                  value:
+                    batches:
+                      - batch_id: batch_01M4VAZM1F0M6Y0G4FYQ
+                        orders:
+                          - order_id: ord_036
+                            pickup: {lat: -1.266, lng: 36.8045}
+                            delivery: {lat: -1.315, lng: 36.8}
+                            distance_km: 5.47
+                            estimated_time_min: 21
+                          - order_id: ord_040
+                            pickup: {lat: -1.266, lng: 36.8045}
+                            delivery: {lat: -1.315, lng: 36.8}
+                            distance_km: 5.47
+                            estimated_time_min: 23
+                        sequence:
+                          - {seq: 1, type: pickup, order_id: ord_036, location: {lat: -1.266, lng: 36.8045}}
+                          - {seq: 2, type: pickup, order_id: ord_040, location: {lat: -1.266, lng: 36.8045}}
+                          - {seq: 3, type: delivery, order_id: ord_036, location: {lat: -1.315, lng: 36.8}}
+                          - {seq: 4, type: delivery, order_id: ord_040, location: {lat: -1.315, lng: 36.8}}
+                        total_distance_km: 5.47
+                        distance_saved_km: 5.47
+                        estimated_earnings_kes: 405
+                        route_optimization_score: 0.953
+                        distance_to_first_pickup_km: 0.17
+                        expires_at: '2026-10-13T19:24:14.191606Z'
+                    metadata: {current_page: 1, page_size: 20, first_page: 1, last_page: 1, total_records: 1}
+                empty:
+                  summary: Nothing on offer
+                  value: {batches: [], metadata: {}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '500': {$ref: '#/components/responses/ServerError'}
+  /batches/{id}/accept:
+    post:
+      tags: [Batches]
+      summary: Accept a batch
+      description: |
+        Claims an open batch for the rider. The first rider to accept gets it exclusively; every later rider gets `409`.
+        Accepting a batch you already hold is an idempotent `200`. A rider without room for the batch's orders gets `422`.
+      operationId: acceptBatch
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, pattern: '^batch_[0-9A-Za-z]{1,40}$'}
+          example: batch_01M4VAZM1FP5814BSE24
+        - {$ref: '#/components/parameters/RequestIdHeader'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AcceptBatchRequest'}
+            example: {rider_id: rider_001}
+      responses:
+        '200':
+          description: The batch now belongs to the rider.
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AcceptedBatchResponse'}
+              example:
+                batch:
+                  batch_id: batch_01M4VAZM1FP5814BSE24
+                  status: accepted
+                  rider_id: rider_001
+                  accepted_at: '2026-10-13T19:14:14.450481Z'
+                  orders:
+                    - order_id: ord_036
+                      pickup: {lat: -1.266, lng: 36.8045}
+                      delivery: {lat: -1.315, lng: 36.8}
+                      distance_km: 5.47
+                      estimated_time_min: 21
+                  sequence:
+                    - {seq: 1, type: pickup, order_id: ord_036, location: {lat: -1.266, lng: 36.8045}}
+                    - {seq: 2, type: delivery, order_id: ord_036, location: {lat: -1.315, lng: 36.8}}
+                  total_distance_km: 5.47
+                  distance_saved_km: 0
+                  estimated_earnings_kes: 202.5
+                  route_optimization_score: 1
+                  expires_at: '2026-10-13T19:24:14.191606Z'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: Another rider got there first, or the batch expired.
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+              example: {error: 'batch is no longer available'}
+        '422':
+          description: The rider id is malformed, the rider is not available, or the rider has no capacity for the batch's orders.
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+              examples:
+                atCapacity:
+                  value: {error: 'the rider does not have capacity for these orders'}
+                unavailable:
+                  value: {error: 'rider is not available'}
+                invalid:
+                  value: {error: {rider_id: must be provided}}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '500': {$ref: '#/components/responses/ServerError'}
+  /riders/match-orders:
+    post:
+      tags: [Proximity Matching]
+      summary: Find pending pickups ahead of a moving rider
+      description: |
+        Finds pending pickups within `CONE_RADIUS_KM` (1 km) of the rider and inside the cone of ±`CONE_HALF_ANGLE_DEG`
+        (30°, a 60° cone) around their bearing, sorted by distance and then by order age. Also records the rider's position.
+
+        The cone is skipped (full circle, `direction_filter_applied` false, `angle_from_rider_degrees` null) when no bearing is
+        sent or the speed is below `CONE_MIN_SPEED_KMH`, because a heading at walking pace is noise. Capacity comes from the
+        database: `current_orders_count` in the request is validated but never trusted.
+      operationId: matchOrders
+      parameters:
+        - {$ref: '#/components/parameters/RequestIdHeader'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/MatchOrdersRequest'}
+            example:
+              rider_id: rider_001
+              current_location: {latitude: -1.266, longitude: 36.806}
+              bearing_degrees: 60
+              speed_kmh: 22
+              current_orders_count: 0
+      responses:
+        '200':
+          description: The matching pickups (empty when none, or when the rider is unavailable or at capacity).
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MatchOrdersResponse'}
+              examples:
+                matches:
+                  value:
+                    matching_orders:
+                      - order_id: ord_034
+                        pickup_location: {lat: -1.266, lng: 36.8045}
+                        distance_from_rider_km: 0.17
+                        angle_from_rider_degrees: 4.1
+                        order_age_minutes: 12
+                        estimated_earnings_kes: 247.5
+                    can_accept_more_orders: true
+                    max_additional_orders: 5
+                    direction_filter_applied: true
+                none:
+                  value:
+                    matching_orders: []
+                    can_accept_more_orders: true
+                    max_additional_orders: 5
+                    direction_filter_applied: true
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '500': {$ref: '#/components/responses/ServerError'}
+  /riders/{id}:
+    get:
+      tags: [Riders]
+      summary: Get a rider
+      operationId: getRider
+      parameters:
+        - {$ref: '#/components/parameters/RiderId'}
+      responses:
+        '200': {$ref: '#/components/responses/Rider'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '500': {$ref: '#/components/responses/ServerError'}
+  /riders/{id}/preferences:
+    put:
+      tags: [Riders]
+      summary: Replace a rider's preferences
+      description: Replaces the minimum order value and the preferred categories and areas. An empty list means "no preference" (accepts everything).
+      operationId: updatePreferences
+      parameters:
+        - {$ref: '#/components/parameters/RiderId'}
+        - {$ref: '#/components/parameters/ExpectedVersion'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdatePreferencesRequest'}
+            example:
+              min_order_value_kes: 1000
+              preferred_categories: [electronics, documents]
+              preferred_areas: [area_002, area_007]
+      responses:
+        '200': {$ref: '#/components/responses/Rider'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/EditConflict'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '500': {$ref: '#/components/responses/ServerError'}
+  /riders/{id}/location:
+    patch:
+      tags: [Riders]
+      summary: Report a rider's position
+      description: |
+        Stores the position. `bearing_degrees` and `speed_kmh` describe this one reading, so when omitted they are stored as
+        unknown (`null`), not kept from the previous reading.
+      operationId: updateLocation
+      parameters:
+        - {$ref: '#/components/parameters/RiderId'}
+        - {$ref: '#/components/parameters/ExpectedVersion'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateLocationRequest'}
+            example: {latitude: -1.265, longitude: 36.8038, bearing_degrees: 95, speed_kmh: 22}
+      responses:
+        '200': {$ref: '#/components/responses/Rider'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/EditConflict'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '500': {$ref: '#/components/responses/ServerError'}
+  /riders/{id}/availability:
+    patch:
+      tags: [Riders]
+      summary: Go on or off shift
+      operationId: updateAvailability
+      parameters:
+        - {$ref: '#/components/parameters/RiderId'}
+        - {$ref: '#/components/parameters/ExpectedVersion'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateAvailabilityRequest'}
+            example: {is_available: true}
+      responses:
+        '200': {$ref: '#/components/responses/Rider'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/EditConflict'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '500': {$ref: '#/components/responses/ServerError'}
+  /debug/vars:
+    servers:
+      - url: /
+    get:
+      tags: [Operations]
+      summary: Metrics (expvar)
+      description: |
+        Process and business metrics as JSON. Needs the API key and is rate limited like every other route. It exists only
+        when `METRICS_ENABLED` is on (the default in development and staging, off in production); otherwise it is a `404`.
+        `database` holds the pgx pool statistics. The business counters move only after the work succeeded.
+      operationId: metrics
+      parameters:
+        - {$ref: '#/components/parameters/RequestIdHeader'}
+      responses:
+        '200':
+          description: The published values.
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Metrics'}
+              example:
+                version: v0.1.0-11-gbaa5f5f
+                goroutines: 8
+                timestamp: 1791917368
+                database: {total_conns: 3, idle_conns: 3, acquired_conns: 0, acquire_count: 17, empty_acquire_count: 1, canceled_acquire_count: 0, acquire_duration_ms: 114}
+                total_requests_received: 14
+                total_responses_sent: 13
+                total_processing_time_μs: 271637
+                total_responses_sent_by_status: {'200': 7, '201': 2, '401': 2, '404': 1, '409': 1}
+                orders_created: 2
+                batches_formed: 9
+                batches_accepted: 1
+                batch_accept_conflicts: 1
+                batch_capacity_rejections: 0
+                cone_matches_served: 0
+                rider_matches_served: 0
+                idempotent_replays: 0
+                memstats: {}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '500': {$ref: '#/components/responses/ServerError'}
+  /docs:
+    servers:
+      - url: /
+    get:
+      tags: [Documentation]
+      summary: Swagger UI
+      description: This documentation. It needs no API key (use the Authorize button for "Try it out") but is rate limited. Exists only when `DOCS_ENABLED` is on (the default in development and staging).
+      operationId: docs
+      security: []
+      responses:
+        '200':
+          description: The Swagger UI page.
+          content:
+            text/html:
+              schema: {type: string}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /openapi.yaml:
+    servers:
+      - url: /
+    get:
+      tags: [Documentation]
+      summary: This OpenAPI document
+      operationId: openapiSpec
+      security: []
+      responses:
+        '200':
+          description: The OpenAPI 3.0.3 document.
+          content:
+            application/yaml:
+              schema: {type: string}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: A key from the server's `API_KEYS`. The demo stack accepts `zemi-demo-key-not-for-production-0001`.
+  parameters:
+    RiderId:
+      name: id
+      in: path
+      required: true
+      schema: {type: string, pattern: '^rider_[0-9A-Za-z]{1,40}$'}
+      example: rider_001
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      description: |
+        1 to 64 visible ASCII characters. The same key with the same body replays the first response
+        (`Idempotent-Replay: true`) instead of repeating the work; the same key with a different body is `422`; the same key
+        while the first request is still running is `409`. Only successful responses are stored. Keys are remembered for `IDEMPOTENCY_TTL` (24h).
+      schema: {type: string, pattern: '^[\x21-\x7E]{1,64}$'}
+      example: demo-order-0001
+    ExpectedVersion:
+      name: X-Expected-Version
+      in: header
+      description: The rider `version` the client last saw. When it is not the stored one the update is refused with `409`.
+      schema: {type: integer, minimum: 1}
+      example: 3
+    RequestIdHeader:
+      name: X-Request-ID
+      in: header
+      description: Your own trace ID, echoed back. 1 to 64 characters from `A-Za-z0-9._-`; anything else is replaced by a generated ID.
+      schema: {type: string, pattern: '^[A-Za-z0-9._-]{1,64}$'}
+      example: demo-trace-0001
+  headers:
+    RequestId:
+      description: The request's trace ID (yours, if it was acceptable).
+      schema: {type: string}
+    Location:
+      description: Path of the created resource.
+      schema: {type: string}
+      example: /api/v2/orders/ord_01M4VAZKXGA1E9CMZT8A
+    IdempotentReplay:
+      description: '`true` when this response was replayed from an earlier request with the same `Idempotency-Key`.'
+      schema: {type: string, enum: ['true']}
+    RetryAfter:
+      description: Seconds to wait before retrying.
+      schema: {type: integer, minimum: 1}
+  responses:
+    Rider:
+      description: The rider.
+      headers:
+        X-Request-ID: {$ref: '#/components/headers/RequestId'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/RiderResponse'}
+          example:
+            rider:
+              id: rider_001
+              full_name: Brian Otieno
+              phone: '+254722000001'
+              is_available: true
+              max_capacity: 5
+              current_orders_count: 3
+              max_additional_orders: 2
+              current_location: {lat: -1.266, lng: 36.806}
+              bearing_degrees: 60
+              speed_kmh: 22
+              location_updated_at: '2026-10-13T19:14:14.131506Z'
+              acceptance_rate: 0.653
+              preferences:
+                min_order_value_kes: 0
+                preferred_categories: [documents, electronics]
+                preferred_areas: [area_002, area_007]
+              version: 3
+    BadRequest:
+      description: The body is not valid JSON, has an unknown field or the wrong type, is too large, or a header (`Idempotency-Key`, `X-Expected-Version`) is malformed.
+      headers:
+        X-Request-ID: {$ref: '#/components/headers/RequestId'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+          example: {error: 'body contains badly-formed JSON (at character 11)'}
+    Unauthorized:
+      description: The `X-API-Key` header is missing or wrong (the same answer for both).
+      headers:
+        WWW-Authenticate:
+          description: How to authenticate.
+          schema: {type: string}
+        X-Request-ID: {$ref: '#/components/headers/RequestId'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+          example: {error: 'invalid or missing API key'}
+    NotFound:
+      description: The resource does not exist (a malformed ID is answered the same way), or the route is disabled.
+      headers:
+        X-Request-ID: {$ref: '#/components/headers/RequestId'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+          example: {error: 'the requested resource could not be found'}
+    EditConflict:
+      description: The rider changed since `X-Expected-Version` (or while the update ran). Read it again and retry.
+      headers:
+        X-Request-ID: {$ref: '#/components/headers/RequestId'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+          example: {error: 'unable to update the record due to an edit conflict, please try again'}
+    Unprocessable:
+      description: The body or query is well-formed but a field is invalid. The error is an object of field name to message.
+      headers:
+        X-Request-ID: {$ref: '#/components/headers/RequestId'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+          example: {error: {lat: must be a number, lng: must be provided}}
+    TooManyRequests:
+      description: This client IP is over its rate limit.
+      headers:
+        Retry-After: {$ref: '#/components/headers/RetryAfter'}
+        X-Request-ID: {$ref: '#/components/headers/RequestId'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+          example: {error: 'rate limit exceeded'}
+    ServerError:
+      description: Something failed on the server. Nothing internal is revealed; quote the `X-Request-ID` when reporting it.
+      headers:
+        X-Request-ID: {$ref: '#/components/headers/RequestId'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+          example: {error: 'the server encountered a problem and could not process your request'}
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          description: A message, or for validation failures an object of field name to message.
+          oneOf:
+            - type: string
+            - type: object
+              additionalProperties: {type: string}
+    Health:
+      type: object
+      required: [status, system_info]
+      additionalProperties: false
+      properties:
+        status: {type: string, enum: [available, unavailable]}
+        system_info:
+          type: object
+          required: [environment, version, database]
+          additionalProperties: false
+          properties:
+            environment: {type: string, enum: [development, staging, production]}
+            version: {type: string}
+            database: {type: string, enum: [up, down]}
+    Location:
+      type: object
+      required: [lat, lng]
+      additionalProperties: false
+      properties:
+        lat: {type: number, minimum: -90, maximum: 90}
+        lng: {type: number, minimum: -180, maximum: 180}
+    GeoPoint:
+      type: object
+      required: [latitude, longitude]
+      additionalProperties: false
+      properties:
+        latitude: {type: number, minimum: -90, maximum: 90}
+        longitude: {type: number, minimum: -180, maximum: 180}
+    CreateOrderRequest:
+      type: object
+      required: [vendor_id, category, delivery_location, value_kes, delivery_fee_kes]
+      additionalProperties: false
+      properties:
+        vendor_id: {type: string, pattern: '^ven_[0-9A-Za-z]{1,40}$', example: ven_001}
+        category: {type: string, pattern: '^[a-z][a-z_]{1,39}$', example: electronics}
+        delivery_location: {$ref: '#/components/schemas/Location'}
+        value_kes: {type: number, exclusiveMinimum: true, minimum: 0, maximum: 10000000, description: 'The goods'' value in KES, at most 2 decimals and at most ORDER_MAX_VALUE_KES.'}
+        delivery_fee_kes: {type: number, minimum: 0, maximum: 10000000, description: 'The delivery fee in KES, at most 2 decimals.'}
+    Order:
+      type: object
+      required: [id, vendor_id, category, status, pickup_location, delivery_location, trip_distance_km, trip_bearing_degrees, value_kes, delivery_fee_kes, rider_payout_percent, estimated_earnings_kes, platform_fee_kes, batch_id, rider_id, created_at, version]
+      additionalProperties: false
+      properties:
+        id: {type: string, pattern: '^ord_[0-9A-Za-z]{1,40}$'}
+        vendor_id: {type: string}
+        category: {type: string}
+        status: {type: string, enum: [pending, batched, assigned, picked_up, delivered, cancelled]}
+        pickup_location: {$ref: '#/components/schemas/Location'}
+        delivery_location: {$ref: '#/components/schemas/Location'}
+        trip_distance_km: {type: number, minimum: 0}
+        trip_bearing_degrees: {type: number, minimum: 0, exclusiveMaximum: true, maximum: 360}
+        value_kes: {type: number}
+        delivery_fee_kes: {type: number}
+        rider_payout_percent: {type: number, minimum: 0, maximum: 100, description: 'The rider''s share of the delivery fee, snapshotted on the order.'}
+        estimated_earnings_kes: {type: number, description: 'The rider''s earnings (delivery fee times the payout share).'}
+        platform_fee_kes: {type: number}
+        batch_id: {type: string, nullable: true}
+        rider_id: {type: string, nullable: true}
+        created_at: {type: string, format: date-time}
+        version: {type: integer, minimum: 1}
+    OrderResponse:
+      type: object
+      required: [order]
+      additionalProperties: false
+      properties:
+        order: {$ref: '#/components/schemas/Order'}
+    Preferences:
+      type: object
+      required: [min_order_value_kes, preferred_categories, preferred_areas]
+      additionalProperties: false
+      properties:
+        min_order_value_kes: {type: number, minimum: 0}
+        preferred_categories: {type: array, items: {type: string}}
+        preferred_areas: {type: array, items: {type: string}}
+    Rider:
+      type: object
+      required: [id, full_name, phone, is_available, max_capacity, current_orders_count, max_additional_orders, current_location, bearing_degrees, speed_kmh, location_updated_at, acceptance_rate, preferences, version]
+      additionalProperties: false
+      properties:
+        id: {type: string, pattern: '^rider_[0-9A-Za-z]{1,40}$'}
+        full_name: {type: string}
+        phone: {type: string, pattern: '^\+254[0-9]{9}$'}
+        is_available: {type: boolean}
+        max_capacity: {type: integer, minimum: 1, maximum: 5}
+        current_orders_count: {type: integer, minimum: 0, maximum: 5}
+        max_additional_orders: {type: integer, minimum: 0, maximum: 5, description: 'max_capacity minus current_orders_count.'}
+        current_location:
+          allOf: [{$ref: '#/components/schemas/Location'}]
+          nullable: true
+        bearing_degrees: {type: number, nullable: true, minimum: 0, maximum: 360}
+        speed_kmh: {type: number, nullable: true, minimum: 0}
+        location_updated_at: {type: string, format: date-time, nullable: true}
+        acceptance_rate: {type: number, minimum: 0, maximum: 1}
+        preferences: {$ref: '#/components/schemas/Preferences'}
+        version: {type: integer, minimum: 1, description: 'Send it back as `X-Expected-Version` for optimistic locking.'}
+    RiderResponse:
+      type: object
+      required: [rider]
+      additionalProperties: false
+      properties:
+        rider: {$ref: '#/components/schemas/Rider'}
+    UpdatePreferencesRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        min_order_value_kes: {type: number, minimum: 0, maximum: 10000000, description: 'Omitted means 0.'}
+        preferred_categories: {type: array, maxItems: 50, uniqueItems: true, items: {type: string, pattern: '^[a-z][a-z_]{1,39}$'}}
+        preferred_areas: {type: array, maxItems: 50, uniqueItems: true, items: {type: string, pattern: '^area_[0-9A-Za-z]{1,40}$'}}
+    UpdateLocationRequest:
+      type: object
+      required: [latitude, longitude]
+      additionalProperties: false
+      properties:
+        latitude: {type: number, minimum: -90, maximum: 90}
+        longitude: {type: number, minimum: -180, maximum: 180}
+        bearing_degrees: {type: number, minimum: 0, maximum: 360, exclusiveMaximum: true, description: 'Omitted means unknown.'}
+        speed_kmh: {type: number, minimum: 0, maximum: 200, description: 'Omitted means unknown.'}
+    UpdateAvailabilityRequest:
+      type: object
+      required: [is_available]
+      additionalProperties: false
+      properties:
+        is_available: {type: boolean}
+    CreateBatchesRequest:
+      type: object
+      required: [rider_id, rider_location, max_orders, radius_km]
+      additionalProperties: false
+      properties:
+        rider_id: {type: string, pattern: '^rider_[0-9A-Za-z]{1,40}$'}
+        rider_location: {$ref: '#/components/schemas/GeoPoint'}
+        max_orders: {type: integer, minimum: 1, maximum: 5}
+        radius_km: {type: number, exclusiveMinimum: true, minimum: 0, maximum: 2, description: 'The largest distance between any two pickups in a batch.'}
+    BatchOrder:
+      type: object
+      required: [order_id, pickup, delivery, distance_km, estimated_time_min]
+      additionalProperties: false
+      properties:
+        order_id: {type: string}
+        pickup: {$ref: '#/components/schemas/Location'}
+        delivery: {$ref: '#/components/schemas/Location'}
+        distance_km: {type: number, minimum: 0, description: 'The order''s own trip, pickup to delivery.'}
+        estimated_time_min: {type: integer, minimum: 0, description: 'Minutes from the start of the route until this order is delivered, rounded up.'}
+    Stop:
+      type: object
+      required: [seq, type, order_id, location]
+      additionalProperties: false
+      properties:
+        seq: {type: integer, minimum: 1}
+        type: {type: string, enum: [pickup, delivery]}
+        order_id: {type: string}
+        location: {$ref: '#/components/schemas/Location'}
+    Batch:
+      type: object
+      required: [batch_id, orders, sequence, total_distance_km, distance_saved_km, estimated_earnings_kes, route_optimization_score, distance_to_first_pickup_km, expires_at]
+      additionalProperties: false
+      properties:
+        batch_id: {type: string, pattern: '^batch_[0-9A-Za-z]{1,40}$'}
+        orders: {type: array, minItems: 1, maxItems: 5, items: {$ref: '#/components/schemas/BatchOrder'}, description: 'In FIFO order (oldest first).'}
+        sequence: {type: array, minItems: 2, items: {$ref: '#/components/schemas/Stop'}, description: 'The suggested route; every pickup comes before its delivery.'}
+        total_distance_km: {type: number, minimum: 0}
+        distance_saved_km: {type: number, description: 'The sum of the orders'' own trips minus the route; negative when batching is longer.'}
+        estimated_earnings_kes: {type: number, minimum: 0}
+        route_optimization_score: {type: number, minimum: 0, maximum: 1, description: 'The mean per-order detour efficiency, 1 meaning no detour.'}
+        distance_to_first_pickup_km: {type: number, minimum: 0, description: 'From the requesting rider to the route''s first stop.'}
+        expires_at: {type: string, format: date-time}
+    BatchesResponse:
+      type: object
+      required: [batches]
+      additionalProperties: false
+      properties:
+        batches: {type: array, items: {$ref: '#/components/schemas/Batch'}}
+    Metadata:
+      type: object
+      description: Pagination details. Empty when there are no records.
+      additionalProperties: false
+      properties:
+        current_page: {type: integer}
+        page_size: {type: integer}
+        first_page: {type: integer}
+        last_page: {type: integer}
+        total_records: {type: integer}
+    ListBatchesResponse:
+      type: object
+      required: [batches, metadata]
+      additionalProperties: false
+      properties:
+        batches: {type: array, items: {$ref: '#/components/schemas/Batch'}}
+        metadata: {$ref: '#/components/schemas/Metadata'}
+    AcceptBatchRequest:
+      type: object
+      required: [rider_id]
+      additionalProperties: false
+      properties:
+        rider_id: {type: string, pattern: '^rider_[0-9A-Za-z]{1,40}$'}
+    AcceptedBatch:
+      type: object
+      required: [batch_id, status, rider_id, accepted_at, orders, sequence, total_distance_km, distance_saved_km, estimated_earnings_kes, route_optimization_score, expires_at]
+      additionalProperties: false
+      properties:
+        batch_id: {type: string}
+        status: {type: string, enum: [accepted]}
+        rider_id: {type: string}
+        accepted_at: {type: string, format: date-time}
+        orders: {type: array, items: {$ref: '#/components/schemas/BatchOrder'}}
+        sequence: {type: array, items: {$ref: '#/components/schemas/Stop'}}
+        total_distance_km: {type: number}
+        distance_saved_km: {type: number}
+        estimated_earnings_kes: {type: number}
+        route_optimization_score: {type: number}
+        expires_at: {type: string, format: date-time}
+    AcceptedBatchResponse:
+      type: object
+      required: [batch]
+      additionalProperties: false
+      properties:
+        batch: {$ref: '#/components/schemas/AcceptedBatch'}
+    MatchOrdersRequest:
+      type: object
+      required: [rider_id, current_location, current_orders_count]
+      additionalProperties: false
+      properties:
+        rider_id: {type: string, pattern: '^rider_[0-9A-Za-z]{1,40}$'}
+        current_location: {$ref: '#/components/schemas/GeoPoint'}
+        bearing_degrees: {type: number, minimum: 0, maximum: 360, exclusiveMaximum: true, description: 'The direction of travel. Omitted means unknown, so the full circle is searched.'}
+        speed_kmh: {type: number, minimum: 0, maximum: 200, description: 'Below CONE_MIN_SPEED_KMH the bearing is ignored.'}
+        current_orders_count: {type: integer, minimum: 0, maximum: 5, description: 'What the app believes. Validated and logged when it disagrees, never used for a decision.'}
+    MatchedOrder:
+      type: object
+      required: [order_id, pickup_location, distance_from_rider_km, angle_from_rider_degrees, order_age_minutes, estimated_earnings_kes]
+      additionalProperties: false
+      properties:
+        order_id: {type: string}
+        pickup_location: {$ref: '#/components/schemas/Location'}
+        distance_from_rider_km: {type: number, minimum: 0}
+        angle_from_rider_degrees: {type: number, nullable: true, description: 'Signed angle between the rider''s bearing and the pickup, in [-30, 30] by default; null when the direction filter was not applied.'}
+        order_age_minutes: {type: integer, minimum: 0}
+        estimated_earnings_kes: {type: number, minimum: 0}
+    MatchOrdersResponse:
+      type: object
+      required: [matching_orders, can_accept_more_orders, max_additional_orders, direction_filter_applied]
+      additionalProperties: false
+      properties:
+        matching_orders: {type: array, items: {$ref: '#/components/schemas/MatchedOrder'}}
+        can_accept_more_orders: {type: boolean}
+        max_additional_orders: {type: integer, minimum: 0, maximum: 5, description: 'max_capacity minus the orders the database says the rider holds.'}
+        direction_filter_applied: {type: boolean, description: 'False when the full circle was searched because the heading is unknown or unreliable.'}
+    OrderDetails:
+      type: object
+      required: [category, pickup_location, delivery_location, value_kes]
+      additionalProperties: false
+      properties:
+        category: {type: string, pattern: '^[a-z][a-z_]{1,39}$'}
+        pickup_location: {$ref: '#/components/schemas/Location'}
+        delivery_location: {$ref: '#/components/schemas/Location'}
+        value_kes: {type: number, exclusiveMinimum: true, minimum: 0, maximum: 10000000}
+    MatchRidersRequest:
+      type: object
+      additionalProperties: false
+      description: Send `order_id`, `order_details`, or both (details win).
+      anyOf:
+        - required: [order_id]
+        - required: [order_details]
+      properties:
+        order_id: {type: string, pattern: '^ord_[0-9A-Za-z]{1,40}$'}
+        order_details: {$ref: '#/components/schemas/OrderDetails'}
+    MatchedRider:
+      type: object
+      required: [rider_id, match_score, matching_preferences, current_orders_count, distance_to_pickup_km, acceptance_rate]
+      additionalProperties: false
+      properties:
+        rider_id: {type: string}
+        match_score: {type: number, minimum: 0, maximum: 1}
+        matching_preferences: {type: array, items: {type: string}, description: 'The categories and areas the rider explicitly prefers that match this order.'}
+        current_orders_count: {type: integer, minimum: 0, maximum: 5}
+        distance_to_pickup_km: {type: number, nullable: true, minimum: 0, description: 'Null when the rider''s location is unknown or stale.'}
+        acceptance_rate: {type: number, minimum: 0, maximum: 1}
+    MatchRidersResponse:
+      type: object
+      required: [matching_riders]
+      additionalProperties: false
+      properties:
+        matching_riders: {type: array, items: {$ref: '#/components/schemas/MatchedRider'}}
+    Metrics:
+      type: object
+      description: The published expvar values. Counters start at zero when the process starts.
+      required: [version, goroutines, timestamp, database, total_requests_received, total_responses_sent, total_processing_time_μs, total_responses_sent_by_status, orders_created, batches_formed, batches_accepted, batch_accept_conflicts, batch_capacity_rejections, cone_matches_served, rider_matches_served, idempotent_replays]
+      properties:
+        version: {type: string}
+        goroutines: {type: integer}
+        timestamp: {type: integer, description: 'Unix seconds.'}
+        memstats: {type: object, description: 'Go''s runtime.MemStats.'}
+        database:
+          type: object
+          description: pgxpool statistics.
+          properties:
+            total_conns: {type: integer}
+            idle_conns: {type: integer}
+            acquired_conns: {type: integer}
+            acquire_count: {type: integer}
+            empty_acquire_count: {type: integer}
+            canceled_acquire_count: {type: integer, description: 'Growing means requests gave up waiting for a connection (the pool is starved).'}
+            acquire_duration_ms: {type: integer}
+        total_requests_received: {type: integer}
+        total_responses_sent: {type: integer}
+        total_processing_time_μs: {type: integer}
+        total_responses_sent_by_status: {type: object, additionalProperties: {type: integer}}
+        orders_created: {type: integer}
+        batches_formed: {type: integer}
+        batches_accepted: {type: integer}
+        batch_accept_conflicts: {type: integer, description: 'Rising means riders are racing for the same batches.'}
+        batch_capacity_rejections: {type: integer}
+        cone_matches_served: {type: integer}
+        rider_matches_served: {type: integer}
+        idempotent_replays: {type: integer}

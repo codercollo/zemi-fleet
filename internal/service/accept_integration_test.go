@@ -16,6 +16,7 @@ import (
 
 	"github.com/codercollo/zemi-fleet/internal/config"
 	"github.com/codercollo/zemi-fleet/internal/domain"
+	"github.com/codercollo/zemi-fleet/internal/metrics"
 	"github.com/codercollo/zemi-fleet/internal/repository"
 )
 
@@ -358,4 +359,34 @@ func TestIntegration_AcceptanceRateReflectsOffersAndAccepts(t *testing.T) {
 
 	assert.Equal(t, 1, env.scalar(t, `SELECT count(*) FROM batch_offers WHERE rider_id = $1 AND batch_id = $2 AND accepted`, shown, five.ID))
 	assert.Equal(t, 1, env.scalar(t, `SELECT count(*) FROM batch_offers WHERE rider_id = $1 AND batch_id = $2 AND accepted IS NULL`, shown, two.ID), "the other offer stays unanswered")
+}
+
+// The counters come from the repository's explicit results, so they are exact even though the clock is frozen: every
+// batch below is created, and accepted, at one instant, which a timestamp comparison could not tell apart.
+func TestIntegration_MetricsAreExactWithAFrozenClock(t *testing.T) {
+	env := newBatchEnv(t, 7)
+	counters := metrics.New()
+	env.svc.WithMetrics(counters)
+	read := func(name string) string { return counters.Vars()[name].String() }
+	riderA, riderB := env.newRider(t), env.newRider(t)
+
+	first, err := env.svc.CreateBatches(context.Background(), env.request(riderA))
+	require.NoError(t, err)
+	require.Len(t, first, 2)
+	second, err := env.svc.CreateBatches(context.Background(), env.request(riderB)) // same instant: nothing new to form
+	require.NoError(t, err)
+	require.Len(t, second, 2, "rider B is offered the same two open batches")
+
+	assert.Equal(t, "2", read("batches_formed"), "two formed once, not four")
+
+	batchID := first[0].Batch.ID
+	_, err = env.svc.Accept(context.Background(), batchID, riderA)
+	require.NoError(t, err)
+	_, err = env.svc.Accept(context.Background(), batchID, riderA) // the idempotent retry, same instant
+	require.NoError(t, err)
+	_, err = env.svc.Accept(context.Background(), batchID, riderB)
+	require.ErrorIs(t, err, domain.ErrBatchTaken)
+
+	assert.Equal(t, "1", read("batches_accepted"), "the retry is not a second win")
+	assert.Equal(t, "1", read("batch_accept_conflicts"))
 }

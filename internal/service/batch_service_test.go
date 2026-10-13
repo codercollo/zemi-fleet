@@ -99,7 +99,7 @@ func TestCreateBatches_EffectiveSizeIsMinOfRequestAndCapacity(t *testing.T) {
 			f := newBatchFixture(t)
 			f.store.EXPECT().GetRider(gomock.Any(), "rider_001").Return(riderRow(tc.current, tc.capacity, true), nil)
 			f.store.EXPECT().CreateBatchesTx(gomock.Any(), gomock.Any()).DoAndReturn(
-				func(_ context.Context, p repository.CreateBatchesParams) ([]domain.Batch, error) {
+				func(_ context.Context, p repository.CreateBatchesParams) ([]domain.Batch, int, error) {
 					assert.Equal(t, tc.want, p.Batching.MaxOrders)
 					assert.Equal(t, "rider_001", p.RiderID)
 					assert.Equal(t, sarit, p.RiderLocation)
@@ -110,7 +110,7 @@ func TestCreateBatches_EffectiveSizeIsMinOfRequestAndCapacity(t *testing.T) {
 					assert.Equal(t, 2.0, p.Batching.StopDwellMin)
 					assert.Equal(t, 10*time.Minute, p.TTL)
 					assert.True(t, p.Now.Equal(testNow), "the clock's time")
-					return nil, nil
+					return nil, 0, nil
 				})
 
 			got, err := f.svc.CreateBatches(context.Background(), CreateBatchesInput{
@@ -131,9 +131,9 @@ func TestCreateBatches_UsesTheClockForExpiry(t *testing.T) {
 	var nows []time.Time
 	f.store.EXPECT().GetRider(gomock.Any(), gomock.Any()).Return(riderRow(0, 5, true), nil).Times(2)
 	f.store.EXPECT().CreateBatchesTx(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, p repository.CreateBatchesParams) ([]domain.Batch, error) {
+		func(_ context.Context, p repository.CreateBatchesParams) ([]domain.Batch, int, error) {
 			nows = append(nows, p.Now)
-			return nil, nil
+			return nil, 0, nil
 		}).Times(2)
 	in := CreateBatchesInput{RiderID: "rider_001", RiderLocation: sarit, MaxOrders: 5, RadiusKM: 2}
 
@@ -154,7 +154,7 @@ func TestCreateBatches_SortsByDistanceThenOldestOrder(t *testing.T) {
 	far := batchOf("b_far", domain.Location{Lat: sarit.Lat + 0.01, Lng: sarit.Lng}, testNow.Add(-120*time.Minute))
 	mid := batchOf("b_mid", domain.Location{Lat: sarit.Lat + 0.004, Lng: sarit.Lng}, testNow.Add(-30*time.Minute))
 	f.store.EXPECT().GetRider(gomock.Any(), gomock.Any()).Return(riderRow(0, 5, true), nil)
-	f.store.EXPECT().CreateBatchesTx(gomock.Any(), gomock.Any()).Return([]domain.Batch{far, nearNew, mid, nearOld}, nil)
+	f.store.EXPECT().CreateBatchesTx(gomock.Any(), gomock.Any()).Return([]domain.Batch{far, nearNew, mid, nearOld}, 0, nil)
 
 	got, err := f.svc.CreateBatches(context.Background(), CreateBatchesInput{RiderID: "rider_001", RiderLocation: sarit, MaxOrders: 5, RadiusKM: 2})
 
@@ -173,7 +173,7 @@ func TestCreateBatches_TransactionErrorIsReturned(t *testing.T) {
 	f := newBatchFixture(t)
 	boom := errors.New("boom")
 	f.store.EXPECT().GetRider(gomock.Any(), gomock.Any()).Return(riderRow(0, 5, true), nil)
-	f.store.EXPECT().CreateBatchesTx(gomock.Any(), gomock.Any()).Return(nil, boom)
+	f.store.EXPECT().CreateBatchesTx(gomock.Any(), gomock.Any()).Return(nil, 0, boom)
 
 	_, err := f.svc.CreateBatches(context.Background(), CreateBatchesInput{RiderID: "rider_001", MaxOrders: 5, RadiusKM: 2})
 
@@ -184,7 +184,7 @@ func TestAccept_PassesTheClockAndTheResultThrough(t *testing.T) {
 	f := newBatchFixture(t)
 	rider := "rider_002"
 	want := domain.Batch{ID: "batch_1", Status: domain.BatchAccepted, RiderID: &rider}
-	f.store.EXPECT().AcceptBatchTx(gomock.Any(), repository.AcceptBatchParams{BatchID: "batch_1", RiderID: "rider_002", Now: testNow}).Return(want, nil)
+	f.store.EXPECT().AcceptBatchTx(gomock.Any(), repository.AcceptBatchParams{BatchID: "batch_1", RiderID: "rider_002", Now: testNow}).Return(want, false, nil)
 
 	got, err := f.svc.Accept(context.Background(), "batch_1", "rider_002")
 
@@ -196,7 +196,7 @@ func TestAccept_DomainErrorsSurviveUnchanged(t *testing.T) {
 	for _, sentinel := range []error{domain.ErrNotFound, domain.ErrBatchTaken, domain.ErrRiderAtCapacity, domain.ErrRiderUnavailable} {
 		t.Run(sentinel.Error(), func(t *testing.T) {
 			f := newBatchFixture(t)
-			f.store.EXPECT().AcceptBatchTx(gomock.Any(), gomock.Any()).Return(domain.Batch{}, sentinel)
+			f.store.EXPECT().AcceptBatchTx(gomock.Any(), gomock.Any()).Return(domain.Batch{}, false, sentinel)
 
 			_, err := f.svc.Accept(context.Background(), "batch_1", "rider_002")
 
@@ -209,9 +209,9 @@ func TestAccept_UsesTheClockAtCallTime(t *testing.T) {
 	f := newBatchFixture(t)
 	var seen []time.Time
 	f.store.EXPECT().AcceptBatchTx(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, p repository.AcceptBatchParams) (domain.Batch, error) {
+		func(_ context.Context, p repository.AcceptBatchParams) (domain.Batch, bool, error) {
 			seen = append(seen, p.Now)
-			return domain.Batch{}, domain.ErrBatchTaken
+			return domain.Batch{}, false, domain.ErrBatchTaken
 		}).Times(2)
 
 	_, _ = f.svc.Accept(context.Background(), "b", "r")
@@ -267,20 +267,49 @@ func TestListBatches(t *testing.T) {
 	})
 }
 
-func TestCreateBatches_CountsOnlyNewlyFormedBatches(t *testing.T) {
-	f := newBatchFixture(t)
-	counters := metrics.New()
-	f.svc.WithMetrics(counters)
-	now := f.clk.Now()
-	f.store.EXPECT().GetRider(gomock.Any(), "rider_001").Return(riderRow(0, 5, true), nil)
-	f.store.EXPECT().CreateBatchesTx(gomock.Any(), gomock.Any()).Return([]domain.Batch{
-		{ID: "batch_new1", CreatedAt: now},
-		{ID: "batch_new2", CreatedAt: now.Add(300 * time.Microsecond)}, // the database keeps microseconds
-		{ID: "batch_old", CreatedAt: now.Add(-2 * time.Minute)},        // already on offer from an earlier request
-	}, nil)
+// The counts come from the repository's explicit results, not from comparing timestamps, so they stay exact even when
+// everything happens at one frozen instant (the clock does not move in these tests).
+func TestMetrics_BatchCountsAreExactAtOneInstant(t *testing.T) {
+	t.Run("batches formed: only the newly created ones, twice in the same millisecond", func(t *testing.T) {
+		f := newBatchFixture(t)
+		counters := metrics.New()
+		f.svc.WithMetrics(counters)
+		same := f.clk.Now() // every batch below has this exact CreatedAt
+		f.store.EXPECT().GetRider(gomock.Any(), "rider_001").Return(riderRow(0, 5, true), nil).Times(2)
+		gomock.InOrder(
+			f.store.EXPECT().CreateBatchesTx(gomock.Any(), gomock.Any()).Return(
+				[]domain.Batch{{ID: "b1", CreatedAt: same}, {ID: "b2", CreatedAt: same}}, 2, nil),
+			// The second call returns the same two batches, still open, and forms none.
+			f.store.EXPECT().CreateBatchesTx(gomock.Any(), gomock.Any()).Return(
+				[]domain.Batch{{ID: "b1", CreatedAt: same}, {ID: "b2", CreatedAt: same}}, 0, nil),
+		)
+		in := CreateBatchesInput{RiderID: "rider_001", MaxOrders: 5, RadiusKM: 2}
 
-	_, err := f.svc.CreateBatches(context.Background(), CreateBatchesInput{RiderID: "rider_001", MaxOrders: 5, RadiusKM: 2})
+		_, err := f.svc.CreateBatches(context.Background(), in)
+		require.NoError(t, err)
+		_, err = f.svc.CreateBatches(context.Background(), in)
+		require.NoError(t, err)
 
-	require.NoError(t, err)
-	assert.Equal(t, "2", counters.Vars()["batches_formed"].String())
+		assert.Equal(t, "2", counters.Vars()["batches_formed"].String())
+	})
+
+	t.Run("batches accepted: a retry in the same millisecond is not a second win", func(t *testing.T) {
+		f := newBatchFixture(t)
+		counters := metrics.New()
+		f.svc.WithMetrics(counters)
+		at := f.clk.Now()
+		won := domain.Batch{ID: "b1", AcceptedAt: &at}
+		gomock.InOrder(
+			f.store.EXPECT().AcceptBatchTx(gomock.Any(), gomock.Any()).Return(won, false, nil),
+			f.store.EXPECT().AcceptBatchTx(gomock.Any(), gomock.Any()).Return(won, true, nil),
+			f.store.EXPECT().AcceptBatchTx(gomock.Any(), gomock.Any()).Return(won, true, nil),
+		)
+
+		for range 3 {
+			_, err := f.svc.Accept(context.Background(), "b1", "rider_001")
+			require.NoError(t, err)
+		}
+
+		assert.Equal(t, "1", counters.Vars()["batches_accepted"].String())
+	})
 }

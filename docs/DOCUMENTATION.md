@@ -1048,6 +1048,7 @@ on an invalid value. `.env.example` lists every key; `docker-compose.yml` passes
 | `CONE_MIN_SPEED_KMH` | `3` | Below this speed (or with no heading) the full circle is used |
 | `CONE_MAX_RESULTS` | `20` | Cap on `matching_orders` |
 | `BATCH_MAX_ORDERS` | `5` | Largest batch (1 to 5) and the largest `max_orders` a request may use |
+| `SPATIAL_QUERY_MODE` | `legacy` | Batch listing candidate path: `legacy` filters and pages in Go; `sql` performs exact radius filtering, ordering, count and paging in PostgreSQL |
 | `BATCH_PICKUP_RADIUS_KM` | `2` | Largest `radius_km` a request may use (the pairwise pickup radius) |
 | `BATCH_DIRECTION_TOLERANCE_DEG` | `45` | Largest difference between a trip's bearing and the batch seed's |
 | `BATCH_SEARCH_RADIUS_KM` | `5` | How far from the rider orders are batched and open batches are shown |

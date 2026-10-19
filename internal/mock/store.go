@@ -562,6 +562,21 @@ func (mr *MockStoreMockRecorder) ListMatchCandidateRiders(ctx any) *gomock.Call 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListMatchCandidateRiders", reflect.TypeOf((*MockStore)(nil).ListMatchCandidateRiders), ctx)
 }
 
+// CountOpenBatchSummariesSQL mocks base method.
+func (m *MockStore) CountOpenBatchSummariesSQL(ctx context.Context, arg sqlc.CountOpenBatchSummariesSQLParams) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CountOpenBatchSummariesSQL", ctx, arg)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CountOpenBatchSummariesSQL indicates an expected call of CountOpenBatchSummariesSQL.
+func (mr *MockStoreMockRecorder) CountOpenBatchSummariesSQL(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountOpenBatchSummariesSQL", reflect.TypeOf((*MockStore)(nil).CountOpenBatchSummariesSQL), ctx, arg)
+}
+
 // ListOpenBatchSummaries mocks base method.
 func (m *MockStore) ListOpenBatchSummaries(ctx context.Context, arg sqlc.ListOpenBatchSummariesParams) ([]sqlc.ListOpenBatchSummariesRow, error) {
 	m.ctrl.T.Helper()
@@ -575,6 +590,21 @@ func (m *MockStore) ListOpenBatchSummaries(ctx context.Context, arg sqlc.ListOpe
 func (mr *MockStoreMockRecorder) ListOpenBatchSummaries(ctx, arg any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListOpenBatchSummaries", reflect.TypeOf((*MockStore)(nil).ListOpenBatchSummaries), ctx, arg)
+}
+
+// ListOpenBatchSummariesSQL mocks base method.
+func (m *MockStore) ListOpenBatchSummariesSQL(ctx context.Context, arg sqlc.ListOpenBatchSummariesSQLParams) ([]sqlc.ListOpenBatchSummariesSQLRow, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListOpenBatchSummariesSQL", ctx, arg)
+	ret0, _ := ret[0].([]sqlc.ListOpenBatchSummariesSQLRow)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListOpenBatchSummariesSQL indicates an expected call of ListOpenBatchSummariesSQL.
+func (mr *MockStoreMockRecorder) ListOpenBatchSummariesSQL(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListOpenBatchSummariesSQL", reflect.TypeOf((*MockStore)(nil).ListOpenBatchSummariesSQL), ctx, arg)
 }
 
 // ListOpenBatches mocks base method.

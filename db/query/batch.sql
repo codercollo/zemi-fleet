@@ -95,6 +95,53 @@ WHERE b.status = 'open'
   AND s.lng BETWEEN sqlc.arg(min_lng)::float8 AND sqlc.arg(max_lng)::float8
 GROUP BY b.id, s.lat, s.lng;
 
+-- name: CountOpenBatchSummariesSQL :one
+-- SQL-mode candidate count: bounding box plus exact great-circle radius.
+WITH candidates AS (
+    SELECT b.id,
+           6371000.0 * 2.0 * asin(sqrt(
+               power(sin(radians(s.lat - sqlc.arg(point_lat)::float8) / 2.0), 2) +
+               cos(radians(sqlc.arg(point_lat)::float8)) * cos(radians(s.lat)) *
+               power(sin(radians(s.lng - sqlc.arg(point_lng)::float8) / 2.0), 2)
+           )) AS distance_m
+    FROM batches b
+    JOIN batch_stops s ON s.batch_id = b.id AND s.seq = 1
+    JOIN orders o ON o.batch_id = b.id
+    WHERE b.status = 'open'
+      AND b.expires_at > sqlc.arg(now)
+      AND s.lat BETWEEN sqlc.arg(min_lat)::float8 AND sqlc.arg(max_lat)::float8
+      AND s.lng BETWEEN sqlc.arg(min_lng)::float8 AND sqlc.arg(max_lng)::float8
+    GROUP BY b.id, s.lat, s.lng
+)
+SELECT count(*)::bigint
+FROM candidates
+WHERE distance_m <= sqlc.arg(radius_m)::float8;
+
+-- name: ListOpenBatchSummariesSQL :many
+-- SQL-mode exact radius filter and stable ordering. Go still maps the selected rows and preserves the response DTO.
+WITH candidates AS (
+    SELECT b.id, s.lat AS first_lat, s.lng AS first_lng,
+           MIN(o.created_at)::timestamptz AS oldest_order_at,
+           6371000.0 * 2.0 * asin(sqrt(
+               power(sin(radians(s.lat - sqlc.arg(point_lat)::float8) / 2.0), 2) +
+               cos(radians(sqlc.arg(point_lat)::float8)) * cos(radians(s.lat)) *
+               power(sin(radians(s.lng - sqlc.arg(point_lng)::float8) / 2.0), 2)
+           )) AS distance_m
+    FROM batches b
+    JOIN batch_stops s ON s.batch_id = b.id AND s.seq = 1
+    JOIN orders o ON o.batch_id = b.id
+    WHERE b.status = 'open'
+      AND b.expires_at > sqlc.arg(now)
+      AND s.lat BETWEEN sqlc.arg(min_lat)::float8 AND sqlc.arg(max_lat)::float8
+      AND s.lng BETWEEN sqlc.arg(min_lng)::float8 AND sqlc.arg(max_lng)::float8
+    GROUP BY b.id, s.lat, s.lng
+)
+SELECT id, first_lat, first_lng, oldest_order_at, distance_m
+FROM candidates
+WHERE distance_m <= sqlc.arg(radius_m)::float8
+ORDER BY distance_m, oldest_order_at, id
+LIMIT sqlc.arg(page_limit)::int OFFSET sqlc.arg(page_offset)::int;
+
 -- name: AcceptBatch :one
 -- THE exclusivity guarantee. Only a batch that is still open and unexpired can be claimed. Postgres
 -- locks the row on UPDATE; a concurrent claim waits, then re-checks the WHERE against the committed

@@ -107,6 +107,56 @@ func (q *Queries) AssignOrderToBatch(ctx context.Context, arg AssignOrderToBatch
 	return result.RowsAffected(), nil
 }
 
+const countOpenBatchSummariesSQL = `-- name: CountOpenBatchSummariesSQL :one
+WITH candidates AS (
+    SELECT b.id,
+           6371000.0 * 2.0 * asin(sqrt(
+               power(sin(radians(s.lat - $2::float8) / 2.0), 2) +
+               cos(radians($2::float8)) * cos(radians(s.lat)) *
+               power(sin(radians(s.lng - $3::float8) / 2.0), 2)
+           )) AS distance_m
+    FROM batches b
+    JOIN batch_stops s ON s.batch_id = b.id AND s.seq = 1
+    JOIN orders o ON o.batch_id = b.id
+    WHERE b.status = 'open'
+      AND b.expires_at > $4
+      AND s.lat BETWEEN $5::float8 AND $6::float8
+      AND s.lng BETWEEN $7::float8 AND $8::float8
+    GROUP BY b.id, s.lat, s.lng
+)
+SELECT count(*)::bigint
+FROM candidates
+WHERE distance_m <= $1::float8
+`
+
+type CountOpenBatchSummariesSQLParams struct {
+	RadiusM  float64   `json:"radius_m"`
+	PointLat float64   `json:"point_lat"`
+	PointLng float64   `json:"point_lng"`
+	Now      time.Time `json:"now"`
+	MinLat   float64   `json:"min_lat"`
+	MaxLat   float64   `json:"max_lat"`
+	MinLng   float64   `json:"min_lng"`
+	MaxLng   float64   `json:"max_lng"`
+}
+
+// SQL-mode candidate count: bounding box plus exact great-circle radius.
+func (q *Queries) CountOpenBatchSummariesSQL(ctx context.Context, arg CountOpenBatchSummariesSQLParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countOpenBatchSummariesSQL,
+		arg.RadiusM,
+		arg.PointLat,
+		arg.PointLng,
+		arg.Now,
+		arg.MinLat,
+		arg.MaxLat,
+		arg.MinLng,
+		arg.MaxLng,
+	)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createBatch = `-- name: CreateBatch :one
 INSERT INTO batches (
     id, pickup_centroid_lat, pickup_centroid_lng, pickup_spread_m, orders_count, total_distance_m,
@@ -467,6 +517,90 @@ func (q *Queries) ListOpenBatchSummaries(ctx context.Context, arg ListOpenBatchS
 			&i.FirstLat,
 			&i.FirstLng,
 			&i.OldestOrderAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOpenBatchSummariesSQL = `-- name: ListOpenBatchSummariesSQL :many
+WITH candidates AS (
+    SELECT b.id, s.lat AS first_lat, s.lng AS first_lng,
+           MIN(o.created_at)::timestamptz AS oldest_order_at,
+           6371000.0 * 2.0 * asin(sqrt(
+               power(sin(radians(s.lat - $4::float8) / 2.0), 2) +
+               cos(radians($4::float8)) * cos(radians(s.lat)) *
+               power(sin(radians(s.lng - $5::float8) / 2.0), 2)
+           )) AS distance_m
+    FROM batches b
+    JOIN batch_stops s ON s.batch_id = b.id AND s.seq = 1
+    JOIN orders o ON o.batch_id = b.id
+    WHERE b.status = 'open'
+      AND b.expires_at > $6
+      AND s.lat BETWEEN $7::float8 AND $8::float8
+      AND s.lng BETWEEN $9::float8 AND $10::float8
+    GROUP BY b.id, s.lat, s.lng
+)
+SELECT id, first_lat, first_lng, oldest_order_at, distance_m
+FROM candidates
+WHERE distance_m <= $1::float8
+ORDER BY distance_m, oldest_order_at, id
+LIMIT $3::int OFFSET $2::int
+`
+
+type ListOpenBatchSummariesSQLParams struct {
+	RadiusM    float64   `json:"radius_m"`
+	PageOffset int32     `json:"page_offset"`
+	PageLimit  int32     `json:"page_limit"`
+	PointLat   float64   `json:"point_lat"`
+	PointLng   float64   `json:"point_lng"`
+	Now        time.Time `json:"now"`
+	MinLat     float64   `json:"min_lat"`
+	MaxLat     float64   `json:"max_lat"`
+	MinLng     float64   `json:"min_lng"`
+	MaxLng     float64   `json:"max_lng"`
+}
+
+type ListOpenBatchSummariesSQLRow struct {
+	ID            string    `json:"id"`
+	FirstLat      float64   `json:"first_lat"`
+	FirstLng      float64   `json:"first_lng"`
+	OldestOrderAt time.Time `json:"oldest_order_at"`
+	DistanceM     int32     `json:"distance_m"`
+}
+
+// SQL-mode exact radius filter and stable ordering. Go still maps the selected rows and preserves the response DTO.
+func (q *Queries) ListOpenBatchSummariesSQL(ctx context.Context, arg ListOpenBatchSummariesSQLParams) ([]ListOpenBatchSummariesSQLRow, error) {
+	rows, err := q.db.Query(ctx, listOpenBatchSummariesSQL,
+		arg.RadiusM,
+		arg.PageOffset,
+		arg.PageLimit,
+		arg.PointLat,
+		arg.PointLng,
+		arg.Now,
+		arg.MinLat,
+		arg.MaxLat,
+		arg.MinLng,
+		arg.MaxLng,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOpenBatchSummariesSQLRow
+	for rows.Next() {
+		var i ListOpenBatchSummariesSQLRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.FirstLat,
+			&i.FirstLng,
+			&i.OldestOrderAt,
+			&i.DistanceM,
 		); err != nil {
 			return nil, err
 		}

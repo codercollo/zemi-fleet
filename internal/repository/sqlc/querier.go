@@ -24,6 +24,8 @@ type Querier interface {
 	// Atomic: of any number of concurrent requests with one key, exactly one inserts the row.
 	ClaimIdempotencyKey(ctx context.Context, arg ClaimIdempotencyKeyParams) (int64, error)
 	CompleteIdempotencyKey(ctx context.Context, arg CompleteIdempotencyKeyParams) error
+	// SQL-mode candidate count: bounding box plus exact great-circle radius.
+	CountOpenBatchSummariesSQL(ctx context.Context, arg CountOpenBatchSummariesSQLParams) (int64, error)
 	CreateBatch(ctx context.Context, arg CreateBatchParams) (Batch, error)
 	// One offer per (batch, rider): asking again does not create a second row.
 	CreateBatchOffer(ctx context.Context, arg CreateBatchOfferParams) (int64, error)
@@ -61,6 +63,8 @@ type Querier interface {
 	// GET /batches candidates: open, unexpired batches whose first pickup is inside a bounding box,
 	// with the creation time of their oldest order (for sorting). Read-only: nothing is expired or offered here.
 	ListOpenBatchSummaries(ctx context.Context, arg ListOpenBatchSummariesParams) ([]ListOpenBatchSummariesRow, error)
+	// SQL-mode exact radius filter and stable ordering. Go still maps the selected rows and preserves the response DTO.
+	ListOpenBatchSummariesSQL(ctx context.Context, arg ListOpenBatchSummariesSQLParams) ([]ListOpenBatchSummariesSQLRow, error)
 	// Open, unexpired batches whose first pickup (stop 1) is inside a bounding box and that fit max_orders.
 	ListOpenBatchesNearPoint(ctx context.Context, arg ListOpenBatchesNearPointParams) ([]ListOpenBatchesNearPointRow, error)
 	// Pending pickups inside a bounding box, oldest first, row-locked. SKIP LOCKED means a concurrent

@@ -107,6 +107,8 @@ const (
 
 // BatchConfig holds the order-batching tunables.
 type BatchConfig struct {
+	// SpatialQueryMode selects the legacy Go-filtered path or SQL-side exact filtering/paging.
+	SpatialQueryMode string `mapstructure:"SPATIAL_QUERY_MODE"`
 	// MaxOrders is the largest batch the algorithm will form (and the largest max_orders a request may ask for).
 	MaxOrders int `mapstructure:"BATCH_MAX_ORDERS"`
 	// PickupRadiusKM is the largest pairwise distance between pickups in one batch, and the largest radius_km a request may ask for.
@@ -221,6 +223,7 @@ var defaults = map[string]any{
 	"MATCH_MAX_RESULTS":          10,
 
 	"BATCH_MAX_ORDERS":               5,
+	"SPATIAL_QUERY_MODE":             "legacy",
 	"BATCH_PICKUP_RADIUS_KM":         2,
 	"BATCH_DIRECTION_TOLERANCE_DEG":  45,
 	"BATCH_SEARCH_RADIUS_KM":         5,
@@ -380,6 +383,9 @@ func (c ConeConfig) validate() []error {
 
 func (b BatchConfig) validate() []error {
 	var errs []error
+	if b.SpatialQueryMode != "legacy" && b.SpatialQueryMode != "sql" {
+		errs = append(errs, fmt.Errorf("SPATIAL_QUERY_MODE must be legacy or sql (got %q)", b.SpatialQueryMode))
+	}
 	if b.MaxOrders < 1 || b.MaxOrders > MaxBatchOrders {
 		errs = append(errs, fmt.Errorf("BATCH_MAX_ORDERS must be between 1 and %d (got %d)", MaxBatchOrders, b.MaxOrders))
 	}

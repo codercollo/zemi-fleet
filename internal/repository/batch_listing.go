@@ -17,9 +17,10 @@ type ListOpenBatchesParams struct {
 	Point   domain.Location
 	RadiusM float64
 	// Now is the clock's time; only batches with expires_at > Now are listed.
-	Now      time.Time
-	Page     int // 1-based
-	PageSize int
+	Now              time.Time
+	Page             int // 1-based
+	PageSize         int
+	SpatialQueryMode string
 }
 
 // ListOpenBatches returns one page of the open, unexpired batches whose first pickup is within RadiusM
@@ -30,6 +31,9 @@ type ListOpenBatchesParams struct {
 // Bounding box in SQL, exact distance and the sort in Go, then only the requested page is loaded in full.
 func (s *SQLStore) ListOpenBatches(ctx context.Context, arg ListOpenBatchesParams) ([]domain.Batch, int, error) {
 	minLat, maxLat, minLng, maxLng := geo.BoundingBox(arg.Point, arg.RadiusM)
+	if arg.SpatialQueryMode == "sql" {
+		return s.listOpenBatchesSQL(ctx, arg, minLat, maxLat, minLng, maxLng)
+	}
 	rows, err := s.Queries.ListOpenBatchSummaries(ctx, sqlc.ListOpenBatchSummariesParams{
 		Now: arg.Now, MinLat: minLat, MaxLat: maxLat, MinLng: minLng, MaxLng: maxLng,
 	})
@@ -78,4 +82,32 @@ func (s *SQLStore) ListOpenBatches(ctx context.Context, arg ListOpenBatchesParam
 		return nil, 0, err
 	}
 	return batches, total, nil
+}
+
+func (s *SQLStore) listOpenBatchesSQL(ctx context.Context, arg ListOpenBatchesParams, minLat, maxLat, minLng, maxLng float64) ([]domain.Batch, int, error) {
+	count, err := s.Queries.CountOpenBatchSummariesSQL(ctx, sqlc.CountOpenBatchSummariesSQLParams{
+		Now: arg.Now, MinLat: minLat, MaxLat: maxLat, MinLng: minLng, MaxLng: maxLng, PointLat: arg.Point.Lat, PointLng: arg.Point.Lng, RadiusM: arg.RadiusM,
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("count open batches: %w", err)
+	}
+	rows, err := s.Queries.ListOpenBatchSummariesSQL(ctx, sqlc.ListOpenBatchSummariesSQLParams{
+		Now: arg.Now, MinLat: minLat, MaxLat: maxLat, MinLng: minLng, MaxLng: maxLng, PointLat: arg.Point.Lat, PointLng: arg.Point.Lng, RadiusM: arg.RadiusM,
+		PageLimit: int32(arg.PageSize), PageOffset: int32((arg.Page - 1) * arg.PageSize),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("list open batches in SQL: %w", err)
+	}
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.ID)
+	}
+	if len(ids) == 0 {
+		return []domain.Batch{}, int(count), nil
+	}
+	batches, err := loadBatches(ctx, s.Queries, ids)
+	if err != nil {
+		return nil, 0, err
+	}
+	return batches, int(count), nil
 }

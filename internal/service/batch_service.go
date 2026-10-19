@@ -146,11 +146,12 @@ type BatchPage struct {
 // It is read-only: no offers are recorded and nothing is expired (expired batches are just not listed).
 func (s *BatchService) ListBatches(ctx context.Context, in ListBatchesInput) (BatchPage, error) {
 	batches, total, err := s.store.ListOpenBatches(ctx, repository.ListOpenBatchesParams{
-		Point:    in.Point,
-		RadiusM:  in.RadiusKM * metresPerKM,
-		Now:      s.clock.Now(),
-		Page:     in.Page,
-		PageSize: in.PageSize,
+		Point:            in.Point,
+		RadiusM:          in.RadiusKM * metresPerKM,
+		Now:              s.clock.Now(),
+		Page:             in.Page,
+		PageSize:         in.PageSize,
+		SpatialQueryMode: s.cfg.SpatialQueryMode,
 	})
 	if err != nil {
 		return BatchPage{}, err

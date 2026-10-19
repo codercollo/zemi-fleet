@@ -12,7 +12,8 @@ The reference for the Zemi Fleet V2 backend. The [README](../README.md) is the q
 6. [Database Schema](#database-schema)
 7. [Security](#security)
 8. [Assumptions](#assumptions)
-9. [Improvements](#improvements)
+9. [Performance baseline](#performance-baseline)
+10. [Improvements](#improvements)
 
 ---
 
@@ -1606,6 +1607,12 @@ Every decision the brief and Raphael's email did not settle, in one place. Where
   returns how many batches it newly inserted (it also returns the open ones already on offer), and `AcceptBatchTx` returns `alreadyHeld`
   for the idempotent retry. The counts are therefore exact even when several calls happen in the same instant (tests prove it with a frozen clock).
 - The cone and rider match counters count requests served, including ones with an empty result (the rider was at capacity, or nothing was pending).
+
+---
+
+## Performance baseline
+
+The development-only Phase 0 load workflow is documented in [docs/PERFORMANCE.md](PERFORMANCE.md). It generates deterministic load SQL, applies it to the local development database, runs a local HTTP workload, and records `EXPLAIN (ANALYZE, BUFFERS)` output before spatial query changes. Generated load data is ignored by Git; staging commands are not part of this workflow.
 
 ---
 

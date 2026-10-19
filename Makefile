@@ -51,7 +51,7 @@ confirm:
 	@echo -n 'Are you sure? [y/N] ' && read ans && [ $${ans:-N} = y ]
 
 # ==================================================================================== #
-# DEVELOPMENT  (your machine)
+# DEVELOPMENT  
 # ==================================================================================== #
 
 ## dev/run: run the API natively with go run (http://localhost:$PORT)
@@ -168,6 +168,22 @@ dev/test/race:
 dev/test/cover:
 	go test -count=1 -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out -o coverage.html
+
+## dev/load/seed: generate local load SQL (override LOAD_RIDERS and LOAD_ORDERS)
+.PHONY: dev/load/seed
+dev/load/seed:
+	go run ./scripts/loadseed -riders=$(or $(LOAD_RIDERS),500) -orders=$(or $(LOAD_ORDERS),10000) -output=db/seed/load.sql
+
+## dev/load/apply: apply generated load SQL to the local development database
+.PHONY: dev/load/apply
+dev/load/apply: dev/load/seed
+	@test -n "$(DATABASE_URL)" || (echo 'DATABASE_URL is not set (see .env.example)' && exit 1)
+	psql "$(DATABASE_URL)" -v ON_ERROR_STOP=1 -f db/seed/load.sql
+
+## dev/test/load: run the local HTTP load client against an already-running dev API
+.PHONY: dev/test/load
+dev/test/load:
+	go run ./scripts/loadtest -base-url=$(or $(LOAD_BASE_URL),http://localhost:4000/api/v2) -api-key=$(or $(LOAD_API_KEY),dev-key-change-me-0123456789) -duration=$(or $(LOAD_DURATION),30s) -concurrency=$(or $(LOAD_CONCURRENCY),10)
 
 # ---- build (ch. 20.5) ----------------------------------------------------------------
 

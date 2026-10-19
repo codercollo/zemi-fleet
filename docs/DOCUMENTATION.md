@@ -1055,6 +1055,9 @@ on an invalid value. `.env.example` lists every key; `docker-compose.yml` passes
 | `BATCH_TTL` | `10m` | How long an open batch is offered before it expires and its orders return to `pending` |
 | `AVG_SPEED_KMH` | `20` | Driving speed for time estimates |
 | `STOP_DWELL_MIN` | `2` | Minutes spent at each earlier stop |
+| `GEO_BOUNDS_ENABLED` | `false` | Reject coordinates outside the configured Kenya service-area bounds |
+| `GEO_MIN_LAT` / `GEO_MAX_LAT` | `-4.7` / `4.7` | Inclusive service-area latitude bounds |
+| `GEO_MIN_LNG` / `GEO_MAX_LNG` | `33.9` / `41.9` | Inclusive service-area longitude bounds |
 | `MATCH_MAX_DISTANCE_KM` | `10` | A rider with a fresh location farther than this is excluded; also where the proximity score reaches 0 |
 | `RIDER_LOCATION_STALE_AFTER` | `30m` | An older location is unknown (not filtered, proximity 0, distance `null`) |
 | `MATCH_WEIGHT_CATEGORY` / `_AREA` / `_PROXIMITY` / `_ACCEPTANCE` | `0.25` / `0.20` / `0.35` / `0.20` | Score weights; must sum to 1.0 |
@@ -1497,7 +1500,7 @@ Every decision the brief and Raphael's email did not settle, in one place. Where
 - "Oldest first" means `created_at` ascending, with the ID as the final tie-break so results are deterministic.
 - Straight-line (haversine) distance everywhere: no road network, traffic or one-way streets; speed is a flat `AVG_SPEED_KMH`.
 - Money is KES with at most 2 decimals, held in cents; the 90/10 split is computed from the basis points snapshotted on the order, and the platform takes the rounding remainder.
-- Geography is validated for range only (latitude -90 to 90, longitude -180 to 180, bearing 0 to under 360, speed 0 to 200 km/h).
+- Geography is validated for range (latitude -90 to 90, longitude -180 to 180, bearing 0 to under 360, speed 0 to 200 km/h). Optional service-area bounds are inclusive and disabled by default; when enabled they default to Kenya's broad bounds (`-4.7..4.7`, `33.9..41.9`).
 
 **Batching, matching and acceptance (the brief's gaps)**
 

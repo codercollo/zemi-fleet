@@ -53,6 +53,9 @@ func (s *Server) createBatchesHandler(c *gin.Context) {
 			v.Check(validator.Between(*lng, -maxLongitude, maxLongitude), "rider_location.longitude", "must be between -180 and 180")
 			position.Lng = *lng
 		}
+		if req.RiderLocation.Latitude != nil && req.RiderLocation.Longitude != nil {
+			s.checkServiceArea(v, "rider_location", position)
+		}
 	}
 
 	batch := s.cfg.Batch

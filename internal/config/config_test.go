@@ -43,6 +43,39 @@ func TestLoadFromFileWithDefaults(t *testing.T) {
 	assert.Equal(t, 4000, cfg.Port)
 	assert.Equal(t, int32(25), cfg.DB.MaxConns)
 	assert.Equal(t, 15*time.Minute, cfg.DB.MaxConnIdleTime)
+	assert.False(t, cfg.Geo.BoundsEnabled)
+	assert.Equal(t, -4.7, cfg.Geo.MinLat)
+	assert.Equal(t, 41.9, cfg.Geo.MaxLng)
+}
+
+func TestGeoBoundsValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		want string
+	}{
+		{"minimum above maximum latitude", "GEO_MIN_LAT=5\nGEO_MAX_LAT=4\n", "GEO_MIN_LAT"},
+		{"minimum above maximum longitude", "GEO_MIN_LNG=42\nGEO_MAX_LNG=41\n", "GEO_MIN_LNG"},
+		{"latitude outside world", "GEO_MIN_LAT=-91\n", "GEO latitude bounds"},
+		{"longitude outside world", "GEO_MAX_LNG=181\n", "GEO longitude bounds"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			clearEnv(t)
+			path := writeEnvFile(t, "DATABASE_URL=postgres://u:p@localhost:5432/db\n"+tc.env)
+			_, err := Load(path)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
+}
+
+func TestGeoBoundsCanBeEnabled(t *testing.T) {
+	clearEnv(t)
+	path := writeEnvFile(t, "DATABASE_URL=postgres://u:p@localhost:5432/db\nGEO_BOUNDS_ENABLED=true\n")
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.True(t, cfg.Geo.BoundsEnabled)
 }
 
 // Test environment variables override file values

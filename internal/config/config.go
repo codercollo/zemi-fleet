@@ -70,6 +70,16 @@ type Config struct {
 	Cone  ConeConfig  `mapstructure:",squash"`
 	Batch BatchConfig `mapstructure:",squash"`
 	Match MatchConfig `mapstructure:",squash"`
+	Geo   GeoConfig   `mapstructure:",squash"`
+}
+
+// GeoConfig controls optional service-area validation for geographic inputs.
+type GeoConfig struct {
+	BoundsEnabled bool    `mapstructure:"GEO_BOUNDS_ENABLED"`
+	MinLat        float64 `mapstructure:"GEO_MIN_LAT"`
+	MaxLat        float64 `mapstructure:"GEO_MAX_LAT"`
+	MinLng        float64 `mapstructure:"GEO_MIN_LNG"`
+	MaxLng        float64 `mapstructure:"GEO_MAX_LNG"`
 }
 
 // MatchConfig holds the rider preference matching tunables (POST /orders/match-riders).
@@ -223,6 +233,11 @@ var defaults = map[string]any{
 	"BATCH_TTL":                      "10m",
 	"AVG_SPEED_KMH":                  20,
 	"STOP_DWELL_MIN":                 2,
+	"GEO_BOUNDS_ENABLED":             false,
+	"GEO_MIN_LAT":                    -4.7,
+	"GEO_MAX_LAT":                    4.7,
+	"GEO_MIN_LNG":                    33.9,
+	"GEO_MAX_LNG":                    41.9,
 }
 
 // Load configuration
@@ -306,7 +321,25 @@ func (c Config) validate() error {
 	errs = append(errs, c.Cone.validate()...)
 	errs = append(errs, c.Batch.validate()...)
 	errs = append(errs, c.Match.validate()...)
+	errs = append(errs, c.Geo.validate()...)
 	return errors.Join(errs...)
+}
+
+func (g GeoConfig) validate() []error {
+	var errs []error
+	if g.MinLat >= g.MaxLat {
+		errs = append(errs, fmt.Errorf("GEO_MIN_LAT must be less than GEO_MAX_LAT (got %v and %v)", g.MinLat, g.MaxLat))
+	}
+	if g.MinLng >= g.MaxLng {
+		errs = append(errs, fmt.Errorf("GEO_MIN_LNG must be less than GEO_MAX_LNG (got %v and %v)", g.MinLng, g.MaxLng))
+	}
+	if g.MinLat < -90 || g.MaxLat > 90 {
+		errs = append(errs, fmt.Errorf("GEO latitude bounds must be between -90 and 90 (got %v and %v)", g.MinLat, g.MaxLat))
+	}
+	if g.MinLng < -180 || g.MaxLng > 180 {
+		errs = append(errs, fmt.Errorf("GEO longitude bounds must be between -180 and 180 (got %v and %v)", g.MinLng, g.MaxLng))
+	}
+	return errs
 }
 
 // onUnlessProduction reads a boolean switch whose default depends on the environment: on in development and staging,

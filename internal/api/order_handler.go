@@ -67,6 +67,9 @@ func (s *Server) createOrderHandler(c *gin.Context) {
 	checkID(v, "vendor_id", req.VendorID, vendorID)
 	checkID(v, "category", req.Category, categoryID)
 	delivery := checkLocation(v, "delivery_location", req.DeliveryLocation)
+	if req.DeliveryLocation != nil && req.DeliveryLocation.Lat != nil && req.DeliveryLocation.Lng != nil {
+		s.checkServiceArea(v, "delivery_location", delivery)
+	}
 
 	valueCents := checkAmount(v, "value_kes", req.ValueKES, true, s.cfg.OrderMaxValueKES)
 	feeCents := checkAmount(v, "delivery_fee_kes", req.DeliveryFeeKES, false, s.cfg.OrderMaxDeliveryFeeKES)

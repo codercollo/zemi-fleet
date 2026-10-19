@@ -147,6 +147,9 @@ func (s *Server) updateLocationHandler(c *gin.Context) {
 	if req.Longitude != nil {
 		v.Check(validator.Between(*req.Longitude, -maxLongitude, maxLongitude), "longitude", "must be between -180 and 180")
 	}
+	if req.Latitude != nil && req.Longitude != nil {
+		s.checkServiceArea(v, "location", domain.Location{Lat: *req.Latitude, Lng: *req.Longitude})
+	}
 	if req.BearingDegrees != nil {
 		v.Check(*req.BearingDegrees >= 0 && *req.BearingDegrees < maxBearingDegrees,
 			"bearing_degrees", "must be at least 0 and less than 360")

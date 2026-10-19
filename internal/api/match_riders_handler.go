@@ -47,6 +47,12 @@ func (s *Server) matchRidersHandler(c *gin.Context) {
 		checkID(v, "order_details.category", category, categoryID)
 		pickup := checkLocation(v, "order_details.pickup_location", d.PickupLocation)
 		delivery := checkLocation(v, "order_details.delivery_location", d.DeliveryLocation)
+		if d.PickupLocation != nil && d.PickupLocation.Lat != nil && d.PickupLocation.Lng != nil {
+			s.checkServiceArea(v, "order_details.pickup_location", pickup)
+		}
+		if d.DeliveryLocation != nil && d.DeliveryLocation.Lat != nil && d.DeliveryLocation.Lng != nil {
+			s.checkServiceArea(v, "order_details.delivery_location", delivery)
+		}
 		valueCents := checkAmount(v, "order_details.value_kes", d.ValueKES, true, s.cfg.OrderMaxValueKES)
 		in.Details = &service.OrderDetails{Category: category, Pickup: pickup, Delivery: delivery, ValueCents: valueCents}
 	}

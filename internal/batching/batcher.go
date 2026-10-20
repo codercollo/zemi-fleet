@@ -44,6 +44,9 @@ type Params struct {
 	DensityRadiusM                                              float64
 	DensityLowThreshold, DensityHighThreshold                   int
 	DensityLowRadiusM, DensityMediumRadiusM, DensityHighRadiusM float64
+	Distance                                                    func(domain.Location, domain.Location) float64
+	Sequencer                                                   string
+	MinScore                                                    float64
 }
 
 // Form groups the orders into batches. It is deterministic.
@@ -106,7 +109,14 @@ func Form(orders []Order, p Params) []Batch {
 				members = append(members, fifo[j])
 			}
 		}
-		batches = append(batches, build(members, p))
+		b := build(members, p)
+		if p.MinScore > 0 && b.Score < p.MinScore && len(members) > 1 {
+			for _, member := range members {
+				batches = append(batches, build([]Order{member}, p))
+			}
+		} else {
+			batches = append(batches, b)
+		}
 	}
 	return batches
 }

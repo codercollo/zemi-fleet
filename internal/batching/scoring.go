@@ -69,7 +69,7 @@ type Batch struct {
 //	estimated_time_min        = the stop time of that order's delivery stop, in minutes
 //	estimated_earnings        = sum(rider_earnings_cents)
 func build(members []Order, p Params) Batch {
-	stops := Sequence(members)
+	stops := SequenceWithDistance(members, p.Distance, p.Sequencer == "two_opt")
 
 	speedMS := p.AvgSpeedKMH * metresPerKM / (minutesPerHour * secondsPerMinute)
 	dwellS := p.StopDwellMin * secondsPerMinute

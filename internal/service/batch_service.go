@@ -14,6 +14,7 @@ import (
 	"github.com/codercollo/zemi-fleet/internal/geo"
 	"github.com/codercollo/zemi-fleet/internal/metrics"
 	"github.com/codercollo/zemi-fleet/internal/repository"
+	"github.com/codercollo/zemi-fleet/internal/routing"
 )
 
 // BatchService forms and offers batches of pending orders.
@@ -23,6 +24,8 @@ type BatchService struct {
 	cfg      config.BatchConfig
 	capacity capacityPolicy
 	metrics  *metrics.Counters
+	router   routing.Router
+	routing  config.RoutingConfig
 }
 
 // NewBatchService wires the service to its store, clock and batching settings.
@@ -32,6 +35,12 @@ func NewBatchService(store repository.Store, clk clock.Clock, cfg config.BatchCo
 		cc = capacityCfg[0]
 	}
 	return &BatchService{store: store, clock: clk, cfg: cfg, capacity: newCapacityPolicy(cc)}
+}
+
+// WithRouting enables road-aware distances for newly formed batches.
+func (s *BatchService) WithRouting(r routing.Router, cfg config.RoutingConfig) *BatchService {
+	s.router, s.routing = r, cfg
+	return s
 }
 
 // WithMetrics makes the service count business events in c. Without it nothing is counted.
@@ -117,7 +126,10 @@ func (s *BatchService) CreateBatches(ctx context.Context, in CreateBatchesInput)
 			DensityLowRadiusM:     s.cfg.DensityLowRadiusKM * metresPerKM,
 			DensityMediumRadiusM:  s.cfg.DensityMediumRadiusKM * metresPerKM,
 			DensityHighRadiusM:    s.cfg.DensityHighRadiusKM * metresPerKM,
+			Sequencer:             s.routing.Sequencer,
+			MinScore:              s.routing.MinScore,
 		},
+		Router: s.router,
 	})
 	if err != nil {
 		return nil, err

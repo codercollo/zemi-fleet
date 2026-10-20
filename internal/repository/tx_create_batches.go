@@ -10,6 +10,7 @@ import (
 	"github.com/codercollo/zemi-fleet/internal/domain"
 	"github.com/codercollo/zemi-fleet/internal/geo"
 	"github.com/codercollo/zemi-fleet/internal/repository/sqlc"
+	"github.com/codercollo/zemi-fleet/internal/routing"
 	"github.com/codercollo/zemi-fleet/internal/util"
 )
 
@@ -26,6 +27,7 @@ type CreateBatchesParams struct {
 	// Batching holds the grouping rules. MaxOrders is the rider's effective batch size and
 	// PickupRadiusM is the request's pairwise pickup radius.
 	Batching batching.Params
+	Router   routing.Router
 }
 
 // CreateBatchesTx forms batches from the pending orders near a rider and returns every open batch
@@ -96,6 +98,27 @@ func createBatches(ctx context.Context, q sqlc.Querier, arg CreateBatchesParams)
 	}
 
 	// 3. form and store
+	if arg.Router != nil && len(candidates) > 1 {
+		points := make([]domain.Location, 0, len(candidates)*2)
+		for _, c := range candidates {
+			points = append(points, c.Pickup, c.Delivery)
+		}
+		matrix, matrixErr := arg.Router.Matrix(ctx, points)
+		if matrixErr == nil {
+			arg.Batching.Distance = func(a, b domain.Location) float64 {
+				for i, p := range points {
+					if p == a {
+						for j, q := range points {
+							if q == b {
+								return matrix[i][j]
+							}
+						}
+					}
+				}
+				return geo.Haversine(a, b)
+			}
+		}
+	}
 	expiresAt := arg.Now.Add(arg.TTL)
 	for _, b := range batching.Form(candidates, arg.Batching) {
 		if err := insertBatch(ctx, q, b, arg.Now, expiresAt); err != nil {

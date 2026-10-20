@@ -77,12 +77,25 @@ type Config struct {
 	Match    MatchConfig    `mapstructure:",squash"`
 	Geo      GeoConfig      `mapstructure:",squash"`
 	Capacity CapacityConfig `mapstructure:",squash"`
+	Routing  RoutingConfig  `mapstructure:",squash"`
 }
 
 // CapacityConfig controls the shared rider-capacity policy.
 type CapacityConfig struct {
 	Mode     string `mapstructure:"CAPACITY_MODE"`
 	Timezone string `mapstructure:"-"`
+}
+
+type RoutingConfig struct {
+	Provider        string        `mapstructure:"ROUTING_PROVIDER"`
+	BaseURL         string        `mapstructure:"ROUTING_BASE_URL"`
+	Timeout         time.Duration `mapstructure:"ROUTING_TIMEOUT"`
+	Retries         int           `mapstructure:"ROUTING_RETRIES"`
+	BreakerFailures int           `mapstructure:"ROUTING_BREAKER_FAILURES"`
+	BreakerOpen     time.Duration `mapstructure:"ROUTING_BREAKER_OPEN"`
+	CacheTTL        time.Duration `mapstructure:"ROUTING_CACHE_TTL"`
+	Sequencer       string        `mapstructure:"BATCH_SEQUENCER"`
+	MinScore        float64       `mapstructure:"BATCH_MIN_SCORE"`
 }
 
 // GeoConfig controls optional service-area validation for geographic inputs.
@@ -286,6 +299,15 @@ var defaults = map[string]any{
 	"GEO_MIN_LNG":                    33.9,
 	"GEO_MAX_LNG":                    41.9,
 	"CAPACITY_MODE":                  "count",
+	"ROUTING_PROVIDER":               "haversine",
+	"ROUTING_BASE_URL":               "http://localhost:5000",
+	"ROUTING_TIMEOUT":                "500ms",
+	"ROUTING_RETRIES":                2,
+	"ROUTING_BREAKER_FAILURES":       3,
+	"ROUTING_BREAKER_OPEN":           "30s",
+	"ROUTING_CACHE_TTL":              "5m",
+	"BATCH_SEQUENCER":                "nearest",
+	"BATCH_MIN_SCORE":                0,
 }
 
 // Load configuration
@@ -382,6 +404,27 @@ func (c Config) validate() error {
 	errs = append(errs, c.Geo.validate()...)
 	if c.Capacity.Mode != "count" && c.Capacity.Mode != "dynamic" {
 		errs = append(errs, fmt.Errorf("CAPACITY_MODE must be count or dynamic (got %q)", c.Capacity.Mode))
+	}
+	if c.Routing.Provider != "haversine" && c.Routing.Provider != "osrm" {
+		errs = append(errs, fmt.Errorf("ROUTING_PROVIDER must be haversine or osrm (got %q)", c.Routing.Provider))
+	}
+	if c.Routing.Timeout <= 0 || c.Routing.Timeout > time.Minute {
+		errs = append(errs, fmt.Errorf("ROUTING_TIMEOUT must be between 0 and 1m (got %s)", c.Routing.Timeout))
+	}
+	if c.Routing.Retries < 0 || c.Routing.Retries > 2 {
+		errs = append(errs, fmt.Errorf("ROUTING_RETRIES must be between 0 and 2 (got %d)", c.Routing.Retries))
+	}
+	if c.Routing.BreakerFailures < 1 {
+		errs = append(errs, fmt.Errorf("ROUTING_BREAKER_FAILURES must be positive (got %d)", c.Routing.BreakerFailures))
+	}
+	if c.Routing.BreakerOpen <= 0 || c.Routing.CacheTTL < 0 {
+		errs = append(errs, fmt.Errorf("ROUTING_BREAKER_OPEN must be positive and ROUTING_CACHE_TTL non-negative"))
+	}
+	if c.Routing.Sequencer != "nearest" && c.Routing.Sequencer != "two_opt" {
+		errs = append(errs, fmt.Errorf("BATCH_SEQUENCER must be nearest or two_opt (got %q)", c.Routing.Sequencer))
+	}
+	if c.Routing.MinScore < 0 || c.Routing.MinScore > 1 {
+		errs = append(errs, fmt.Errorf("BATCH_MIN_SCORE must be between 0 and 1 (got %v)", c.Routing.MinScore))
 	}
 	return errors.Join(errs...)
 }

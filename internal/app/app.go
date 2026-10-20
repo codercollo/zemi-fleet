@@ -13,6 +13,7 @@ import (
 	"github.com/codercollo/zemi-fleet/internal/config"
 	"github.com/codercollo/zemi-fleet/internal/metrics"
 	"github.com/codercollo/zemi-fleet/internal/repository"
+	"github.com/codercollo/zemi-fleet/internal/routing"
 	"github.com/codercollo/zemi-fleet/internal/service"
 )
 
@@ -26,12 +27,19 @@ func Build(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, clk clock
 func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, clk clock.Clock, version string) *api.Server {
 	store := repository.NewStore(pool, cfg.DB.QueryTimeout)
 	counters := metrics.New()
+	var router routing.Router = routing.Haversine{}
+	if cfg.Routing.Provider == "osrm" {
+		router = routing.NewResilient(routing.OSRM{BaseURL: cfg.Routing.BaseURL}, routing.Haversine{}, routing.Config{
+			Timeout: cfg.Routing.Timeout, Retries: cfg.Routing.Retries, BreakerFailures: cfg.Routing.BreakerFailures,
+			BreakerOpen: cfg.Routing.BreakerOpen, CacheTTL: cfg.Routing.CacheTTL, RoundDigits: 5,
+		}, clk)
+	}
 
 	server := api.NewServer(cfg, logger, pool, api.Services{
 		Orders:      service.NewOrderService(store, clk, cfg.RiderPayoutBPS, cfg.OrderMinTripM).WithMetrics(counters),
 		Riders:      service.NewRiderService(store, clk),
 		Matching:    service.NewMatchingService(store, clk, logger, cfg.Cone, cfg.Capacity).WithMetrics(counters),
-		Batches:     service.NewBatchService(store, clk, cfg.Batch, cfg.Capacity).WithMetrics(counters),
+		Batches:     service.NewBatchService(store, clk, cfg.Batch, cfg.Capacity).WithRouting(router, cfg.Routing).WithMetrics(counters),
 		Preferences: service.NewPreferenceService(store, clk, cfg.Match, cfg.OrderMinTripM, cfg.Capacity).WithMetrics(counters),
 		Idempotency: service.NewIdempotencyService(store, clk, cfg.IdempotencyTTL, cfg.IdempotencyProcessingTimeout).WithMetrics(counters),
 		Lifecycle:   service.NewLifecycleService(store, clk, cfg.CancelCompensationBPS, service.NoopEventSink{}),

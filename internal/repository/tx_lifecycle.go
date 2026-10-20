@@ -110,6 +110,18 @@ func completeBatchStop(ctx context.Context, q sqlc.Querier, arg CompleteStopPara
 		return LifecycleResult{}, fmt.Errorf("complete batch: %w", err)
 	}
 	if err == nil {
+		eventType := ""
+		if updated.Status == sqlc.OrderStatusDelivered {
+			eventType = "order.delivered"
+		}
+		if updated.Status == sqlc.OrderStatusReturned {
+			eventType = "order.returned"
+		}
+		if eventType != "" {
+			if err := writeOutboxEvent(ctx, q, eventType, map[string]any{"order_id": updated.ID, "batch_id": arg.BatchID, "rider_id": *batch.RiderID}, arg.Now); err != nil {
+				return LifecycleResult{}, err
+			}
+		}
 		return LifecycleResult{Order: updated, Batch: batch}, nil
 	}
 	return LifecycleResult{Order: updated, Batch: batch}, nil
@@ -199,6 +211,9 @@ func (s *SQLStore) CancelOrderTx(ctx context.Context, arg CancelParams) (sqlc.Or
 			return err
 		}
 		if _, err := q.CompleteBatchIfDone(ctx, sqlc.CompleteBatchIfDoneParams{ID: *locked.BatchID, CompletedAt: &arg.Now}); err != nil && !isNotFound(err) {
+			return err
+		}
+		if err := writeOutboxEvent(ctx, q, "order.cancelled", map[string]any{"order_id": result.ID, "batch_id": *locked.BatchID, "rider_id": *locked.RiderID}, arg.Now); err != nil {
 			return err
 		}
 		return nil

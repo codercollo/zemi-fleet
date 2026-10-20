@@ -247,6 +247,14 @@ type Order struct {
 	VolumeCm3              int64       `json:"volume_cm3"`
 }
 
+type OutboxEvent struct {
+	ID          string     `json:"id"`
+	EventType   string     `json:"event_type"`
+	Payload     []byte     `json:"payload"`
+	CreatedAt   time.Time  `json:"created_at"`
+	PublishedAt *time.Time `json:"published_at"`
+}
+
 type Rider struct {
 	ID                 string     `json:"id"`
 	FullName           string     `json:"full_name"`
@@ -293,4 +301,23 @@ type Vendor struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Rating    float64   `json:"rating"`
+}
+
+type WebhookDelivery struct {
+	ID             string    `json:"id"`
+	EventID        string    `json:"event_id"`
+	SubscriptionID string    `json:"subscription_id"`
+	Status         string    `json:"status"`
+	Attempts       int32     `json:"attempts"`
+	NextAttemptAt  time.Time `json:"next_attempt_at"`
+	LastStatus     *int32    `json:"last_status"`
+}
+
+type WebhookSubscription struct {
+	ID         string    `json:"id"`
+	ClientName string    `json:"client_name"`
+	Url        string    `json:"url"`
+	Secret     string    `json:"secret"`
+	Enabled    bool      `json:"enabled"`
+	CreatedAt  time.Time `json:"created_at"`
 }

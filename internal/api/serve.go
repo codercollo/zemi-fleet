@@ -49,6 +49,9 @@ func (s *Server) Serve(ctx context.Context, srv *http.Server, ln net.Listener, t
 	if s.offline != nil && s.cfg.RiderOfflineAfter > 0 && s.cfg.RiderOfflineSweepInterval > 0 {
 		s.background(func() { s.runOfflineSweep(bgCtx) })
 	}
+	if s.webhookDispatcher != nil && s.cfg.Webhooks.Enabled {
+		s.background(func() { s.runWebhookDispatch(bgCtx) })
+	}
 
 	serveErr := make(chan error, 1)
 	go func() {
@@ -81,6 +84,21 @@ func (s *Server) Serve(ctx context.Context, srv *http.Server, ln net.Listener, t
 	}
 	s.logger.Info("stopped server", "addr", srv.Addr)
 	return nil
+}
+
+func (s *Server) runWebhookDispatch(ctx context.Context) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		if err := s.webhookDispatcher.RunOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			s.logger.Error("webhook dispatch failed", "error", err)
+		}
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 func (s *Server) runBatchExpiry(ctx context.Context) {

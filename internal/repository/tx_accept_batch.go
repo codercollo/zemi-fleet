@@ -138,6 +138,11 @@ func acceptBatch(ctx context.Context, q sqlc.Querier, arg AcceptBatchParams) (do
 	}); err != nil {
 		return domain.Batch{}, false, fmt.Errorf("update rider: %w", err)
 	}
+	if err := writeOutboxEvent(ctx, q, "batch.accepted", map[string]any{
+		"batch_id": claimed.ID, "rider_id": arg.RiderID, "order_count": n,
+	}, arg.Now); err != nil {
+		return domain.Batch{}, false, err
+	}
 
 	b, err := loadOne(ctx, q, claimed.ID)
 	return b, false, err

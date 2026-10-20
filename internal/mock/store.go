@@ -20,6 +20,20 @@ import (
 	gomock "go.uber.org/mock/gomock"
 )
 
+// CreateOutboxEvent mocks base method.
+func (m *MockStore) CreateOutboxEvent(ctx context.Context, arg sqlc.CreateOutboxEventParams) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateOutboxEvent", ctx, arg)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CreateOutboxEvent indicates an expected call of CreateOutboxEvent.
+func (mr *MockStoreMockRecorder) CreateOutboxEvent(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateOutboxEvent", reflect.TypeOf((*MockStore)(nil).CreateOutboxEvent), ctx, arg)
+}
+
 // MockStore is a mock of Store interface.
 type MockStore struct {
 	ctrl     *gomock.Controller
@@ -30,6 +44,70 @@ type MockStore struct {
 // MockStoreMockRecorder is the mock recorder for MockStore.
 type MockStoreMockRecorder struct {
 	mock *MockStore
+}
+
+func (m *MockStore) ClaimDueWebhookDelivery(ctx context.Context, nextAttemptAt time.Time) (sqlc.ClaimDueWebhookDeliveryRow, error) {
+	m.ctrl.T.Helper()
+	r := m.ctrl.Call(m, "ClaimDueWebhookDelivery", ctx, nextAttemptAt)
+	a, _ := r[0].(sqlc.ClaimDueWebhookDeliveryRow)
+	e, _ := r[1].(error)
+	return a, e
+}
+func (mr *MockStoreMockRecorder) ClaimDueWebhookDelivery(ctx, nextAttemptAt any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClaimDueWebhookDelivery", reflect.TypeOf((*MockStore)(nil).ClaimDueWebhookDelivery), ctx, nextAttemptAt)
+}
+func (m *MockStore) ListFailedWebhookDeliveries(ctx context.Context, arg sqlc.ListFailedWebhookDeliveriesParams) ([]sqlc.ListFailedWebhookDeliveriesRow, error) {
+	m.ctrl.T.Helper()
+	r := m.ctrl.Call(m, "ListFailedWebhookDeliveries", ctx, arg)
+	a, _ := r[0].([]sqlc.ListFailedWebhookDeliveriesRow)
+	e, _ := r[1].(error)
+	return a, e
+}
+func (mr *MockStoreMockRecorder) ListFailedWebhookDeliveries(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListFailedWebhookDeliveries", reflect.TypeOf((*MockStore)(nil).ListFailedWebhookDeliveries), ctx, arg)
+}
+func (m *MockStore) MarkWebhookDelivered(ctx context.Context, arg sqlc.MarkWebhookDeliveredParams) error {
+	m.ctrl.T.Helper()
+	r := m.ctrl.Call(m, "MarkWebhookDelivered", ctx, arg)
+	e, _ := r[0].(error)
+	return e
+}
+func (mr *MockStoreMockRecorder) MarkWebhookDelivered(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkWebhookDelivered", reflect.TypeOf((*MockStore)(nil).MarkWebhookDelivered), ctx, arg)
+}
+func (m *MockStore) MarkWebhookFailed(ctx context.Context, arg sqlc.MarkWebhookFailedParams) error {
+	m.ctrl.T.Helper()
+	r := m.ctrl.Call(m, "MarkWebhookFailed", ctx, arg)
+	e, _ := r[0].(error)
+	return e
+}
+func (mr *MockStoreMockRecorder) MarkWebhookFailed(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkWebhookFailed", reflect.TypeOf((*MockStore)(nil).MarkWebhookFailed), ctx, arg)
+}
+func (m *MockStore) MarkWebhookRetry(ctx context.Context, arg sqlc.MarkWebhookRetryParams) error {
+	m.ctrl.T.Helper()
+	r := m.ctrl.Call(m, "MarkWebhookRetry", ctx, arg)
+	e, _ := r[0].(error)
+	return e
+}
+func (mr *MockStoreMockRecorder) MarkWebhookRetry(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkWebhookRetry", reflect.TypeOf((*MockStore)(nil).MarkWebhookRetry), ctx, arg)
+}
+func (m *MockStore) RetryWebhookDelivery(ctx context.Context, arg sqlc.RetryWebhookDeliveryParams) (int64, error) {
+	m.ctrl.T.Helper()
+	r := m.ctrl.Call(m, "RetryWebhookDelivery", ctx, arg)
+	a, _ := r[0].(int64)
+	e, _ := r[1].(error)
+	return a, e
+}
+func (mr *MockStoreMockRecorder) RetryWebhookDelivery(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RetryWebhookDelivery", reflect.TypeOf((*MockStore)(nil).RetryWebhookDelivery), ctx, arg)
 }
 
 // NewMockStore creates a new mock instance.

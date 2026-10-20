@@ -15,6 +15,7 @@ import (
 	"github.com/codercollo/zemi-fleet/internal/repository"
 	"github.com/codercollo/zemi-fleet/internal/routing"
 	"github.com/codercollo/zemi-fleet/internal/service"
+	"github.com/codercollo/zemi-fleet/internal/webhooks"
 )
 
 // Build returns the HTTP handler for the whole API on top of an open pool (tests serve it with httptest). The clock
@@ -35,17 +36,12 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, clk clock.C
 		}, clk)
 	}
 
+	dispatcher := &webhooks.Dispatcher{Store: store, Sender: webhooks.HTTPSender{}, Now: clk.Now, Enabled: cfg.Webhooks.Enabled}
+	// The server owns the dispatcher lifecycle; the store remains the same pool-backed adapter.
 	server := api.NewServer(cfg, logger, pool, api.Services{
-		Orders:      service.NewOrderService(store, clk, cfg.RiderPayoutBPS, cfg.OrderMinTripM).WithMetrics(counters),
-		Riders:      service.NewRiderService(store, clk),
-		Matching:    service.NewMatchingService(store, clk, logger, cfg.Cone, cfg.Capacity).WithMetrics(counters),
-		Batches:     service.NewBatchService(store, clk, cfg.Batch, cfg.Capacity).WithRouting(router, cfg.Routing).WithMetrics(counters),
-		Preferences: service.NewPreferenceService(store, clk, cfg.Match, cfg.OrderMinTripM, cfg.Capacity).WithMetrics(counters),
-		Idempotency: service.NewIdempotencyService(store, clk, cfg.IdempotencyTTL, cfg.IdempotencyProcessingTimeout).WithMetrics(counters),
-		Lifecycle:   service.NewLifecycleService(store, clk, cfg.CancelCompensationBPS, service.NoopEventSink{}),
-		Offline:     service.NewOfflineService(store, clk, service.NoopEventSink{}),
-		Metrics:     counters,
-		Clock:       clk,
+		Orders: service.NewOrderService(store, clk, cfg.RiderPayoutBPS, cfg.OrderMinTripM).WithMetrics(counters), Riders: service.NewRiderService(store, clk),
+		Matching: service.NewMatchingService(store, clk, logger, cfg.Cone, cfg.Capacity).WithMetrics(counters), Batches: service.NewBatchService(store, clk, cfg.Batch, cfg.Capacity).WithRouting(router, cfg.Routing).WithMetrics(counters),
+		Preferences: service.NewPreferenceService(store, clk, cfg.Match, cfg.OrderMinTripM, cfg.Capacity).WithMetrics(counters), Idempotency: service.NewIdempotencyService(store, clk, cfg.IdempotencyTTL, cfg.IdempotencyProcessingTimeout).WithMetrics(counters), Lifecycle: service.NewLifecycleService(store, clk, cfg.CancelCompensationBPS, service.NoopEventSink{}), Offline: service.NewOfflineService(store, clk, service.NoopEventSink{}), Metrics: counters, Clock: clk, WebhookStore: store, WebhookDispatcher: dispatcher,
 	}, version)
 	return server
 }

@@ -813,6 +813,31 @@ paths:
               schema: {type: string}
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /webhooks/failed:
+    get:
+      tags: [Operations]
+      summary: List failed webhook deliveries
+      operationId: listFailedWebhookDeliveries
+      responses:
+        '200': {description: Failed deliveries, content: {application/json: {schema: {type: object, properties: {deliveries: {type: array, items: {type: object}}}}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '500': {$ref: '#/components/responses/ServerError'}
+  /webhooks/{id}/retry:
+    post:
+      tags: [Operations]
+      summary: Retry a failed webhook delivery
+      operationId: retryWebhookDelivery
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        '204': {description: Delivery queued}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '500': {$ref: '#/components/responses/ServerError'}
+
 components:
   securitySchemes:
     ApiKeyAuth:

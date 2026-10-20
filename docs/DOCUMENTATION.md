@@ -1080,6 +1080,7 @@ on an invalid value. `.env.example` lists every key; `docker-compose.yml` passes
 | `BATCH_SEQUENCER` / `BATCH_MIN_SCORE` | `nearest` / `0` | Optional precedence-safe two-opt improvement and minimum batch score; below-threshold batches split |
 | `AUTH_MODE` | `apikey` | Authentication mode: API keys, rider Bearer tokens, or both |
 | `AUTH_SIGNING_KEY` / `AUTH_TOKEN_TTL` | empty / `15m` | Token signing secret (minimum 32 characters when enabled) and token lifetime; never logged |
+| `WEBHOOKS_ENABLED` | `false` | Enables outbox webhook delivery; keep disabled until HTTPS subscriptions are configured |
 | `AVG_SPEED_KMH` | `20` | Driving speed for time estimates |
 | `STOP_DWELL_MIN` | `2` | Minutes spent at each earlier stop |
 | `GEO_BOUNDS_ENABLED` | `false` | Reject coordinates outside the configured Kenya service-area bounds |

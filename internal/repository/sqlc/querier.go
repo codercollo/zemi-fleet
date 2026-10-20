@@ -23,6 +23,7 @@ type Querier interface {
 	BumpRiderVersion(ctx context.Context, arg BumpRiderVersionParams) (Rider, error)
 	CancelBatchIfNoActiveOrders(ctx context.Context, id string) error
 	CancelOrder(ctx context.Context, arg CancelOrderParams) (Order, error)
+	ClaimDueWebhookDelivery(ctx context.Context, nextAttemptAt time.Time) (ClaimDueWebhookDeliveryRow, error)
 	// Atomic: of any number of concurrent requests with one key, exactly one inserts the row.
 	ClaimIdempotencyKey(ctx context.Context, arg ClaimIdempotencyKeyParams) (int64, error)
 	CompleteBatchIfDone(ctx context.Context, arg CompleteBatchIfDoneParams) (Batch, error)
@@ -37,6 +38,7 @@ type Querier interface {
 	CreateBatchStop(ctx context.Context, arg CreateBatchStopParams) error
 	// created_at comes from the injected clock (UTC), not now(): the column DEFAULT is only a fallback.
 	CreateOrder(ctx context.Context, arg CreateOrderParams) (Order, error)
+	CreateOutboxEvent(ctx context.Context, arg CreateOutboxEventParams) error
 	DecrementBatchOrderTotals(ctx context.Context, arg DecrementBatchOrderTotalsParams) error
 	DecrementRiderOrders(ctx context.Context, arg DecrementRiderOrdersParams) error
 	// Queries behind the Idempotency-Key header. Timestamps come from the injected clock.
@@ -75,6 +77,7 @@ type Querier interface {
 	ListAssignedOrdersForRider(ctx context.Context, riderID *string) ([]ListAssignedOrdersForRiderRow, error)
 	ListBatchOrders(ctx context.Context, batchIds []string) ([]ListBatchOrdersRow, error)
 	ListBatchStops(ctx context.Context, batchIds []string) ([]BatchStop, error)
+	ListFailedWebhookDeliveries(ctx context.Context, arg ListFailedWebhookDeliveriesParams) ([]ListFailedWebhookDeliveriesRow, error)
 	// Queries for rider preference matching (POST /orders/match-riders).
 	// Riders who could take another order at all: on shift and with spare capacity. Everything else
 	// (preferences, minimum value, distance) is applied by internal/matching, which has no SQL.
@@ -105,6 +108,9 @@ type Querier interface {
 	MarkOrderPickedUp(ctx context.Context, id string) (Order, error)
 	MarkOrderReturned(ctx context.Context, id string) (Order, error)
 	MarkRiderOffline(ctx context.Context, arg MarkRiderOfflineParams) (Rider, error)
+	MarkWebhookDelivered(ctx context.Context, arg MarkWebhookDeliveredParams) error
+	MarkWebhookFailed(ctx context.Context, arg MarkWebhookFailedParams) error
+	MarkWebhookRetry(ctx context.Context, arg MarkWebhookRetryParams) error
 	RecordDeliveryAttempt(ctx context.Context, id string) (Order, error)
 	// The rider takes on n orders and one more accepted offer. The version bump makes a client holding a
 	// stale X-Expected-Version conflict, because the rider's state really did change.
@@ -118,6 +124,7 @@ type Querier interface {
 	// A batch may still contain picked-up orders. Detach a released assigned order
 	// from that batch so it can be offered again without stale stops or aggregates.
 	RemoveReleasedOrderFromBatch(ctx context.Context, arg RemoveReleasedOrderFromBatchParams) error
+	RetryWebhookDelivery(ctx context.Context, arg RetryWebhookDeliveryParams) (int64, error)
 	// A claim whose request never completed (a crash) can be taken over once it is older than the processing timeout.
 	TakeOverIdempotencyKey(ctx context.Context, arg TakeOverIdempotencyKeyParams) (int64, error)
 	UpdateRiderAvailability(ctx context.Context, arg UpdateRiderAvailabilityParams) (Rider, error)

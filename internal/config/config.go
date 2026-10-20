@@ -79,6 +79,7 @@ type Config struct {
 	Capacity CapacityConfig `mapstructure:",squash"`
 	Routing  RoutingConfig  `mapstructure:",squash"`
 	Auth     AuthConfig     `mapstructure:",squash"`
+	Webhooks WebhookConfig  `mapstructure:",squash"`
 }
 
 // CapacityConfig controls the shared rider-capacity policy.
@@ -103,6 +104,10 @@ type AuthConfig struct {
 	Mode       string        `mapstructure:"AUTH_MODE"`
 	SigningKey string        `mapstructure:"AUTH_SIGNING_KEY"`
 	TokenTTL   time.Duration `mapstructure:"AUTH_TOKEN_TTL"`
+}
+
+type WebhookConfig struct {
+	Enabled bool `mapstructure:"WEBHOOKS_ENABLED"`
 }
 
 // GeoConfig controls optional service-area validation for geographic inputs.
@@ -318,6 +323,7 @@ var defaults = map[string]any{
 	"AUTH_MODE":                      "apikey",
 	"AUTH_SIGNING_KEY":               "",
 	"AUTH_TOKEN_TTL":                 "15m",
+	"WEBHOOKS_ENABLED":               false,
 }
 
 // Load configuration

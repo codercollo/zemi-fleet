@@ -86,6 +86,8 @@ func (s *Server) router(extra ...func(*gin.Engine)) *gin.Engine {
 	v2.GET("/batches", s.requireScope("batches:accept"), s.listBatchesHandler)
 	v2.POST("/batches/:id/accept", s.requireRiderScope("batches:accept"), s.acceptBatchHandler)
 	v2.POST("/batches/:id/stops/:seq/complete", s.requireScope("batches:accept"), s.idempotent(), s.completeBatchStopHandler)
+	v2.GET("/webhooks/failed", s.requireScope("dispatcher"), s.failedWebhookDeliveriesHandler)
+	v2.POST("/webhooks/:id/retry", s.requireScope("dispatcher"), s.retryWebhookDeliveryHandler)
 
 	for _, register := range extra {
 		register(r)

@@ -27,6 +27,9 @@ func (s *SQLStore) SweepOfflineRiders(ctx context.Context, now time.Time, after 
 			if _, err := q.MarkRiderOffline(ctx, sqlc.MarkRiderOfflineParams{ID: rider.ID, OfflineFlaggedAt: &now}); err != nil {
 				return fmt.Errorf("flag rider %s: %w", rider.ID, err)
 			}
+			if err := writeOutboxEvent(ctx, q, "rider.offline", map[string]any{"rider_id": rider.ID}, now); err != nil {
+				return err
+			}
 			orders, err := q.ListAssignedOrdersForRider(ctx, &rider.ID)
 			if err != nil {
 				return fmt.Errorf("list assigned orders for %s: %w", rider.ID, err)

@@ -7,6 +7,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/codercollo/zemi-fleet/internal/capacity"
 	"github.com/codercollo/zemi-fleet/internal/domain"
 	"github.com/codercollo/zemi-fleet/internal/geo"
 	"github.com/codercollo/zemi-fleet/internal/repository/sqlc"
@@ -17,7 +18,9 @@ type AcceptBatchParams struct {
 	BatchID string
 	RiderID string
 	// Now is the clock's time: accepted_at, responded_at, and the expiry check all use it.
-	Now time.Time
+	Now      time.Time
+	Capacity capacity.Params
+	Timezone *time.Location
 }
 
 // AcceptBatchTx lets a rider claim an open batch. Exactly one rider can ever win a given batch.
@@ -78,7 +81,11 @@ func acceptBatch(ctx context.Context, q sqlc.Querier, arg AcceptBatchParams) (do
 	}
 
 	// 3. capacity
-	if int(rider.CurrentOrdersCount)+int(existing.OrdersCount) > int(rider.MaxCapacity) {
+	effective, err := acceptedCapacity(ctx, q, rider, arg)
+	if err != nil {
+		return domain.Batch{}, false, fmt.Errorf("calculate capacity: %w", err)
+	}
+	if int(rider.CurrentOrdersCount)+int(existing.OrdersCount) > effective {
 		return domain.Batch{}, false, domain.ErrRiderAtCapacity
 	}
 
@@ -134,6 +141,33 @@ func acceptBatch(ctx context.Context, q sqlc.Querier, arg AcceptBatchParams) (do
 
 	b, err := loadOne(ctx, q, claimed.ID)
 	return b, false, err
+}
+
+func acceptedCapacity(ctx context.Context, q sqlc.Querier, rider sqlc.Rider, arg AcceptBatchParams) (int, error) {
+	params := arg.Capacity
+	if params.Mode == "" {
+		params = capacity.DefaultParams(capacity.ModeCount)
+	}
+	in := capacity.Inputs{MaxCapacity: int(rider.MaxCapacity), CurrentOrders: int(rider.CurrentOrdersCount)}
+	if params.Mode == capacity.ModeDynamic {
+		loc := time.UTC
+		if arg.Timezone != nil {
+			loc = arg.Timezone
+		}
+		local := arg.Now.In(loc)
+		start := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, loc).UTC()
+		end := start.Add(24 * time.Hour)
+		stats, err := q.GetRiderCapacityStats(ctx, sqlc.GetRiderCapacityStatsParams{RiderID: &rider.ID, StartOfDay: &start, EndOfDay: &end, RecentStart: arg.Now.Add(-30 * 24 * time.Hour)})
+		if err != nil {
+			return 0, err
+		}
+		in.ActiveWeightG, in.ActiveVolumeCM3, in.DistanceTodayM = stats.ActiveWeightG, stats.ActiveVolumeCm3, stats.DistanceTodayM
+		in.Hour = local.Hour()
+		if stats.TotalBatches > 0 {
+			in.CompletionRate = float64(stats.CompletedBatches) / float64(stats.TotalBatches)
+		}
+	}
+	return capacity.EffectiveCapacity(in, params), nil
 }
 
 // heldBy reports whether the batch has already been accepted by this rider.

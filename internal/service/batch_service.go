@@ -18,15 +18,20 @@ import (
 
 // BatchService forms and offers batches of pending orders.
 type BatchService struct {
-	store   repository.Store
-	clock   clock.Clock
-	cfg     config.BatchConfig
-	metrics *metrics.Counters
+	store    repository.Store
+	clock    clock.Clock
+	cfg      config.BatchConfig
+	capacity capacityPolicy
+	metrics  *metrics.Counters
 }
 
 // NewBatchService wires the service to its store, clock and batching settings.
-func NewBatchService(store repository.Store, clk clock.Clock, cfg config.BatchConfig) *BatchService {
-	return &BatchService{store: store, clock: clk, cfg: cfg}
+func NewBatchService(store repository.Store, clk clock.Clock, cfg config.BatchConfig, capacityCfg ...config.CapacityConfig) *BatchService {
+	var cc config.CapacityConfig
+	if len(capacityCfg) > 0 {
+		cc = capacityCfg[0]
+	}
+	return &BatchService{store: store, clock: clk, cfg: cfg, capacity: newCapacityPolicy(cc)}
 }
 
 // WithMetrics makes the service count business events in c. Without it nothing is counted.
@@ -76,7 +81,11 @@ func (s *BatchService) CreateBatches(ctx context.Context, in CreateBatchesInput)
 		return nil, fmt.Errorf("get rider: %w", err)
 	}
 
-	spare := int(rider.MaxCapacity) - int(rider.CurrentOrdersCount)
+	effective, err := s.capacity.effective(ctx, s.store, rider, s.clock.Now())
+	if err != nil {
+		return nil, fmt.Errorf("calculate rider capacity: %w", err)
+	}
+	spare := effective - int(rider.CurrentOrdersCount)
 	if !rider.IsAvailable || spare <= 0 {
 		return []BatchOffer{}, nil
 	}
@@ -141,7 +150,11 @@ func (s *BatchService) CreateBatches(ctx context.Context, in CreateBatchesInput)
 // Errors: domain.ErrNotFound (rider or batch), ErrRiderUnavailable, ErrRiderAtCapacity, ErrBatchTaken.
 func (s *BatchService) Accept(ctx context.Context, batchID, riderID string) (domain.Batch, error) {
 	now := s.clock.Now()
-	batch, alreadyHeld, err := s.store.AcceptBatchTx(ctx, repository.AcceptBatchParams{BatchID: batchID, RiderID: riderID, Now: now})
+	arg := repository.AcceptBatchParams{BatchID: batchID, RiderID: riderID, Now: now}
+	if s.capacity.params.Mode == "dynamic" {
+		arg.Capacity, arg.Timezone = s.capacity.params, s.capacity.timezone
+	}
+	batch, alreadyHeld, err := s.store.AcceptBatchTx(ctx, arg)
 	switch {
 	case errors.Is(err, domain.ErrBatchTaken):
 		s.metrics.BatchAcceptConflict()

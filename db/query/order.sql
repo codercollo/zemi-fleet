@@ -2,9 +2,9 @@
 -- name: CreateOrder :one
 INSERT INTO orders (
     id, vendor_id, category_code, pickup_lat, pickup_lng, delivery_lat, delivery_lng,
-    trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps, urgency, created_at
+    trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps, urgency, weight_g, volume_cm3, created_at
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
 )
 RETURNING *;
 

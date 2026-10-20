@@ -459,6 +459,21 @@ func (mr *MockStoreMockRecorder) GetRider(ctx, id any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRider", reflect.TypeOf((*MockStore)(nil).GetRider), ctx, id)
 }
 
+// GetRiderCapacityStats mocks base method.
+func (m *MockStore) GetRiderCapacityStats(ctx context.Context, arg sqlc.GetRiderCapacityStatsParams) (sqlc.GetRiderCapacityStatsRow, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetRiderCapacityStats", ctx, arg)
+	ret0, _ := ret[0].(sqlc.GetRiderCapacityStatsRow)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetRiderCapacityStats indicates an expected call of GetRiderCapacityStats.
+func (mr *MockStoreMockRecorder) GetRiderCapacityStats(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRiderCapacityStats", reflect.TypeOf((*MockStore)(nil).GetRiderCapacityStats), ctx, arg)
+}
+
 // GetRiderForUpdate mocks base method.
 func (m *MockStore) GetRiderForUpdate(ctx context.Context, id string) (sqlc.Rider, error) {
 	m.ctrl.T.Helper()

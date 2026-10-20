@@ -975,6 +975,8 @@ components:
         value_kes: {type: number, exclusiveMinimum: true, minimum: 0, maximum: 10000000, description: 'The goods'' value in KES, at most 2 decimals and at most ORDER_MAX_VALUE_KES.'}
         delivery_fee_kes: {type: number, minimum: 0, maximum: 10000000, description: 'The delivery fee in KES, at most 2 decimals.'}
         urgency: {type: integer, minimum: 0, maximum: 100, default: 0, description: 'Optional priority urgency score used by priority batching.'}
+        weight_g: {type: integer, minimum: 0, description: 'Optional order weight used by dynamic rider capacity.'}
+        volume_cm3: {type: integer, minimum: 0, description: 'Optional order volume used by dynamic rider capacity.'}
     Order:
       type: object
       required: [id, vendor_id, category, status, pickup_location, delivery_location, trip_distance_km, trip_bearing_degrees, value_kes, delivery_fee_kes, rider_payout_percent, estimated_earnings_kes, platform_fee_kes, batch_id, rider_id, created_at, version]

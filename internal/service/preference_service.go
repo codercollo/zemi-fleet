@@ -12,6 +12,7 @@ import (
 	"github.com/codercollo/zemi-fleet/internal/matching"
 	"github.com/codercollo/zemi-fleet/internal/metrics"
 	"github.com/codercollo/zemi-fleet/internal/repository"
+	"github.com/codercollo/zemi-fleet/internal/repository/sqlc"
 )
 
 // PreferenceService ranks riders for an order by their preferences.
@@ -21,10 +22,15 @@ type PreferenceService struct {
 	params   matching.PrefParams
 	minTripM float64
 	metrics  *metrics.Counters
+	capacity capacityPolicy
 }
 
 // NewPreferenceService wires the service. Distances are kilometres in config and metres in the algorithm.
-func NewPreferenceService(store repository.Store, clk clock.Clock, cfg config.MatchConfig, minTripM int) *PreferenceService {
+func NewPreferenceService(store repository.Store, clk clock.Clock, cfg config.MatchConfig, minTripM int, capacityCfg ...config.CapacityConfig) *PreferenceService {
+	var cc config.CapacityConfig
+	if len(capacityCfg) > 0 {
+		cc = capacityCfg[0]
+	}
 	return &PreferenceService{
 		store: store,
 		clock: clk,
@@ -38,6 +44,7 @@ func NewPreferenceService(store repository.Store, clk clock.Clock, cfg config.Ma
 			},
 		},
 		minTripM: float64(minTripM),
+		capacity: newCapacityPolicy(cc),
 	}
 }
 
@@ -105,6 +112,13 @@ func (s *PreferenceService) MatchRiders(ctx context.Context, in MatchRidersInput
 
 	riders := make([]matching.PrefRider, 0, len(rows))
 	for _, r := range rows {
+		effective, err := s.capacity.effective(ctx, s.store, sqlc.Rider{ID: r.ID, MaxCapacity: r.MaxCapacity, CurrentOrdersCount: r.CurrentOrdersCount}, s.clock.Now())
+		if err != nil {
+			return nil, fmt.Errorf("calculate rider capacity: %w", err)
+		}
+		if int(r.CurrentOrdersCount) >= effective {
+			continue
+		}
 		pr := matching.PrefRider{
 			ID:                 r.ID,
 			Available:          r.IsAvailable,

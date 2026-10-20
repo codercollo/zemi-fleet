@@ -72,10 +72,17 @@ type Config struct {
 	// ShutdownTimeout is how long SIGINT/SIGTERM waits for in-flight requests to finish before the server gives up.
 	ShutdownTimeout time.Duration `mapstructure:"SHUTDOWN_TIMEOUT"`
 
-	Cone  ConeConfig  `mapstructure:",squash"`
-	Batch BatchConfig `mapstructure:",squash"`
-	Match MatchConfig `mapstructure:",squash"`
-	Geo   GeoConfig   `mapstructure:",squash"`
+	Cone     ConeConfig     `mapstructure:",squash"`
+	Batch    BatchConfig    `mapstructure:",squash"`
+	Match    MatchConfig    `mapstructure:",squash"`
+	Geo      GeoConfig      `mapstructure:",squash"`
+	Capacity CapacityConfig `mapstructure:",squash"`
+}
+
+// CapacityConfig controls the shared rider-capacity policy.
+type CapacityConfig struct {
+	Mode     string `mapstructure:"CAPACITY_MODE"`
+	Timezone string `mapstructure:"-"`
 }
 
 // GeoConfig controls optional service-area validation for geographic inputs.
@@ -278,6 +285,7 @@ var defaults = map[string]any{
 	"GEO_MAX_LAT":                    4.7,
 	"GEO_MIN_LNG":                    33.9,
 	"GEO_MAX_LNG":                    41.9,
+	"CAPACITY_MODE":                  "count",
 }
 
 // Load configuration
@@ -305,6 +313,7 @@ func Load(path string) (Config, error) {
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
 	}
+	cfg.Capacity.Timezone = cfg.Timezone
 	cfg.MetricsEnabled = onUnlessProduction(v, "METRICS_ENABLED", cfg.Env)
 	cfg.DocsEnabled = onUnlessProduction(v, "DOCS_ENABLED", cfg.Env)
 	cfg.APIKeys, _ = parseAPIKeys(cfg.APIKeysRaw, cfg.Env) // validate() has already reported any problem
@@ -371,6 +380,9 @@ func (c Config) validate() error {
 	errs = append(errs, c.Batch.validate()...)
 	errs = append(errs, c.Match.validate()...)
 	errs = append(errs, c.Geo.validate()...)
+	if c.Capacity.Mode != "count" && c.Capacity.Mode != "dynamic" {
+		errs = append(errs, fmt.Errorf("CAPACITY_MODE must be count or dynamic (got %q)", c.Capacity.Mode))
+	}
 	return errors.Join(errs...)
 }
 

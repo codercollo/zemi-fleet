@@ -243,6 +243,8 @@ type Order struct {
 	CancelReason           *string     `json:"cancel_reason"`
 	RiderCompensationCents int64       `json:"rider_compensation_cents"`
 	Urgency                int16       `json:"urgency"`
+	WeightG                int64       `json:"weight_g"`
+	VolumeCm3              int64       `json:"volume_cm3"`
 }
 
 type Rider struct {

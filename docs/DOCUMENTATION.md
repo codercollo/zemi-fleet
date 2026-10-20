@@ -1072,6 +1072,7 @@ on an invalid value. `.env.example` lists every key; `docker-compose.yml` passes
 | `BATCH_VISIBILITY_RADIUS_KM` | `3` | Default `radius_km` of `GET /batches` (a request may use up to the search radius) |
 | `BATCH_TTL` | `10m` | How long an open batch is offered before it expires and its orders return to `pending` |
 | `BATCH_EXPIRY_INTERVAL` | `0` | Background sweep cadence for expired open batches; `0` disables the worker and retains lazy expiry |
+| `CAPACITY_MODE` | `count` | Rider capacity policy: `count` or `dynamic`; dynamic uses active load, business-day completion rate, distance, and local night hours |
 | `AVG_SPEED_KMH` | `20` | Driving speed for time estimates |
 | `STOP_DWELL_MIN` | `2` | Minutes spent at each earlier stop |
 | `GEO_BOUNDS_ENABLED` | `false` | Reject coordinates outside the configured Kenya service-area bounds |

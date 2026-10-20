@@ -15,7 +15,7 @@ UPDATE orders
 SET status = 'cancelled', cancelled_at = $2, cancel_reason = $3,
     rider_compensation_cents = $4, version = version + 1
 WHERE id = $1 AND status IN ('assigned', 'picked_up')
-RETURNING id, vendor_id, category_code, status, pickup_lat, pickup_lng, delivery_lat, delivery_lng, trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps, rider_earnings_cents, platform_fee_cents, batch_id, rider_id, batch_seq, created_at, updated_at, delivered_at, version, delivery_attempts, cancelled_at, cancel_reason, rider_compensation_cents, urgency
+RETURNING id, vendor_id, category_code, status, pickup_lat, pickup_lng, delivery_lat, delivery_lng, trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps, rider_earnings_cents, platform_fee_cents, batch_id, rider_id, batch_seq, created_at, updated_at, delivered_at, version, delivery_attempts, cancelled_at, cancel_reason, rider_compensation_cents, urgency, weight_g, volume_cm3
 `
 
 type CancelOrderParams struct {
@@ -61,6 +61,8 @@ func (q *Queries) CancelOrder(ctx context.Context, arg CancelOrderParams) (Order
 		&i.CancelReason,
 		&i.RiderCompensationCents,
 		&i.Urgency,
+		&i.WeightG,
+		&i.VolumeCm3,
 	)
 	return i, err
 }
@@ -196,7 +198,7 @@ func (q *Queries) GetBatchStop(ctx context.Context, arg GetBatchStopParams) (Bat
 }
 
 const getOrderForUpdate = `-- name: GetOrderForUpdate :one
-SELECT id, vendor_id, category_code, status, pickup_lat, pickup_lng, delivery_lat, delivery_lng, trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps, rider_earnings_cents, platform_fee_cents, batch_id, rider_id, batch_seq, created_at, updated_at, delivered_at, version, delivery_attempts, cancelled_at, cancel_reason, rider_compensation_cents, urgency FROM orders WHERE id = $1 FOR UPDATE
+SELECT id, vendor_id, category_code, status, pickup_lat, pickup_lng, delivery_lat, delivery_lng, trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps, rider_earnings_cents, platform_fee_cents, batch_id, rider_id, batch_seq, created_at, updated_at, delivered_at, version, delivery_attempts, cancelled_at, cancel_reason, rider_compensation_cents, urgency, weight_g, volume_cm3 FROM orders WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) GetOrderForUpdate(ctx context.Context, id string) (Order, error) {
@@ -230,6 +232,8 @@ func (q *Queries) GetOrderForUpdate(ctx context.Context, id string) (Order, erro
 		&i.CancelReason,
 		&i.RiderCompensationCents,
 		&i.Urgency,
+		&i.WeightG,
+		&i.VolumeCm3,
 	)
 	return i, err
 }
@@ -269,7 +273,7 @@ func (q *Queries) MarkBatchInProgress(ctx context.Context, id string) (int64, er
 const markOrderDelivered = `-- name: MarkOrderDelivered :one
 UPDATE orders SET status = 'delivered', delivered_at = $2, version = version + 1
 WHERE id = $1 AND status = 'picked_up'
-RETURNING id, vendor_id, category_code, status, pickup_lat, pickup_lng, delivery_lat, delivery_lng, trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps, rider_earnings_cents, platform_fee_cents, batch_id, rider_id, batch_seq, created_at, updated_at, delivered_at, version, delivery_attempts, cancelled_at, cancel_reason, rider_compensation_cents, urgency
+RETURNING id, vendor_id, category_code, status, pickup_lat, pickup_lng, delivery_lat, delivery_lng, trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps, rider_earnings_cents, platform_fee_cents, batch_id, rider_id, batch_seq, created_at, updated_at, delivered_at, version, delivery_attempts, cancelled_at, cancel_reason, rider_compensation_cents, urgency, weight_g, volume_cm3
 `
 
 type MarkOrderDeliveredParams struct {
@@ -308,6 +312,8 @@ func (q *Queries) MarkOrderDelivered(ctx context.Context, arg MarkOrderDelivered
 		&i.CancelReason,
 		&i.RiderCompensationCents,
 		&i.Urgency,
+		&i.WeightG,
+		&i.VolumeCm3,
 	)
 	return i, err
 }
@@ -315,7 +321,7 @@ func (q *Queries) MarkOrderDelivered(ctx context.Context, arg MarkOrderDelivered
 const markOrderPickedUp = `-- name: MarkOrderPickedUp :one
 UPDATE orders SET status = 'picked_up', version = version + 1
 WHERE id = $1 AND status = 'assigned'
-RETURNING id, vendor_id, category_code, status, pickup_lat, pickup_lng, delivery_lat, delivery_lng, trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps, rider_earnings_cents, platform_fee_cents, batch_id, rider_id, batch_seq, created_at, updated_at, delivered_at, version, delivery_attempts, cancelled_at, cancel_reason, rider_compensation_cents, urgency
+RETURNING id, vendor_id, category_code, status, pickup_lat, pickup_lng, delivery_lat, delivery_lng, trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps, rider_earnings_cents, platform_fee_cents, batch_id, rider_id, batch_seq, created_at, updated_at, delivered_at, version, delivery_attempts, cancelled_at, cancel_reason, rider_compensation_cents, urgency, weight_g, volume_cm3
 `
 
 func (q *Queries) MarkOrderPickedUp(ctx context.Context, id string) (Order, error) {
@@ -349,6 +355,8 @@ func (q *Queries) MarkOrderPickedUp(ctx context.Context, id string) (Order, erro
 		&i.CancelReason,
 		&i.RiderCompensationCents,
 		&i.Urgency,
+		&i.WeightG,
+		&i.VolumeCm3,
 	)
 	return i, err
 }
@@ -356,7 +364,7 @@ func (q *Queries) MarkOrderPickedUp(ctx context.Context, id string) (Order, erro
 const markOrderReturned = `-- name: MarkOrderReturned :one
 UPDATE orders SET status = 'returned', version = version + 1
 WHERE id = $1 AND status = 'returning'
-RETURNING id, vendor_id, category_code, status, pickup_lat, pickup_lng, delivery_lat, delivery_lng, trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps, rider_earnings_cents, platform_fee_cents, batch_id, rider_id, batch_seq, created_at, updated_at, delivered_at, version, delivery_attempts, cancelled_at, cancel_reason, rider_compensation_cents, urgency
+RETURNING id, vendor_id, category_code, status, pickup_lat, pickup_lng, delivery_lat, delivery_lng, trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps, rider_earnings_cents, platform_fee_cents, batch_id, rider_id, batch_seq, created_at, updated_at, delivered_at, version, delivery_attempts, cancelled_at, cancel_reason, rider_compensation_cents, urgency, weight_g, volume_cm3
 `
 
 func (q *Queries) MarkOrderReturned(ctx context.Context, id string) (Order, error) {
@@ -390,6 +398,8 @@ func (q *Queries) MarkOrderReturned(ctx context.Context, id string) (Order, erro
 		&i.CancelReason,
 		&i.RiderCompensationCents,
 		&i.Urgency,
+		&i.WeightG,
+		&i.VolumeCm3,
 	)
 	return i, err
 }
@@ -400,7 +410,7 @@ SET delivery_attempts = delivery_attempts + 1,
     status = CASE WHEN delivery_attempts + 1 = 3 THEN 'returning' ELSE status END,
     version = version + 1
 WHERE id = $1 AND status = 'picked_up' AND delivery_attempts < 3
-RETURNING id, vendor_id, category_code, status, pickup_lat, pickup_lng, delivery_lat, delivery_lng, trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps, rider_earnings_cents, platform_fee_cents, batch_id, rider_id, batch_seq, created_at, updated_at, delivered_at, version, delivery_attempts, cancelled_at, cancel_reason, rider_compensation_cents, urgency
+RETURNING id, vendor_id, category_code, status, pickup_lat, pickup_lng, delivery_lat, delivery_lng, trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps, rider_earnings_cents, platform_fee_cents, batch_id, rider_id, batch_seq, created_at, updated_at, delivered_at, version, delivery_attempts, cancelled_at, cancel_reason, rider_compensation_cents, urgency, weight_g, volume_cm3
 `
 
 func (q *Queries) RecordDeliveryAttempt(ctx context.Context, id string) (Order, error) {
@@ -434,6 +444,8 @@ func (q *Queries) RecordDeliveryAttempt(ctx context.Context, id string) (Order, 
 		&i.CancelReason,
 		&i.RiderCompensationCents,
 		&i.Urgency,
+		&i.WeightG,
+		&i.VolumeCm3,
 	)
 	return i, err
 }

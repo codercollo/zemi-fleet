@@ -30,9 +30,9 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, clk clock.C
 	server := api.NewServer(cfg, logger, pool, api.Services{
 		Orders:      service.NewOrderService(store, clk, cfg.RiderPayoutBPS, cfg.OrderMinTripM).WithMetrics(counters),
 		Riders:      service.NewRiderService(store, clk),
-		Matching:    service.NewMatchingService(store, clk, logger, cfg.Cone).WithMetrics(counters),
-		Batches:     service.NewBatchService(store, clk, cfg.Batch).WithMetrics(counters),
-		Preferences: service.NewPreferenceService(store, clk, cfg.Match, cfg.OrderMinTripM).WithMetrics(counters),
+		Matching:    service.NewMatchingService(store, clk, logger, cfg.Cone, cfg.Capacity).WithMetrics(counters),
+		Batches:     service.NewBatchService(store, clk, cfg.Batch, cfg.Capacity).WithMetrics(counters),
+		Preferences: service.NewPreferenceService(store, clk, cfg.Match, cfg.OrderMinTripM, cfg.Capacity).WithMetrics(counters),
 		Idempotency: service.NewIdempotencyService(store, clk, cfg.IdempotencyTTL, cfg.IdempotencyProcessingTimeout).WithMetrics(counters),
 		Lifecycle:   service.NewLifecycleService(store, clk, cfg.CancelCompensationBPS, service.NoopEventSink{}),
 		Offline:     service.NewOfflineService(store, clk, service.NoopEventSink{}),

@@ -64,6 +64,9 @@ type Querier interface {
 	GetOrderRider(ctx context.Context, id string) (GetOrderRiderRow, error)
 	GetPreferences(ctx context.Context, riderID string) (RiderPreference, error)
 	GetRider(ctx context.Context, id string) (Rider, error)
+	// Capacity inputs are aggregated in one query so every caller uses the same snapshot.
+	// start_of_day/end_of_day are the business-day boundary in UTC.
+	GetRiderCapacityStats(ctx context.Context, arg GetRiderCapacityStatsParams) (GetRiderCapacityStatsRow, error)
 	// Row lock: serialises concurrent preference replacements for one rider.
 	GetRiderForUpdate(ctx context.Context, id string) (Rider, error)
 	GetVendor(ctx context.Context, id string) (Vendor, error)

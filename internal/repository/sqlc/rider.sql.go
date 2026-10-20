@@ -287,7 +287,7 @@ const releaseAssignedOrder = `-- name: ReleaseAssignedOrder :one
 UPDATE orders
 SET status = 'pending', batch_id = NULL, rider_id = NULL, batch_seq = NULL, version = version + 1
 WHERE id = $1 AND status = 'assigned'
-RETURNING id, vendor_id, category_code, status, pickup_lat, pickup_lng, delivery_lat, delivery_lng, trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps, rider_earnings_cents, platform_fee_cents, batch_id, rider_id, batch_seq, created_at, updated_at, delivered_at, version, delivery_attempts, cancelled_at, cancel_reason, rider_compensation_cents, urgency
+RETURNING id, vendor_id, category_code, status, pickup_lat, pickup_lng, delivery_lat, delivery_lng, trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps, rider_earnings_cents, platform_fee_cents, batch_id, rider_id, batch_seq, created_at, updated_at, delivered_at, version, delivery_attempts, cancelled_at, cancel_reason, rider_compensation_cents, urgency, weight_g, volume_cm3
 `
 
 func (q *Queries) ReleaseAssignedOrder(ctx context.Context, id string) (Order, error) {
@@ -321,6 +321,8 @@ func (q *Queries) ReleaseAssignedOrder(ctx context.Context, id string) (Order, e
 		&i.CancelReason,
 		&i.RiderCompensationCents,
 		&i.Urgency,
+		&i.WeightG,
+		&i.VolumeCm3,
 	)
 	return i, err
 }

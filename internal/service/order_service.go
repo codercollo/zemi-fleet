@@ -46,6 +46,7 @@ type CreateOrderInput struct {
 	Delivery         domain.Location
 	ValueCents       int64
 	DeliveryFeeCents int64
+	Urgency          int
 }
 
 // Create stores a new pending order. The pickup point is snapshotted from the
@@ -94,6 +95,7 @@ func (s *OrderService) Create(ctx context.Context, in CreateOrderInput) (domain.
 		ValueCents:       in.ValueCents,
 		DeliveryFeeCents: in.DeliveryFeeCents,
 		RiderPayoutBps:   int32(s.payoutBPS),
+		Urgency:          int16(in.Urgency),
 		CreatedAt:        now,
 	})
 	if err != nil {

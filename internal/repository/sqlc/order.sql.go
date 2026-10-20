@@ -13,11 +13,11 @@ import (
 const createOrder = `-- name: CreateOrder :one
 INSERT INTO orders (
     id, vendor_id, category_code, pickup_lat, pickup_lng, delivery_lat, delivery_lng,
-    trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps, created_at
+    trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps, urgency, created_at
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
 )
-RETURNING id, vendor_id, category_code, status, pickup_lat, pickup_lng, delivery_lat, delivery_lng, trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps, rider_earnings_cents, platform_fee_cents, batch_id, rider_id, batch_seq, created_at, updated_at, delivered_at, version, delivery_attempts, cancelled_at, cancel_reason, rider_compensation_cents
+RETURNING id, vendor_id, category_code, status, pickup_lat, pickup_lng, delivery_lat, delivery_lng, trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps, rider_earnings_cents, platform_fee_cents, batch_id, rider_id, batch_seq, created_at, updated_at, delivered_at, version, delivery_attempts, cancelled_at, cancel_reason, rider_compensation_cents, urgency
 `
 
 type CreateOrderParams struct {
@@ -33,6 +33,7 @@ type CreateOrderParams struct {
 	ValueCents       int64     `json:"value_cents"`
 	DeliveryFeeCents int64     `json:"delivery_fee_cents"`
 	RiderPayoutBps   int32     `json:"rider_payout_bps"`
+	Urgency          int16     `json:"urgency"`
 	CreatedAt        time.Time `json:"created_at"`
 }
 
@@ -51,6 +52,7 @@ func (q *Queries) CreateOrder(ctx context.Context, arg CreateOrderParams) (Order
 		arg.ValueCents,
 		arg.DeliveryFeeCents,
 		arg.RiderPayoutBps,
+		arg.Urgency,
 		arg.CreatedAt,
 	)
 	var i Order
@@ -81,12 +83,13 @@ func (q *Queries) CreateOrder(ctx context.Context, arg CreateOrderParams) (Order
 		&i.CancelledAt,
 		&i.CancelReason,
 		&i.RiderCompensationCents,
+		&i.Urgency,
 	)
 	return i, err
 }
 
 const getOrder = `-- name: GetOrder :one
-SELECT id, vendor_id, category_code, status, pickup_lat, pickup_lng, delivery_lat, delivery_lng, trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps, rider_earnings_cents, platform_fee_cents, batch_id, rider_id, batch_seq, created_at, updated_at, delivered_at, version, delivery_attempts, cancelled_at, cancel_reason, rider_compensation_cents FROM orders WHERE id = $1
+SELECT id, vendor_id, category_code, status, pickup_lat, pickup_lng, delivery_lat, delivery_lng, trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps, rider_earnings_cents, platform_fee_cents, batch_id, rider_id, batch_seq, created_at, updated_at, delivered_at, version, delivery_attempts, cancelled_at, cancel_reason, rider_compensation_cents, urgency FROM orders WHERE id = $1
 `
 
 func (q *Queries) GetOrder(ctx context.Context, id string) (Order, error) {
@@ -119,6 +122,7 @@ func (q *Queries) GetOrder(ctx context.Context, id string) (Order, error) {
 		&i.CancelledAt,
 		&i.CancelReason,
 		&i.RiderCompensationCents,
+		&i.Urgency,
 	)
 	return i, err
 }

@@ -51,6 +51,7 @@ type createOrderRequest struct {
 	DeliveryLocation *locationInput `json:"delivery_location"`
 	ValueKES         *float64       `json:"value_kes"`
 	DeliveryFeeKES   *float64       `json:"delivery_fee_kes"`
+	Urgency          *int           `json:"urgency"`
 }
 
 // createOrderHandler handles POST /api/v2/orders.
@@ -73,6 +74,11 @@ func (s *Server) createOrderHandler(c *gin.Context) {
 
 	valueCents := checkAmount(v, "value_kes", req.ValueKES, true, s.cfg.OrderMaxValueKES)
 	feeCents := checkAmount(v, "delivery_fee_kes", req.DeliveryFeeKES, false, s.cfg.OrderMaxDeliveryFeeKES)
+	urgency := 0
+	if req.Urgency != nil {
+		v.Check(*req.Urgency >= 0 && *req.Urgency <= 100, "urgency", "must be between 0 and 100")
+		urgency = *req.Urgency
+	}
 	if !v.Valid() {
 		s.failedValidationResponse(c, v.Errors)
 		return
@@ -84,6 +90,7 @@ func (s *Server) createOrderHandler(c *gin.Context) {
 		Delivery:         delivery,
 		ValueCents:       valueCents,
 		DeliveryFeeCents: feeCents,
+		Urgency:          urgency,
 	})
 	if err != nil {
 		s.handleServiceError(c, err)

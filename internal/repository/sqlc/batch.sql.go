@@ -678,13 +678,15 @@ func (q *Queries) ListOpenBatchesNearPoint(ctx context.Context, arg ListOpenBatc
 }
 
 const listPendingOrdersForBatching = `-- name: ListPendingOrdersForBatching :many
-SELECT id, pickup_lat, pickup_lng, delivery_lat, delivery_lng, created_at, delivery_fee_cents, rider_earnings_cents
-FROM orders
-WHERE status = 'pending'
-  AND pickup_lat BETWEEN $1::float8 AND $2::float8
-  AND pickup_lng BETWEEN $3::float8 AND $4::float8
-ORDER BY created_at, id
-FOR UPDATE SKIP LOCKED
+SELECT o.id, o.pickup_lat, o.pickup_lng, o.delivery_lat, o.delivery_lng, o.created_at,
+       o.delivery_fee_cents, o.rider_earnings_cents, o.value_cents, v.rating, o.urgency
+FROM orders o
+JOIN vendors v ON v.id = o.vendor_id
+WHERE o.status = 'pending'
+  AND o.pickup_lat BETWEEN $1::float8 AND $2::float8
+  AND o.pickup_lng BETWEEN $3::float8 AND $4::float8
+ORDER BY o.created_at, o.id
+FOR UPDATE OF o SKIP LOCKED
 `
 
 type ListPendingOrdersForBatchingParams struct {
@@ -703,6 +705,9 @@ type ListPendingOrdersForBatchingRow struct {
 	CreatedAt          time.Time `json:"created_at"`
 	DeliveryFeeCents   int64     `json:"delivery_fee_cents"`
 	RiderEarningsCents *int64    `json:"rider_earnings_cents"`
+	ValueCents         int64     `json:"value_cents"`
+	Rating             float64   `json:"rating"`
+	Urgency            int16     `json:"urgency"`
 }
 
 // Pending pickups inside a bounding box, oldest first, row-locked. SKIP LOCKED means a concurrent
@@ -730,6 +735,9 @@ func (q *Queries) ListPendingOrdersForBatching(ctx context.Context, arg ListPend
 			&i.CreatedAt,
 			&i.DeliveryFeeCents,
 			&i.RiderEarningsCents,
+			&i.ValueCents,
+			&i.Rating,
+			&i.Urgency,
 		); err != nil {
 			return nil, err
 		}

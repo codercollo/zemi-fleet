@@ -131,6 +131,20 @@ type BatchConfig struct {
 	// AvgSpeedKMH and StopDwellMin drive the delivery time estimates.
 	AvgSpeedKMH  float64 `mapstructure:"AVG_SPEED_KMH"`
 	StopDwellMin float64 `mapstructure:"STOP_DWELL_MIN"`
+	// Ordering selects FIFO or priority ordering for newly formed batches.
+	Ordering string `mapstructure:"BATCH_ORDERING"`
+	// RadiusMode selects the fixed requested radius or density-based narrowing.
+	RadiusMode            string  `mapstructure:"BATCH_RADIUS_MODE"`
+	WeightAge             float64 `mapstructure:"BATCH_WEIGHT_AGE"`
+	WeightValue           float64 `mapstructure:"BATCH_WEIGHT_VALUE"`
+	WeightRating          float64 `mapstructure:"BATCH_WEIGHT_RATING"`
+	WeightUrgency         float64 `mapstructure:"BATCH_WEIGHT_URGENCY"`
+	DensityRadiusKM       float64 `mapstructure:"BATCH_DENSITY_RADIUS_KM"`
+	DensityLowThreshold   int     `mapstructure:"BATCH_DENSITY_LOW_THRESHOLD"`
+	DensityHighThreshold  int     `mapstructure:"BATCH_DENSITY_HIGH_THRESHOLD"`
+	DensityLowRadiusKM    float64 `mapstructure:"BATCH_DENSITY_LOW_RADIUS_KM"`
+	DensityMediumRadiusKM float64 `mapstructure:"BATCH_DENSITY_MEDIUM_RADIUS_KM"`
+	DensityHighRadiusKM   float64 `mapstructure:"BATCH_DENSITY_HIGH_RADIUS_KM"`
 }
 
 // Limits for validating the batch settings. MaxBatchOrders mirrors the batches.orders_count CHECK.
@@ -247,6 +261,18 @@ var defaults = map[string]any{
 	"BATCH_EXPIRY_INTERVAL":          "0",
 	"AVG_SPEED_KMH":                  20,
 	"STOP_DWELL_MIN":                 2,
+	"BATCH_ORDERING":                 "fifo",
+	"BATCH_RADIUS_MODE":              "fixed",
+	"BATCH_WEIGHT_AGE":               0.4,
+	"BATCH_WEIGHT_VALUE":             0.3,
+	"BATCH_WEIGHT_RATING":            0.2,
+	"BATCH_WEIGHT_URGENCY":           0.1,
+	"BATCH_DENSITY_RADIUS_KM":        1,
+	"BATCH_DENSITY_LOW_THRESHOLD":    5,
+	"BATCH_DENSITY_HIGH_THRESHOLD":   15,
+	"BATCH_DENSITY_LOW_RADIUS_KM":    2,
+	"BATCH_DENSITY_MEDIUM_RADIUS_KM": 1.5,
+	"BATCH_DENSITY_HIGH_RADIUS_KM":   1,
 	"GEO_BOUNDS_ENABLED":             false,
 	"GEO_MIN_LAT":                    -4.7,
 	"GEO_MAX_LAT":                    4.7,
@@ -432,6 +458,39 @@ func (b BatchConfig) validate() []error {
 	}
 	if b.StopDwellMin < 0 || b.StopDwellMin > maxBatchDwellMin {
 		errs = append(errs, fmt.Errorf("STOP_DWELL_MIN must be between 0 and %v (got %v)", maxBatchDwellMin, b.StopDwellMin))
+	}
+	if b.Ordering != "fifo" && b.Ordering != "priority" {
+		errs = append(errs, fmt.Errorf("BATCH_ORDERING must be fifo or priority (got %q)", b.Ordering))
+	}
+	if b.RadiusMode != "fixed" && b.RadiusMode != "adaptive" {
+		errs = append(errs, fmt.Errorf("BATCH_RADIUS_MODE must be fixed or adaptive (got %q)", b.RadiusMode))
+	}
+	weights := map[string]float64{
+		"BATCH_WEIGHT_AGE": b.WeightAge, "BATCH_WEIGHT_VALUE": b.WeightValue,
+		"BATCH_WEIGHT_RATING": b.WeightRating, "BATCH_WEIGHT_URGENCY": b.WeightUrgency,
+	}
+	negative := false
+	for name, w := range weights {
+		if w < 0 || w > 1 {
+			negative = true
+			errs = append(errs, fmt.Errorf("%s must be between 0 and 1 (got %v)", name, w))
+		}
+	}
+	if sum := b.WeightAge + b.WeightValue + b.WeightRating + b.WeightUrgency; !negative && math.Abs(sum-1) > weightSumTolerance {
+		errs = append(errs, fmt.Errorf("the BATCH_WEIGHT_* values must sum to 1.0 (got %v)", sum))
+	}
+	if b.DensityRadiusKM <= 0 || b.DensityRadiusKM > maxBatchRadiusKM {
+		errs = append(errs, fmt.Errorf("BATCH_DENSITY_RADIUS_KM must be greater than 0 and at most %v (got %v)", maxBatchRadiusKM, b.DensityRadiusKM))
+	}
+	if b.DensityLowThreshold < 0 || b.DensityHighThreshold <= b.DensityLowThreshold {
+		errs = append(errs, fmt.Errorf("BATCH_DENSITY thresholds must be non-negative and low must be below high"))
+	}
+	for name, radius := range map[string]float64{
+		"BATCH_DENSITY_LOW_RADIUS_KM": b.DensityLowRadiusKM, "BATCH_DENSITY_MEDIUM_RADIUS_KM": b.DensityMediumRadiusKM, "BATCH_DENSITY_HIGH_RADIUS_KM": b.DensityHighRadiusKM,
+	} {
+		if radius <= 0 || radius > maxBatchRadiusKM {
+			errs = append(errs, fmt.Errorf("%s must be greater than 0 and at most %v (got %v)", name, maxBatchRadiusKM, radius))
+		}
 	}
 	return errs
 }

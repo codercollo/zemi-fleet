@@ -242,6 +242,7 @@ type Order struct {
 	CancelledAt            *time.Time  `json:"cancelled_at"`
 	CancelReason           *string     `json:"cancel_reason"`
 	RiderCompensationCents int64       `json:"rider_compensation_cents"`
+	Urgency                int16       `json:"urgency"`
 }
 
 type Rider struct {
@@ -289,4 +290,5 @@ type Vendor struct {
 	Lng       float64   `json:"lng"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	Rating    float64   `json:"rating"`
 }

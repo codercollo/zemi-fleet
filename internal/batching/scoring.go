@@ -2,10 +2,22 @@ package batching
 
 import (
 	"math"
+	"time"
 
 	"github.com/codercollo/zemi-fleet/internal/domain"
 	"github.com/codercollo/zemi-fleet/internal/geo"
 )
+
+// PriorityScore ranks an order for priority batching. Age is deliberately
+// unbounded, so a waiting order eventually outranks any finite value/rating/
+// urgency advantage. FIFO remains the deterministic tie-break in Form.
+func PriorityScore(o Order, now time.Time, p Params) float64 {
+	ageHours := math.Max(now.Sub(o.CreatedAt).Hours(), 0)
+	value := math.Log1p(math.Max(float64(o.ValueCents), 0))
+	rating := math.Max(0, math.Min(5, o.VendorRating)) / 5
+	urgency := math.Max(0, math.Min(100, float64(o.Urgency))) / 100
+	return p.WeightAge*ageHours + p.WeightValue*value + p.WeightRating*rating + p.WeightUrgency*urgency
+}
 
 const (
 	secondsPerMinute = 60.0

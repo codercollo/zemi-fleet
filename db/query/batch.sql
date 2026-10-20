@@ -26,13 +26,15 @@ WHERE batch_id = ANY(sqlc.arg(batch_ids)::text[]) AND status = 'batched';
 -- name: ListPendingOrdersForBatching :many
 -- Pending pickups inside a bounding box, oldest first, row-locked. SKIP LOCKED means a concurrent
 -- batch request that already holds an order simply does not see it, so no order is batched twice.
-SELECT id, pickup_lat, pickup_lng, delivery_lat, delivery_lng, created_at, delivery_fee_cents, rider_earnings_cents
-FROM orders
-WHERE status = 'pending'
-  AND pickup_lat BETWEEN sqlc.arg(min_lat)::float8 AND sqlc.arg(max_lat)::float8
-  AND pickup_lng BETWEEN sqlc.arg(min_lng)::float8 AND sqlc.arg(max_lng)::float8
-ORDER BY created_at, id
-FOR UPDATE SKIP LOCKED;
+SELECT o.id, o.pickup_lat, o.pickup_lng, o.delivery_lat, o.delivery_lng, o.created_at,
+       o.delivery_fee_cents, o.rider_earnings_cents, o.value_cents, v.rating, o.urgency
+FROM orders o
+JOIN vendors v ON v.id = o.vendor_id
+WHERE o.status = 'pending'
+  AND o.pickup_lat BETWEEN sqlc.arg(min_lat)::float8 AND sqlc.arg(max_lat)::float8
+  AND o.pickup_lng BETWEEN sqlc.arg(min_lng)::float8 AND sqlc.arg(max_lng)::float8
+ORDER BY o.created_at, o.id
+FOR UPDATE OF o SKIP LOCKED;
 
 -- name: CreateBatch :one
 INSERT INTO batches (

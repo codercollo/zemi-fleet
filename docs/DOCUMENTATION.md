@@ -670,6 +670,12 @@ records no offers and expires nothing, it only filters on `expires_at`.
 
 #### Forming batches (`Form`)
 
+`BATCH_ORDERING=fifo` preserves the original `created_at`, then ID ordering. With `priority`, the pure batcher
+scores age (unbounded elapsed hours), order value, vendor rating (0–5), and optional urgency (0–100) using the
+configured weights. Higher priority wins; equal scores use `created_at` and ID as the final deterministic FIFO tie-break.
+When `BATCH_RADIUS_MODE=adaptive`, pickup density around each seed selects a narrower configured radius. The
+effective radius is always `min(requested radius, adaptive radius)`, so adaptive mode never widens the 2 km ceiling.
+
 1. Sort orders by `created_at`, then `id` (**FIFO**).
 2. The **seed** is the oldest order not yet in a batch.
 3. Walk the remaining unused orders in FIFO order and add one if **both** hold:
@@ -1053,6 +1059,12 @@ on an invalid value. `.env.example` lists every key; `docker-compose.yml` passes
 | `CONE_MIN_SPEED_KMH` | `3` | Below this speed (or with no heading) the full circle is used |
 | `CONE_MAX_RESULTS` | `20` | Cap on `matching_orders` |
 | `BATCH_MAX_ORDERS` | `5` | Largest batch (1 to 5) and the largest `max_orders` a request may use |
+| `BATCH_ORDERING` | `fifo` | New batch ordering: `fifo` or `priority`; FIFO is the default-compatible mode |
+| `BATCH_RADIUS_MODE` | `fixed` | Pickup radius mode: `fixed` or density-based `adaptive` narrowing |
+| `BATCH_WEIGHT_AGE` / `_VALUE` / `_RATING` / `_URGENCY` | `0.4` / `0.3` / `0.2` / `0.1` | Priority score weights; must sum to 1.0 |
+| `BATCH_DENSITY_RADIUS_KM` | `1` | Radius used to count pickups around each priority seed |
+| `BATCH_DENSITY_LOW_THRESHOLD` / `_HIGH_THRESHOLD` | `5` / `15` | Inclusive density thresholds for low, medium and high-density areas |
+| `BATCH_DENSITY_LOW_RADIUS_KM` / `_MEDIUM_RADIUS_KM` / `_HIGH_RADIUS_KM` | `2` / `1.5` / `1` | Adaptive pairwise radii; never widen the request's radius |
 | `SPATIAL_QUERY_MODE` | `legacy` | Batch listing candidate path: `legacy` filters and pages in Go; `sql` performs exact radius filtering, ordering, count and paging in PostgreSQL |
 | `BATCH_PICKUP_RADIUS_KM` | `2` | Largest `radius_km` a request may use (the pairwise pickup radius) |
 | `BATCH_DIRECTION_TOLERANCE_DEG` | `45` | Largest difference between a trip's bearing and the batch seed's |
@@ -1217,7 +1229,7 @@ lists the known gaps.
 
 ## Database Schema
 
-PostgreSQL 16, migrations in `db/migrations` (`000001_init_schema` through `000005_rider_offline_flag`; each has an `up` and a `down`, and CI runs up, down, up).
+PostgreSQL 16, migrations in `db/migrations` (`000001_init_schema` through `000006_batch_priority`; each has an `up` and a `down`, and CI runs up, down, up).
 All timestamps are `TIMESTAMPTZ`; business timestamps come from the application clock, not `now()`.
 
 ```mermaid
@@ -1267,6 +1279,7 @@ erDiagram
         text batch_id FK
         text rider_id FK
         smallint batch_seq
+        smallint urgency "0..100"
         timestamptz created_at "FIFO key"
     }
     batches {
@@ -1316,11 +1329,11 @@ erDiagram
 |---|---|---|
 | `categories` | Order categories (`electronics`, `food`, ...) | PK `code`, `CHECK (code ~ '^[a-z][a-z_]{1,39}$')` |
 | `areas` | Named coverage circles: centre plus `radius_m` | `name` unique; `radius_m` between 500 and 20000; lat/lng range checks. Areas may overlap on purpose |
-| `vendors` | Pickup origins | `phone ~ '^\+254[0-9]{9}$'`; lat/lng range checks |
+| `vendors` | Pickup origins | `phone ~ '^\+254[0-9]{9}$'`; lat/lng range checks; `rating` between 0 and 5 for priority batching |
 | `riders` | A rider (`full_name` + unique `+254` `phone`), shift flag, capacity, last location/bearing/speed, offline flag, offer counters | `chk_riders_capacity` (`0 <= current_orders_count <= max_capacity`, capacity 1 to 5), `chk_riders_accepts` (`accepted <= offers`), `chk_riders_location` (lat and lng both set or both null); `acceptance_rate` is a **generated** column (`accepted / offers`, 0 with no offers) so it cannot drift; `offline_flagged_at` is set by the managed stale-rider sweep; `version` for document updates; partial indexes `idx_riders_available_location` and `idx_riders_offline_candidates` |
 | `rider_preferences` | 1:1 settings: `min_order_value_cents` | PK = FK `rider_id` (cascade), `>= 0` |
 | `rider_preferred_categories`, `rider_preferred_areas` | M:N preferences; **no rows = no preference = accepts everything** | Composite PKs; indexes on the category and area side |
-| `orders` | Pickup/delivery coordinates (pickup snapshotted from the vendor), precomputed `trip_distance_m` and `trip_bearing_deg`, `value_cents`, `delivery_fee_cents`, `rider_payout_bps`, status, batch/rider assignment | `value_cents > 0`; `rider_earnings_cents` and `platform_fee_cents` are **generated** from fee and bps, so rider + platform always equals the fee; `chk_orders_assignment` ties status to assignment (pending has no batch or rider, batched has a batch, assigned/picked_up/delivered have a rider); partial indexes `idx_orders_pending_pickup (pickup_lat, pickup_lng, created_at) WHERE status='pending'` and `idx_orders_pending_created` serve batching and cone matching; indexes on `batch_id`, `rider_id`, `vendor_id` |
+| `orders` | Pickup/delivery coordinates (pickup snapshotted from the vendor), precomputed `trip_distance_m` and `trip_bearing_deg`, value, urgency, fee, payout, status, batch/rider assignment | `value_cents > 0`; `urgency` is 0 to 100; `rider_earnings_cents` and `platform_fee_cents` are **generated** from fee and bps, so rider + platform always equals the fee; `chk_orders_assignment` ties status to assignment (pending has no batch or rider, batched has a batch, assigned/picked_up/delivered have a rider); partial indexes `idx_orders_pending_pickup (pickup_lat, pickup_lng, created_at) WHERE status='pending'` and `idx_orders_pending_created` serve batching and cone matching; indexes on `batch_id`, `rider_id`, `vendor_id` |
 | `batches` | An offer: status, pickup centroid and spread, orders count, distance, duration, fee and earnings totals, score, `expires_at`, `accepted_at` | `orders_count` 1 to 5; `route_optimization_score` 0 to 1; `chk_batches_earnings` (earnings <= fees); `chk_batches_rider` (open/expired have no rider, accepted/in_progress/completed have a rider and `accepted_at`); partial indexes on open batches by centroid and on a rider's active batches; `version` |
 | `batch_stops` | The suggested sequence: `seq`, order, `pickup`/`delivery`, coordinates, leg distance, ETA offset | PK `(batch_id, seq)` with `seq` 1 to 10; unique `(batch_id, order_id, type)`; cascade with the batch. "Pickup before delivery" is enforced in Go and checked by the e2e invariants |
 | `batch_offers` | Which rider was shown which batch, and the response: the audit trail and the source of the acceptance rate | PK `(batch_id, rider_id)`, so an offer is recorded once; index `(rider_id, offered_at DESC)` |

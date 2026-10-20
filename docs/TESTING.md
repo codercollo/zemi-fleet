@@ -40,6 +40,7 @@ CREATE DATABASE zemi_fleet_test OWNER zemi;
 
 Background batch expiry adds clock-controlled service tests for the committed counter, a lifecycle test that verifies the managed worker is awaited during shutdown, and an integration concurrency test covering `FOR UPDATE SKIP LOCKED`. With `BATCH_EXPIRY_INTERVAL=0`, the existing lazy-expiry scenario remains covered.
 Offline rider detection adds clock-controlled threshold tests (including null timestamps and the inclusive boundary), a repository transaction that uses `FOR UPDATE SKIP LOCKED`, release/event coverage, picked-up protection, telemetry flag clearing, and the no-double-release concurrency guarantee. With `RIDER_OFFLINE_AFTER=0`, the worker is disabled.
+Priority batching adds deterministic score, maximum-wait, weight-sum, and adaptive-density property coverage. Default FIFO/fixed mode remains covered by the existing batching and e2e scenarios.
   1. every `batched` order belongs to exactly one open batch (and `orders.batch_id` points at it);
   2. every `assigned` order belongs to an accepted batch with the same rider;
   3. each rider's `current_orders_count` equals their assigned orders and is at most `max_capacity`;

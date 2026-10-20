@@ -89,6 +89,9 @@ func createBatches(ctx context.Context, q sqlc.Querier, arg CreateBatchesParams)
 			CreatedAt:          r.CreatedAt,
 			DeliveryFeeCents:   r.DeliveryFeeCents,
 			RiderEarningsCents: earnings,
+			ValueCents:         r.ValueCents,
+			VendorRating:       r.Rating,
+			Urgency:            int(r.Urgency),
 		})
 	}
 

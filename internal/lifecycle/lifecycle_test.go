@@ -15,6 +15,7 @@ func TestTransition(t *testing.T) {
 		ok    bool
 	}{
 		{Assigned, PickupConfirmed, PickedUp, true},
+		{Assigned, Released, Pending, true},
 		{PickedUp, DeliveredEvent, Delivered, true},
 		{PickedUp, AttemptFailed, PickedUp, true},
 		{PickedUp, ReturnStarted, Returning, true},

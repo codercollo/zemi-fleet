@@ -21,6 +21,7 @@ type Querier interface {
 	AssignOrderToBatch(ctx context.Context, arg AssignOrderToBatchParams) (int64, error)
 	// Used after replacing preferences, which live in other tables, so clients see the rider change.
 	BumpRiderVersion(ctx context.Context, arg BumpRiderVersionParams) (Rider, error)
+	CancelBatchIfNoActiveOrders(ctx context.Context, id string) error
 	CancelOrder(ctx context.Context, arg CancelOrderParams) (Order, error)
 	// Atomic: of any number of concurrent requests with one key, exactly one inserts the row.
 	ClaimIdempotencyKey(ctx context.Context, arg ClaimIdempotencyKeyParams) (int64, error)
@@ -36,6 +37,8 @@ type Querier interface {
 	CreateBatchStop(ctx context.Context, arg CreateBatchStopParams) error
 	// created_at comes from the injected clock (UTC), not now(): the column DEFAULT is only a fallback.
 	CreateOrder(ctx context.Context, arg CreateOrderParams) (Order, error)
+	DecrementBatchOrderTotals(ctx context.Context, arg DecrementBatchOrderTotalsParams) error
+	DecrementRiderOrders(ctx context.Context, arg DecrementRiderOrdersParams) error
 	// Queries behind the Idempotency-Key header. Timestamps come from the injected clock.
 	// Keys older than IDEMPOTENCY_TTL are ignored; they are deleted whenever a new key is written.
 	DeleteExpiredIdempotencyKeys(ctx context.Context, cutoff time.Time) error
@@ -66,6 +69,7 @@ type Querier interface {
 	GetVendor(ctx context.Context, id string) (Vendor, error)
 	InsertPreferredAreas(ctx context.Context, arg InsertPreferredAreasParams) error
 	InsertPreferredCategories(ctx context.Context, arg InsertPreferredCategoriesParams) error
+	ListAssignedOrdersForRider(ctx context.Context, riderID *string) ([]ListAssignedOrdersForRiderRow, error)
 	ListBatchOrders(ctx context.Context, batchIds []string) ([]ListBatchOrdersRow, error)
 	ListBatchStops(ctx context.Context, batchIds []string) ([]BatchStop, error)
 	// Queries for rider preference matching (POST /orders/match-riders).
@@ -91,25 +95,34 @@ type Querier interface {
 	ListPreferredAreasForRiders(ctx context.Context, riderIds []string) ([]ListPreferredAreasForRidersRow, error)
 	ListPreferredCategories(ctx context.Context, riderID string) ([]string, error)
 	ListPreferredCategoriesForRiders(ctx context.Context, riderIds []string) ([]RiderPreferredCategory, error)
+	ListStaleRiders(ctx context.Context, locationUpdatedAt *time.Time) ([]Rider, error)
 	MarkBatchInProgress(ctx context.Context, id string) (int64, error)
 	MarkBatchOfferAccepted(ctx context.Context, arg MarkBatchOfferAcceptedParams) error
 	MarkOrderDelivered(ctx context.Context, arg MarkOrderDeliveredParams) (Order, error)
 	MarkOrderPickedUp(ctx context.Context, id string) (Order, error)
 	MarkOrderReturned(ctx context.Context, id string) (Order, error)
+	MarkRiderOffline(ctx context.Context, arg MarkRiderOfflineParams) (Rider, error)
 	RecordDeliveryAttempt(ctx context.Context, id string) (Order, error)
 	// The rider takes on n orders and one more accepted offer. The version bump makes a client holding a
 	// stale X-Expected-Version conflict, because the rider's state really did change.
 	RecordRiderAccept(ctx context.Context, arg RecordRiderAcceptParams) error
+	ReleaseAssignedOrder(ctx context.Context, id string) (Order, error)
 	// A request that did not succeed leaves no trace, so the client can retry the same key.
 	ReleaseIdempotencyKey(ctx context.Context, arg ReleaseIdempotencyKeyParams) error
 	// Orders of expired batches go back to the pending pool.
 	ReleaseOrdersFromBatches(ctx context.Context, batchIds []string) error
 	ReleaseRiderCapacity(ctx context.Context, id string) error
+	// A batch may still contain picked-up orders. Detach a released assigned order
+	// from that batch so it can be offered again without stale stops or aggregates.
+	RemoveReleasedOrderFromBatch(ctx context.Context, arg RemoveReleasedOrderFromBatchParams) error
 	// A claim whose request never completed (a crash) can be taken over once it is older than the processing timeout.
 	TakeOverIdempotencyKey(ctx context.Context, arg TakeOverIdempotencyKeyParams) (int64, error)
 	UpdateRiderAvailability(ctx context.Context, arg UpdateRiderAvailabilityParams) (Rider, error)
 	// Optimistic lock (Let's Go Further ch. 8.2): no row comes back when the version moved on.
 	UpdateRiderLocation(ctx context.Context, arg UpdateRiderLocationParams) (Rider, error)
+	// Telemetry is last-write-wins: it clears an offline flag and never conflicts
+	// with a stale document version or increments the rider version.
+	UpdateRiderLocationTelemetry(ctx context.Context, arg UpdateRiderLocationTelemetryParams) (Rider, error)
 	// Location ping taken from a match-orders call. Deliberately no version check and no version
 	// bump: telemetry is last-write-wins and must never fail with an edit conflict, nor make a
 	// rider's own versioned PATCHes conflict just because the app polled for orders.

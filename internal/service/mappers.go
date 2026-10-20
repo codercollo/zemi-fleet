@@ -45,6 +45,7 @@ func riderFromRow(r sqlc.Rider) domain.Rider {
 		MaxCapacity:       int(r.MaxCapacity),
 		CurrentOrders:     int(r.CurrentOrdersCount),
 		LocationUpdatedAt: utcPtr(r.LocationUpdatedAt),
+		OfflineFlaggedAt:  utcPtr(r.OfflineFlaggedAt),
 		OffersCount:       int(r.OffersCount),
 		AcceptedCount:     int(r.AcceptedCount),
 		AcceptanceRate:    deref(r.AcceptanceRate),

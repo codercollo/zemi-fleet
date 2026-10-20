@@ -1055,3 +1055,111 @@ func (mr *MockStoreMockRecorder) ReleaseRiderCapacity(ctx, id any) *gomock.Call 
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleaseRiderCapacity", reflect.TypeOf((*MockStore)(nil).ReleaseRiderCapacity), ctx, id)
 }
+func (m *MockStore) SweepOfflineRiders(ctx context.Context, now time.Time, after time.Duration) ([]repository.OfflineSweepResult, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SweepOfflineRiders", ctx, now, after)
+	ret0, _ := ret[0].([]repository.OfflineSweepResult)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+func (mr *MockStoreMockRecorder) SweepOfflineRiders(ctx, now, after any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SweepOfflineRiders", reflect.TypeOf((*MockStore)(nil).SweepOfflineRiders), ctx, now, after)
+}
+func (m *MockStore) CancelBatchIfNoActiveOrders(ctx context.Context, id string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CancelBatchIfNoActiveOrders", ctx, id)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+func (mr *MockStoreMockRecorder) CancelBatchIfNoActiveOrders(ctx, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CancelBatchIfNoActiveOrders", reflect.TypeOf((*MockStore)(nil).CancelBatchIfNoActiveOrders), ctx, id)
+}
+func (m *MockStore) DecrementRiderOrders(ctx context.Context, arg sqlc.DecrementRiderOrdersParams) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DecrementRiderOrders", ctx, arg)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+func (mr *MockStoreMockRecorder) DecrementRiderOrders(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DecrementRiderOrders", reflect.TypeOf((*MockStore)(nil).DecrementRiderOrders), ctx, arg)
+}
+func (m *MockStore) ListAssignedOrdersForRider(ctx context.Context, riderID *string) ([]sqlc.ListAssignedOrdersForRiderRow, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListAssignedOrdersForRider", ctx, riderID)
+	ret0, _ := ret[0].([]sqlc.ListAssignedOrdersForRiderRow)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+func (mr *MockStoreMockRecorder) ListAssignedOrdersForRider(ctx, riderID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListAssignedOrdersForRider", reflect.TypeOf((*MockStore)(nil).ListAssignedOrdersForRider), ctx, riderID)
+}
+func (m *MockStore) ListStaleRiders(ctx context.Context, locationUpdatedAt *time.Time) ([]sqlc.Rider, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListStaleRiders", ctx, locationUpdatedAt)
+	ret0, _ := ret[0].([]sqlc.Rider)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+func (mr *MockStoreMockRecorder) ListStaleRiders(ctx, locationUpdatedAt any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListStaleRiders", reflect.TypeOf((*MockStore)(nil).ListStaleRiders), ctx, locationUpdatedAt)
+}
+func (m *MockStore) MarkRiderOffline(ctx context.Context, arg sqlc.MarkRiderOfflineParams) (sqlc.Rider, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MarkRiderOffline", ctx, arg)
+	ret0, _ := ret[0].(sqlc.Rider)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+func (mr *MockStoreMockRecorder) MarkRiderOffline(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkRiderOffline", reflect.TypeOf((*MockStore)(nil).MarkRiderOffline), ctx, arg)
+}
+func (m *MockStore) ReleaseAssignedOrder(ctx context.Context, id string) (sqlc.Order, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ReleaseAssignedOrder", ctx, id)
+	ret0, _ := ret[0].(sqlc.Order)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+func (mr *MockStoreMockRecorder) ReleaseAssignedOrder(ctx, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleaseAssignedOrder", reflect.TypeOf((*MockStore)(nil).ReleaseAssignedOrder), ctx, id)
+}
+func (m *MockStore) UpdateRiderLocationTelemetry(ctx context.Context, arg sqlc.UpdateRiderLocationTelemetryParams) (sqlc.Rider, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateRiderLocationTelemetry", ctx, arg)
+	ret0, _ := ret[0].(sqlc.Rider)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+func (mr *MockStoreMockRecorder) UpdateRiderLocationTelemetry(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateRiderLocationTelemetry", reflect.TypeOf((*MockStore)(nil).UpdateRiderLocationTelemetry), ctx, arg)
+}
+
+func (m *MockStore) DecrementBatchOrderTotals(ctx context.Context, arg sqlc.DecrementBatchOrderTotalsParams) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DecrementBatchOrderTotals", ctx, arg)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+func (mr *MockStoreMockRecorder) DecrementBatchOrderTotals(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DecrementBatchOrderTotals", reflect.TypeOf((*MockStore)(nil).DecrementBatchOrderTotals), ctx, arg)
+}
+
+func (m *MockStore) RemoveReleasedOrderFromBatch(ctx context.Context, arg sqlc.RemoveReleasedOrderFromBatchParams) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RemoveReleasedOrderFromBatch", ctx, arg)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+func (mr *MockStoreMockRecorder) RemoveReleasedOrderFromBatch(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RemoveReleasedOrderFromBatch", reflect.TypeOf((*MockStore)(nil).RemoveReleasedOrderFromBatch), ctx, arg)
+}

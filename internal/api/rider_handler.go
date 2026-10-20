@@ -78,7 +78,6 @@ func (s *Server) updatePreferencesHandler(c *gin.Context) {
 		s.badRequestResponse(c, err)
 		return
 	}
-
 	v := validator.New()
 	var minCents int64
 	if req.MinValueKES != nil {
@@ -132,12 +131,6 @@ func (s *Server) updateLocationHandler(c *gin.Context) {
 		s.badRequestResponse(c, err)
 		return
 	}
-	expected, err := expectedVersion(c)
-	if err != nil {
-		s.badRequestResponse(c, err)
-		return
-	}
-
 	v := validator.New()
 	v.Check(req.Latitude != nil, "latitude", "must be provided")
 	v.Check(req.Longitude != nil, "longitude", "must be provided")
@@ -162,12 +155,14 @@ func (s *Server) updateLocationHandler(c *gin.Context) {
 		return
 	}
 
-	rider, err := s.riders.UpdateLocation(c.Request.Context(), id, service.LocationUpdate{
+	// Location is telemetry, not an editable rider document. Ignore
+	// X-Expected-Version so a stale app snapshot can never turn a ping into 409.
+	rider, err := s.riders.UpdateTelemetryLocation(c.Request.Context(), id, service.LocationUpdate{
 		Lat:        *req.Latitude,
 		Lng:        *req.Longitude,
 		BearingDeg: req.BearingDegrees,
 		SpeedKmh:   req.SpeedKMH,
-	}, expected)
+	})
 	if err != nil {
 		s.handleServiceError(c, err)
 		return

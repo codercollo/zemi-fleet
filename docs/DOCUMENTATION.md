@@ -411,12 +411,14 @@ curl -s -H "X-API-Key: $KEY" localhost:8080/api/v2/riders/rider_002
   }
 }
 ```
-All three rider write routes below return this same `{"rider": {...}}` with the new `version`.
+All three rider write routes below return this same `{"rider": {...}}`. Availability and preferences bump `version`;
+location is telemetry, clears `offline_flagged_at`, and never returns `409` because of a stale `X-Expected-Version`.
 
 #### `PATCH /riders/:id/location`: report position
 
 Body: `latitude`, `longitude` (required), `bearing_degrees`, `speed_kmh` (optional). An omitted bearing or speed is stored as unknown (`null`): they
-describe that one reading. Optional `X-Expected-Version`; stale is `409`.
+describe that one reading. The ping is last-write-wins, clears `offline_flagged_at`, and does not return `409` for a stale
+`X-Expected-Version`.
 
 ```bash
 curl -s -H "X-API-Key: $KEY" -X PATCH localhost:8080/api/v2/riders/rider_002/location \
@@ -1040,6 +1042,8 @@ on an invalid value. `.env.example` lists every key; `docker-compose.yml` passes
 | `DB_QUERY_TIMEOUT` | `3s` | Upper bound for every SQL statement (a timeout is a `500`) |
 | `RIDER_PAYOUT_BPS` | `9000` | Rider's share of each delivery fee in basis points (9000 = 90%), snapshotted on every order |
 | `CANCEL_COMPENSATION_BPS` | `0` | Rider compensation, in basis points of the delivery fee, when cancelling after pickup; cannot exceed `RIDER_PAYOUT_BPS` |
+| `RIDER_OFFLINE_AFTER` | `0` | Age of the last rider location before a rider holding active orders is flagged offline; `0` disables the sweep |
+| `RIDER_OFFLINE_SWEEP_INTERVAL` | `0` | Background offline sweep cadence; required when `RIDER_OFFLINE_AFTER` is enabled |
 | `ORDER_MIN_TRIP_M` | `50` | Shortest allowed pickup-to-delivery distance in metres; shorter is a `422` |
 | `ORDER_MAX_VALUE_KES` / `ORDER_MAX_DELIVERY_FEE_KES` | `10000000` | Upper bounds for order value and delivery fee (validated at most 1e9) |
 | `IDEMPOTENCY_TTL` | `24h` | How long an `Idempotency-Key` is remembered |
@@ -1213,7 +1217,7 @@ lists the known gaps.
 
 ## Database Schema
 
-PostgreSQL 16, migrations in `db/migrations` (`000001_init_schema`, `000002_idempotency`; each has an `up` and a `down`, and CI runs up, down, up).
+PostgreSQL 16, migrations in `db/migrations` (`000001_init_schema` through `000005_rider_offline_flag`; each has an `up` and a `down`, and CI runs up, down, up).
 All timestamps are `TIMESTAMPTZ`; business timestamps come from the application clock, not `now()`.
 
 ```mermaid
@@ -1242,6 +1246,7 @@ erDiagram
         double last_lat
         double last_lng
         timestamptz location_updated_at
+        timestamptz offline_flagged_at
         int offers_count
         int accepted_count
         numeric acceptance_rate "generated"
@@ -1312,7 +1317,7 @@ erDiagram
 | `categories` | Order categories (`electronics`, `food`, ...) | PK `code`, `CHECK (code ~ '^[a-z][a-z_]{1,39}$')` |
 | `areas` | Named coverage circles: centre plus `radius_m` | `name` unique; `radius_m` between 500 and 20000; lat/lng range checks. Areas may overlap on purpose |
 | `vendors` | Pickup origins | `phone ~ '^\+254[0-9]{9}$'`; lat/lng range checks |
-| `riders` | A rider (`full_name` + unique `+254` `phone`), shift flag, capacity, last location/bearing/speed, offer counters | `chk_riders_capacity` (`0 <= current_orders_count <= max_capacity`, capacity 1 to 5), `chk_riders_accepts` (`accepted <= offers`), `chk_riders_location` (lat and lng both set or both null); `acceptance_rate` is a **generated** column (`accepted / offers`, 0 with no offers) so it cannot drift; `version` for optimistic locking; partial index `idx_riders_available_location` on available riders with spare capacity |
+| `riders` | A rider (`full_name` + unique `+254` `phone`), shift flag, capacity, last location/bearing/speed, offline flag, offer counters | `chk_riders_capacity` (`0 <= current_orders_count <= max_capacity`, capacity 1 to 5), `chk_riders_accepts` (`accepted <= offers`), `chk_riders_location` (lat and lng both set or both null); `acceptance_rate` is a **generated** column (`accepted / offers`, 0 with no offers) so it cannot drift; `offline_flagged_at` is set by the managed stale-rider sweep; `version` for document updates; partial indexes `idx_riders_available_location` and `idx_riders_offline_candidates` |
 | `rider_preferences` | 1:1 settings: `min_order_value_cents` | PK = FK `rider_id` (cascade), `>= 0` |
 | `rider_preferred_categories`, `rider_preferred_areas` | M:N preferences; **no rows = no preference = accepts everything** | Composite PKs; indexes on the category and area side |
 | `orders` | Pickup/delivery coordinates (pickup snapshotted from the vendor), precomputed `trip_distance_m` and `trip_bearing_deg`, `value_cents`, `delivery_fee_cents`, `rider_payout_bps`, status, batch/rider assignment | `value_cents > 0`; `rider_earnings_cents` and `platform_fee_cents` are **generated** from fee and bps, so rider + platform always equals the fee; `chk_orders_assignment` ties status to assignment (pending has no batch or rider, batched has a batch, assigned/picked_up/delivered have a rider); partial indexes `idx_orders_pending_pickup (pickup_lat, pickup_lng, created_at) WHERE status='pending'` and `idx_orders_pending_created` serve batching and cone matching; indexes on `batch_id`, `rider_id`, `vendor_id` |
@@ -1513,6 +1518,8 @@ Every decision the brief and Raphael's email did not settle, in one place. Where
 - A speed near zero makes the bearing unreliable, so below `CONE_MIN_SPEED_KMH` (or with no bearing) the cone falls back to the full circle and the response says so (`direction_filter_applied: false`).
 - A rider's last location older than `RIDER_LOCATION_STALE_AFTER` is unknown: not a reason to exclude them, but they score 0 for proximity.
 - Preferences are hard filters; an empty preference means "accepts everything"; the score only ranks the riders who pass.
+- When `RIDER_OFFLINE_AFTER` is enabled, a rider holding active orders with a null or older location is flagged by the managed sweep. Assigned orders are released to `pending`; picked-up orders remain with the rider and emit `rider.offline` for follow-up.
+- A location ping clears `offline_flagged_at` and is telemetry rather than a versioned document edit, so stale client versions never turn a ping into `409`.
 
 **Proximity matching**
 

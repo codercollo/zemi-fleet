@@ -262,6 +262,7 @@ type Rider struct {
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at"`
 	Version            int32      `json:"version"`
+	OfflineFlaggedAt   *time.Time `json:"offline_flagged_at"`
 }
 
 type RiderPreference struct {

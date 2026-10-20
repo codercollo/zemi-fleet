@@ -46,6 +46,9 @@ func (s *Server) Serve(ctx context.Context, srv *http.Server, ln net.Listener, t
 	if s.batches != nil && s.cfg.Batch.ExpiryInterval > 0 {
 		s.background(func() { s.runBatchExpiry(bgCtx) })
 	}
+	if s.offline != nil && s.cfg.RiderOfflineAfter > 0 && s.cfg.RiderOfflineSweepInterval > 0 {
+		s.background(func() { s.runOfflineSweep(bgCtx) })
+	}
 
 	serveErr := make(chan error, 1)
 	go func() {
@@ -91,6 +94,25 @@ func (s *Server) runBatchExpiry(ctx context.Context) {
 	// configured cadence. The injected clock supplies business time to SQL.
 	sweep()
 	ticker := time.NewTicker(s.cfg.Batch.ExpiryInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			sweep()
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (s *Server) runOfflineSweep(ctx context.Context) {
+	sweep := func() {
+		if _, err := s.offline.Sweep(ctx, s.cfg.RiderOfflineAfter); err != nil && !errors.Is(err, context.Canceled) {
+			s.logger.Error("rider offline sweep failed", "error", err)
+		}
+	}
+	sweep()
+	ticker := time.NewTicker(s.cfg.RiderOfflineSweepInterval)
 	defer ticker.Stop()
 	for {
 		select {

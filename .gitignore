@@ -17,3 +17,4 @@ db/seed/load.sql
 .vscode/
 .DS_Store
 Thumbs.db
+.gocache-phase5/

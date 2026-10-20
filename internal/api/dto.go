@@ -118,6 +118,7 @@ type riderDTO struct {
 	BearingDegrees      *float64       `json:"bearing_degrees"`
 	SpeedKMH            *float64       `json:"speed_kmh"`
 	LocationUpdatedAt   *time.Time     `json:"location_updated_at"`
+	OfflineFlaggedAt    *time.Time     `json:"offline_flagged_at"`
 	AcceptanceRate      float64        `json:"acceptance_rate"`
 	Preferences         preferencesDTO `json:"preferences"`
 	Version             int            `json:"version"`
@@ -145,6 +146,10 @@ func newRiderDTO(r domain.Rider) riderDTO {
 	if r.LocationUpdatedAt != nil {
 		t := r.LocationUpdatedAt.UTC()
 		dto.LocationUpdatedAt = &t
+	}
+	if r.OfflineFlaggedAt != nil {
+		t := r.OfflineFlaggedAt.UTC()
+		dto.OfflineFlaggedAt = &t
 	}
 	return dto
 }

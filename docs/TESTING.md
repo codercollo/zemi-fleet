@@ -39,6 +39,7 @@ CREATE DATABASE zemi_fleet_test OWNER zemi;
 - **End to end** proves that *the features work together* on the real stack: an order created over HTTP is matched, batched, listed, accepted and counted consistently; capacity is enforced by every feature; expiry releases orders; concurrent riders never double-book. It is deliberately small. Each scenario drives the API over HTTP only and ends by running `assertInvariants`, which checks the database with SQL:
 
 Background batch expiry adds clock-controlled service tests for the committed counter, a lifecycle test that verifies the managed worker is awaited during shutdown, and an integration concurrency test covering `FOR UPDATE SKIP LOCKED`. With `BATCH_EXPIRY_INTERVAL=0`, the existing lazy-expiry scenario remains covered.
+Offline rider detection adds clock-controlled threshold tests (including null timestamps and the inclusive boundary), a repository transaction that uses `FOR UPDATE SKIP LOCKED`, release/event coverage, picked-up protection, telemetry flag clearing, and the no-double-release concurrency guarantee. With `RIDER_OFFLINE_AFTER=0`, the worker is disabled.
   1. every `batched` order belongs to exactly one open batch (and `orders.batch_id` points at it);
   2. every `assigned` order belongs to an accepted batch with the same rider;
   3. each rider's `current_orders_count` equals their assigned orders and is at most `max_capacity`;

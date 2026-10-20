@@ -7,6 +7,7 @@ type LifecycleEvent struct {
 	Type    string
 	OrderID string
 	BatchID string
+	RiderID string
 }
 
 type EventSink interface {

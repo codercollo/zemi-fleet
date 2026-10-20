@@ -53,6 +53,11 @@ func assertInvariants(t *testing.T, pool *pgxpool.Pool, responses []string) {
 			         AND EXISTS (SELECT 1 FROM riders r WHERE r.id = orders.rider_id AND r.current_orders_count < 0))`,
 		},
 		{
+			"no assigned order belongs to an offline-flagged rider",
+			`SELECT o.id FROM orders o JOIN riders r ON r.id = o.rider_id
+			  WHERE o.status = 'assigned' AND r.offline_flagged_at IS NOT NULL`,
+		},
+		{
 			"no order is in two non-expired batches",
 			`SELECT s.order_id FROM batch_stops s JOIN batches b ON b.id = s.batch_id
 			  WHERE s.type = 'pickup' AND b.status NOT IN ('expired', 'cancelled')

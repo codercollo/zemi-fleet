@@ -14,7 +14,7 @@ const bumpRiderVersion = `-- name: BumpRiderVersion :one
 UPDATE riders
 SET version = version + 1
 WHERE id = $1 AND version = $2
-RETURNING id, full_name, phone, is_available, max_capacity, current_orders_count, last_lat, last_lng, last_bearing_deg, last_speed_kmh, location_updated_at, offers_count, accepted_count, acceptance_rate, created_at, updated_at, version
+RETURNING id, full_name, phone, is_available, max_capacity, current_orders_count, last_lat, last_lng, last_bearing_deg, last_speed_kmh, location_updated_at, offers_count, accepted_count, acceptance_rate, created_at, updated_at, version, offline_flagged_at
 `
 
 type BumpRiderVersionParams struct {
@@ -44,12 +44,64 @@ func (q *Queries) BumpRiderVersion(ctx context.Context, arg BumpRiderVersionPara
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Version,
+		&i.OfflineFlaggedAt,
 	)
 	return i, err
 }
 
+const cancelBatchIfNoActiveOrders = `-- name: CancelBatchIfNoActiveOrders :exec
+UPDATE batches AS b
+SET status = 'cancelled', version = version + 1
+WHERE b.id = $1 AND b.status IN ('accepted', 'in_progress')
+  AND NOT EXISTS (SELECT 1 FROM orders AS o WHERE o.batch_id = $1 AND o.status IN ('assigned', 'picked_up', 'returning'))
+`
+
+func (q *Queries) CancelBatchIfNoActiveOrders(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, cancelBatchIfNoActiveOrders, id)
+	return err
+}
+
+const decrementBatchOrderTotals = `-- name: DecrementBatchOrderTotals :exec
+UPDATE batches AS b
+SET orders_count = b.orders_count - 1,
+    total_delivery_fee_cents = b.total_delivery_fee_cents - $2,
+    estimated_earnings_cents = b.estimated_earnings_cents - $3,
+    version = b.version + 1
+WHERE b.id = $1
+  AND b.status IN ('accepted', 'in_progress')
+  AND b.orders_count > 1
+  AND EXISTS (SELECT 1 FROM orders WHERE orders.batch_id = $1 AND orders.status IN ('assigned', 'picked_up', 'returning'))
+`
+
+type DecrementBatchOrderTotalsParams struct {
+	ID                     string `json:"id"`
+	TotalDeliveryFeeCents  int64  `json:"total_delivery_fee_cents"`
+	EstimatedEarningsCents int64  `json:"estimated_earnings_cents"`
+}
+
+func (q *Queries) DecrementBatchOrderTotals(ctx context.Context, arg DecrementBatchOrderTotalsParams) error {
+	_, err := q.db.Exec(ctx, decrementBatchOrderTotals, arg.ID, arg.TotalDeliveryFeeCents, arg.EstimatedEarningsCents)
+	return err
+}
+
+const decrementRiderOrders = `-- name: DecrementRiderOrders :exec
+UPDATE riders
+SET current_orders_count = GREATEST(current_orders_count - $2::smallint, 0), version = version + 1
+WHERE id = $1
+`
+
+type DecrementRiderOrdersParams struct {
+	ID      string `json:"id"`
+	Column2 int16  `json:"column_2"`
+}
+
+func (q *Queries) DecrementRiderOrders(ctx context.Context, arg DecrementRiderOrdersParams) error {
+	_, err := q.db.Exec(ctx, decrementRiderOrders, arg.ID, arg.Column2)
+	return err
+}
+
 const getRider = `-- name: GetRider :one
-SELECT id, full_name, phone, is_available, max_capacity, current_orders_count, last_lat, last_lng, last_bearing_deg, last_speed_kmh, location_updated_at, offers_count, accepted_count, acceptance_rate, created_at, updated_at, version FROM riders WHERE id = $1
+SELECT id, full_name, phone, is_available, max_capacity, current_orders_count, last_lat, last_lng, last_bearing_deg, last_speed_kmh, location_updated_at, offers_count, accepted_count, acceptance_rate, created_at, updated_at, version, offline_flagged_at FROM riders WHERE id = $1
 `
 
 func (q *Queries) GetRider(ctx context.Context, id string) (Rider, error) {
@@ -73,12 +125,13 @@ func (q *Queries) GetRider(ctx context.Context, id string) (Rider, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Version,
+		&i.OfflineFlaggedAt,
 	)
 	return i, err
 }
 
 const getRiderForUpdate = `-- name: GetRiderForUpdate :one
-SELECT id, full_name, phone, is_available, max_capacity, current_orders_count, last_lat, last_lng, last_bearing_deg, last_speed_kmh, location_updated_at, offers_count, accepted_count, acceptance_rate, created_at, updated_at, version FROM riders WHERE id = $1 FOR UPDATE
+SELECT id, full_name, phone, is_available, max_capacity, current_orders_count, last_lat, last_lng, last_bearing_deg, last_speed_kmh, location_updated_at, offers_count, accepted_count, acceptance_rate, created_at, updated_at, version, offline_flagged_at FROM riders WHERE id = $1 FOR UPDATE
 `
 
 // Row lock: serialises concurrent preference replacements for one rider.
@@ -103,8 +156,190 @@ func (q *Queries) GetRiderForUpdate(ctx context.Context, id string) (Rider, erro
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Version,
+		&i.OfflineFlaggedAt,
 	)
 	return i, err
+}
+
+const listAssignedOrdersForRider = `-- name: ListAssignedOrdersForRider :many
+SELECT id, batch_id, delivery_fee_cents, rider_earnings_cents
+FROM orders WHERE rider_id = $1 AND status = 'assigned' ORDER BY id
+`
+
+type ListAssignedOrdersForRiderRow struct {
+	ID                 string  `json:"id"`
+	BatchID            *string `json:"batch_id"`
+	DeliveryFeeCents   int64   `json:"delivery_fee_cents"`
+	RiderEarningsCents *int64  `json:"rider_earnings_cents"`
+}
+
+func (q *Queries) ListAssignedOrdersForRider(ctx context.Context, riderID *string) ([]ListAssignedOrdersForRiderRow, error) {
+	rows, err := q.db.Query(ctx, listAssignedOrdersForRider, riderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAssignedOrdersForRiderRow
+	for rows.Next() {
+		var i ListAssignedOrdersForRiderRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.BatchID,
+			&i.DeliveryFeeCents,
+			&i.RiderEarningsCents,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStaleRiders = `-- name: ListStaleRiders :many
+SELECT id, full_name, phone, is_available, max_capacity, current_orders_count, last_lat, last_lng, last_bearing_deg, last_speed_kmh, location_updated_at, offers_count, accepted_count, acceptance_rate, created_at, updated_at, version, offline_flagged_at FROM riders
+WHERE current_orders_count > 0
+  AND offline_flagged_at IS NULL
+  AND (location_updated_at IS NULL OR location_updated_at < $1)
+ORDER BY id
+FOR UPDATE SKIP LOCKED
+`
+
+func (q *Queries) ListStaleRiders(ctx context.Context, locationUpdatedAt *time.Time) ([]Rider, error) {
+	rows, err := q.db.Query(ctx, listStaleRiders, locationUpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Rider
+	for rows.Next() {
+		var i Rider
+		if err := rows.Scan(
+			&i.ID,
+			&i.FullName,
+			&i.Phone,
+			&i.IsAvailable,
+			&i.MaxCapacity,
+			&i.CurrentOrdersCount,
+			&i.LastLat,
+			&i.LastLng,
+			&i.LastBearingDeg,
+			&i.LastSpeedKmh,
+			&i.LocationUpdatedAt,
+			&i.OffersCount,
+			&i.AcceptedCount,
+			&i.AcceptanceRate,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Version,
+			&i.OfflineFlaggedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markRiderOffline = `-- name: MarkRiderOffline :one
+UPDATE riders SET offline_flagged_at = $2, version = version + 1
+WHERE id = $1 AND offline_flagged_at IS NULL
+RETURNING id, full_name, phone, is_available, max_capacity, current_orders_count, last_lat, last_lng, last_bearing_deg, last_speed_kmh, location_updated_at, offers_count, accepted_count, acceptance_rate, created_at, updated_at, version, offline_flagged_at
+`
+
+type MarkRiderOfflineParams struct {
+	ID               string     `json:"id"`
+	OfflineFlaggedAt *time.Time `json:"offline_flagged_at"`
+}
+
+func (q *Queries) MarkRiderOffline(ctx context.Context, arg MarkRiderOfflineParams) (Rider, error) {
+	row := q.db.QueryRow(ctx, markRiderOffline, arg.ID, arg.OfflineFlaggedAt)
+	var i Rider
+	err := row.Scan(
+		&i.ID,
+		&i.FullName,
+		&i.Phone,
+		&i.IsAvailable,
+		&i.MaxCapacity,
+		&i.CurrentOrdersCount,
+		&i.LastLat,
+		&i.LastLng,
+		&i.LastBearingDeg,
+		&i.LastSpeedKmh,
+		&i.LocationUpdatedAt,
+		&i.OffersCount,
+		&i.AcceptedCount,
+		&i.AcceptanceRate,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Version,
+		&i.OfflineFlaggedAt,
+	)
+	return i, err
+}
+
+const releaseAssignedOrder = `-- name: ReleaseAssignedOrder :one
+UPDATE orders
+SET status = 'pending', batch_id = NULL, rider_id = NULL, batch_seq = NULL, version = version + 1
+WHERE id = $1 AND status = 'assigned'
+RETURNING id, vendor_id, category_code, status, pickup_lat, pickup_lng, delivery_lat, delivery_lng, trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps, rider_earnings_cents, platform_fee_cents, batch_id, rider_id, batch_seq, created_at, updated_at, delivered_at, version, delivery_attempts, cancelled_at, cancel_reason, rider_compensation_cents
+`
+
+func (q *Queries) ReleaseAssignedOrder(ctx context.Context, id string) (Order, error) {
+	row := q.db.QueryRow(ctx, releaseAssignedOrder, id)
+	var i Order
+	err := row.Scan(
+		&i.ID,
+		&i.VendorID,
+		&i.CategoryCode,
+		&i.Status,
+		&i.PickupLat,
+		&i.PickupLng,
+		&i.DeliveryLat,
+		&i.DeliveryLng,
+		&i.TripDistanceM,
+		&i.TripBearingDeg,
+		&i.ValueCents,
+		&i.DeliveryFeeCents,
+		&i.RiderPayoutBps,
+		&i.RiderEarningsCents,
+		&i.PlatformFeeCents,
+		&i.BatchID,
+		&i.RiderID,
+		&i.BatchSeq,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeliveredAt,
+		&i.Version,
+		&i.DeliveryAttempts,
+		&i.CancelledAt,
+		&i.CancelReason,
+		&i.RiderCompensationCents,
+	)
+	return i, err
+}
+
+const removeReleasedOrderFromBatch = `-- name: RemoveReleasedOrderFromBatch :exec
+DELETE FROM batch_stops
+WHERE batch_stops.batch_id = $1 AND batch_stops.order_id = $2
+  AND EXISTS (SELECT 1 FROM orders WHERE orders.batch_id = $1 AND orders.status IN ('assigned', 'picked_up', 'returning'))
+`
+
+type RemoveReleasedOrderFromBatchParams struct {
+	BatchID string `json:"batch_id"`
+	OrderID string `json:"order_id"`
+}
+
+// A batch may still contain picked-up orders. Detach a released assigned order
+// from that batch so it can be offered again without stale stops or aggregates.
+func (q *Queries) RemoveReleasedOrderFromBatch(ctx context.Context, arg RemoveReleasedOrderFromBatchParams) error {
+	_, err := q.db.Exec(ctx, removeReleasedOrderFromBatch, arg.BatchID, arg.OrderID)
+	return err
 }
 
 const updateRiderAvailability = `-- name: UpdateRiderAvailability :one
@@ -112,7 +347,7 @@ UPDATE riders
 SET is_available = $1,
     version = version + 1
 WHERE id = $2 AND version = $3
-RETURNING id, full_name, phone, is_available, max_capacity, current_orders_count, last_lat, last_lng, last_bearing_deg, last_speed_kmh, location_updated_at, offers_count, accepted_count, acceptance_rate, created_at, updated_at, version
+RETURNING id, full_name, phone, is_available, max_capacity, current_orders_count, last_lat, last_lng, last_bearing_deg, last_speed_kmh, location_updated_at, offers_count, accepted_count, acceptance_rate, created_at, updated_at, version, offline_flagged_at
 `
 
 type UpdateRiderAvailabilityParams struct {
@@ -142,6 +377,7 @@ func (q *Queries) UpdateRiderAvailability(ctx context.Context, arg UpdateRiderAv
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Version,
+		&i.OfflineFlaggedAt,
 	)
 	return i, err
 }
@@ -153,9 +389,10 @@ SET last_lat = $1,
     last_bearing_deg = $3,
     last_speed_kmh = $4,
     location_updated_at = $5,
+    offline_flagged_at = NULL,
     version = version + 1
 WHERE id = $6 AND version = $7
-RETURNING id, full_name, phone, is_available, max_capacity, current_orders_count, last_lat, last_lng, last_bearing_deg, last_speed_kmh, location_updated_at, offers_count, accepted_count, acceptance_rate, created_at, updated_at, version
+RETURNING id, full_name, phone, is_available, max_capacity, current_orders_count, last_lat, last_lng, last_bearing_deg, last_speed_kmh, location_updated_at, offers_count, accepted_count, acceptance_rate, created_at, updated_at, version, offline_flagged_at
 `
 
 type UpdateRiderLocationParams struct {
@@ -198,6 +435,63 @@ func (q *Queries) UpdateRiderLocation(ctx context.Context, arg UpdateRiderLocati
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Version,
+		&i.OfflineFlaggedAt,
+	)
+	return i, err
+}
+
+const updateRiderLocationTelemetry = `-- name: UpdateRiderLocationTelemetry :one
+UPDATE riders
+SET last_lat = $1,
+    last_lng = $2,
+    last_bearing_deg = $3,
+    last_speed_kmh = $4,
+    location_updated_at = $5,
+    offline_flagged_at = NULL
+WHERE id = $6
+RETURNING id, full_name, phone, is_available, max_capacity, current_orders_count, last_lat, last_lng, last_bearing_deg, last_speed_kmh, location_updated_at, offers_count, accepted_count, acceptance_rate, created_at, updated_at, version, offline_flagged_at
+`
+
+type UpdateRiderLocationTelemetryParams struct {
+	LastLat           *float64   `json:"last_lat"`
+	LastLng           *float64   `json:"last_lng"`
+	LastBearingDeg    *float64   `json:"last_bearing_deg"`
+	LastSpeedKmh      *float64   `json:"last_speed_kmh"`
+	LocationUpdatedAt *time.Time `json:"location_updated_at"`
+	ID                string     `json:"id"`
+}
+
+// Telemetry is last-write-wins: it clears an offline flag and never conflicts
+// with a stale document version or increments the rider version.
+func (q *Queries) UpdateRiderLocationTelemetry(ctx context.Context, arg UpdateRiderLocationTelemetryParams) (Rider, error) {
+	row := q.db.QueryRow(ctx, updateRiderLocationTelemetry,
+		arg.LastLat,
+		arg.LastLng,
+		arg.LastBearingDeg,
+		arg.LastSpeedKmh,
+		arg.LocationUpdatedAt,
+		arg.ID,
+	)
+	var i Rider
+	err := row.Scan(
+		&i.ID,
+		&i.FullName,
+		&i.Phone,
+		&i.IsAvailable,
+		&i.MaxCapacity,
+		&i.CurrentOrdersCount,
+		&i.LastLat,
+		&i.LastLng,
+		&i.LastBearingDeg,
+		&i.LastSpeedKmh,
+		&i.LocationUpdatedAt,
+		&i.OffersCount,
+		&i.AcceptedCount,
+		&i.AcceptanceRate,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Version,
+		&i.OfflineFlaggedAt,
 	)
 	return i, err
 }
@@ -208,7 +502,8 @@ SET last_lat = $1,
     last_lng = $2,
     last_bearing_deg = $3,
     last_speed_kmh = $4,
-    location_updated_at = $5
+    location_updated_at = $5,
+    offline_flagged_at = NULL
 WHERE id = $6
 `
 

@@ -27,6 +27,7 @@ const (
 	Cancel          Event = "cancel"
 	ReturnStarted   Event = "return_started"
 	ReturnedEvent   Event = "returned"
+	Released        Event = "released"
 )
 
 // Transition applies one lifecycle event. AttemptFailed is deliberately a
@@ -37,6 +38,10 @@ func Transition(state State, event Event) (State, error) {
 	case PickupConfirmed:
 		if state == Assigned {
 			return PickedUp, nil
+		}
+	case Released:
+		if state == Assigned {
+			return Pending, nil
 		}
 	case DeliveredEvent:
 		if state == PickedUp {

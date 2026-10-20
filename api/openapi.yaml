@@ -1038,6 +1038,7 @@ components:
         bearing_degrees: {type: number, nullable: true, minimum: 0, maximum: 360}
         speed_kmh: {type: number, nullable: true, minimum: 0}
         location_updated_at: {type: string, format: date-time, nullable: true}
+        offline_flagged_at: {type: string, format: date-time, nullable: true}
         acceptance_rate: {type: number, minimum: 0, maximum: 1}
         preferences: {$ref: '#/components/schemas/Preferences'}
         version: {type: integer, minimum: 1, description: 'Send it back as `X-Expected-Version` for optimistic locking.'}

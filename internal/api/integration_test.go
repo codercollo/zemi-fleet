@@ -145,10 +145,6 @@ func TestIntegration_ConcurrentPatchSameExpectedVersion(t *testing.T) {
 		name string
 		req  func(riderID string, i int) *http.Request
 	}{
-		{"location", func(id string, i int) *http.Request {
-			body := fmt.Sprintf(`{"latitude":-1.28,"longitude":36.8,"bearing_degrees":%d,"speed_kmh":20}`, i*30)
-			return newPatch("/api/v2/riders/"+id+"/location", body, "1")
-		}},
 		{"availability", func(id string, i int) *http.Request {
 			return newPatch("/api/v2/riders/"+id+"/availability", fmt.Sprintf(`{"is_available":%t}`, i%2 == 0), "1")
 		}},
@@ -176,19 +172,16 @@ func TestIntegration_ConcurrentPatchSameExpectedVersion(t *testing.T) {
 	}
 }
 
-// Without the header the service still reads then updates conditionally (ch. 8.2), so a race
-// can never lose an update: every 200 is exactly one version bump and the rest are 409s.
-func TestIntegration_ConcurrentPatchWithoutHeader(t *testing.T) {
+// Location is telemetry: concurrent pings are last-write-wins and never conflict.
+func TestIntegration_ConcurrentLocationPingsNeverConflict(t *testing.T) {
 	h, riderID, pool := integrationEnv(t)
 
 	statuses := fireConcurrently(t, h, concurrentRequests, func(i int) *http.Request {
 		return newPatch("/api/v2/riders/"+riderID+"/location", `{"latitude":-1.28,"longitude":36.8}`, "")
 	})
 
-	ok, conflict := count(statuses, http.StatusOK), count(statuses, http.StatusConflict)
-	assert.GreaterOrEqual(t, ok, 1, "someone must win: %v", statuses)
-	assert.Equal(t, concurrentRequests, ok+conflict, "only 200 or 409 are acceptable: %v", statuses)
-	assert.Equal(t, 1+ok, riderVersion(t, pool, riderID))
+	assert.Equal(t, concurrentRequests, count(statuses, http.StatusOK), "all telemetry pings must succeed: %v", statuses)
+	assert.Equal(t, 1, riderVersion(t, pool, riderID), "telemetry does not bump the document version")
 }
 
 // A sequential client that sends the version it just received keeps succeeding.

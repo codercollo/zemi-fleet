@@ -40,6 +40,7 @@ type Store interface {
 	CompleteBatchStopTx(ctx context.Context, arg CompleteStopParams) (LifecycleResult, error)
 	RecordDeliveryAttemptTx(ctx context.Context, arg AttemptParams) (sqlc.Order, error)
 	CancelOrderTx(ctx context.Context, arg CancelParams) (sqlc.Order, error)
+	SweepOfflineRiders(ctx context.Context, now time.Time, after time.Duration) ([]OfflineSweepResult, error)
 }
 
 // SQLStore is the PostgreSQL implementation of Store.

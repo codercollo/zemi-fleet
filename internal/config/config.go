@@ -78,6 +78,7 @@ type Config struct {
 	Geo      GeoConfig      `mapstructure:",squash"`
 	Capacity CapacityConfig `mapstructure:",squash"`
 	Routing  RoutingConfig  `mapstructure:",squash"`
+	Auth     AuthConfig     `mapstructure:",squash"`
 }
 
 // CapacityConfig controls the shared rider-capacity policy.
@@ -96,6 +97,12 @@ type RoutingConfig struct {
 	CacheTTL        time.Duration `mapstructure:"ROUTING_CACHE_TTL"`
 	Sequencer       string        `mapstructure:"BATCH_SEQUENCER"`
 	MinScore        float64       `mapstructure:"BATCH_MIN_SCORE"`
+}
+
+type AuthConfig struct {
+	Mode       string        `mapstructure:"AUTH_MODE"`
+	SigningKey string        `mapstructure:"AUTH_SIGNING_KEY"`
+	TokenTTL   time.Duration `mapstructure:"AUTH_TOKEN_TTL"`
 }
 
 // GeoConfig controls optional service-area validation for geographic inputs.
@@ -308,6 +315,9 @@ var defaults = map[string]any{
 	"ROUTING_CACHE_TTL":              "5m",
 	"BATCH_SEQUENCER":                "nearest",
 	"BATCH_MIN_SCORE":                0,
+	"AUTH_MODE":                      "apikey",
+	"AUTH_SIGNING_KEY":               "",
+	"AUTH_TOKEN_TTL":                 "15m",
 }
 
 // Load configuration
@@ -425,6 +435,15 @@ func (c Config) validate() error {
 	}
 	if c.Routing.MinScore < 0 || c.Routing.MinScore > 1 {
 		errs = append(errs, fmt.Errorf("BATCH_MIN_SCORE must be between 0 and 1 (got %v)", c.Routing.MinScore))
+	}
+	if c.Auth.Mode != "apikey" && c.Auth.Mode != "token" && c.Auth.Mode != "both" {
+		errs = append(errs, fmt.Errorf("AUTH_MODE must be apikey, token or both (got %q)", c.Auth.Mode))
+	}
+	if c.Auth.TokenTTL <= 0 || c.Auth.TokenTTL > 24*time.Hour {
+		errs = append(errs, fmt.Errorf("AUTH_TOKEN_TTL must be positive and at most 24h (got %s)", c.Auth.TokenTTL))
+	}
+	if (c.Auth.Mode == "token" || c.Auth.Mode == "both") && len(c.Auth.SigningKey) < 32 {
+		errs = append(errs, errors.New("AUTH_SIGNING_KEY must be at least 32 characters when token authentication is enabled"))
 	}
 	return errors.Join(errs...)
 }

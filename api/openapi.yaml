@@ -63,6 +63,39 @@ paths:
               example:
                 status: unavailable
                 system_info: {environment: staging, version: v0.1.0-11-gbaa5f5f, database: down}
+  /auth/token:
+    post:
+      tags: [Riders]
+      summary: Issue a rider access token
+      description: Development identity verification only. Production identity proofing is supplied through the IdentityVerifier boundary.
+      operationId: issueToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rider_id, full_name, phone]
+              properties:
+                rider_id: {type: string}
+                full_name: {type: string}
+                phone: {type: string}
+                scopes: {type: array, items: {type: string, enum: [batches:accept, riders:write, orders:create, dispatcher]}}
+      responses:
+        '201':
+          description: Bearer token issued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, token_type, expires_in]
+                properties:
+                  token: {type: string}
+                  token_type: {type: string, enum: [Bearer]}
+                  expires_in: {type: integer, minimum: 1}
+        '401': {description: Identity verification failed.}
+        '429': {description: Rate limit exceeded.}
+        '500': {description: Internal server error.}
   /orders:
     post:
       tags: [Orders]

@@ -66,25 +66,26 @@ func (s *Server) router(extra ...func(*gin.Engine)) *gin.Engine {
 
 	v2 := r.Group(apiPrefix)
 	v2.GET("/healthz", s.healthzHandler)
+	v2.POST("/auth/token", s.issueTokenHandler)
 
 	// POST /orders and POST /orders/batch honour an Idempotency-Key header (see idempotency.go).
-	v2.POST("/orders", s.idempotent(), s.createOrderHandler)
-	v2.POST("/orders/batch", s.idempotent(), s.createBatchesHandler)
-	v2.POST("/orders/match-riders", s.matchRidersHandler)
-	v2.GET("/orders/:id", s.showOrderHandler)
-	v2.POST("/orders/:id/attempts", s.idempotent(), s.recordAttemptHandler)
-	v2.POST("/orders/:id/cancel", s.idempotent(), s.cancelOrderHandler)
+	v2.POST("/orders", s.requireScope("orders:create"), s.idempotent(), s.createOrderHandler)
+	v2.POST("/orders/batch", s.requireRiderScope("batches:accept"), s.idempotent(), s.createBatchesHandler)
+	v2.POST("/orders/match-riders", s.requireScope("orders:create"), s.matchRidersHandler)
+	v2.GET("/orders/:id", s.requireScope("orders:create"), s.showOrderHandler)
+	v2.POST("/orders/:id/attempts", s.requireScope("orders:create"), s.idempotent(), s.recordAttemptHandler)
+	v2.POST("/orders/:id/cancel", s.requireScope("orders:create"), s.idempotent(), s.cancelOrderHandler)
 
 	// Static path next to the :id routes: Gin matches it first. It is a POST, which has no :id sibling.
-	v2.POST("/riders/match-orders", s.matchOrdersHandler)
-	v2.GET("/riders/:id", s.showRiderHandler)
-	v2.PUT("/riders/:id/preferences", s.updatePreferencesHandler)
-	v2.PATCH("/riders/:id/location", s.updateLocationHandler)
-	v2.PATCH("/riders/:id/availability", s.updateAvailabilityHandler)
+	v2.POST("/riders/match-orders", s.requireRiderScope("batches:accept"), s.matchOrdersHandler)
+	v2.GET("/riders/:id", s.requireRiderScope("riders:write"), s.showRiderHandler)
+	v2.PUT("/riders/:id/preferences", s.requireRiderScope("riders:write"), s.updatePreferencesHandler)
+	v2.PATCH("/riders/:id/location", s.requireRiderScope("riders:write"), s.updateLocationHandler)
+	v2.PATCH("/riders/:id/availability", s.requireRiderScope("riders:write"), s.updateAvailabilityHandler)
 
-	v2.GET("/batches", s.listBatchesHandler)
-	v2.POST("/batches/:id/accept", s.acceptBatchHandler)
-	v2.POST("/batches/:id/stops/:seq/complete", s.idempotent(), s.completeBatchStopHandler)
+	v2.GET("/batches", s.requireScope("batches:accept"), s.listBatchesHandler)
+	v2.POST("/batches/:id/accept", s.requireRiderScope("batches:accept"), s.acceptBatchHandler)
+	v2.POST("/batches/:id/stops/:seq/complete", s.requireScope("batches:accept"), s.idempotent(), s.completeBatchStopHandler)
 
 	for _, register := range extra {
 		register(r)

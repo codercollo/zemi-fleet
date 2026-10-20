@@ -3,8 +3,11 @@ package api
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -47,6 +50,28 @@ func (s *Server) requireAPIKey() gin.HandlerFunc {
 			return
 		}
 
+		if (s.cfg.Auth.Mode == "token" || s.cfg.Auth.Mode == "both") && c.FullPath() != apiPrefix+"/auth/token" {
+			if raw := strings.TrimSpace(c.GetHeader("Authorization")); strings.HasPrefix(raw, "Bearer ") && s.tokens != nil {
+				if claims, err := s.tokens.verify(strings.TrimSpace(strings.TrimPrefix(raw, "Bearer ")), s.clock.Now()); err == nil {
+					scopes := map[string]bool{}
+					for _, scope := range claims.Scopes {
+						scopes[scope] = true
+					}
+					ctx := context.WithValue(c.Request.Context(), tokenContextKey{}, claims.Subject)
+					ctx = context.WithValue(ctx, scopeContextKey{}, scopes)
+					c.Request = c.Request.WithContext(ctx)
+					c.Next()
+					return
+				}
+			}
+			if s.cfg.Auth.Mode == "token" {
+				c.Writer.Header().Set("WWW-Authenticate", `Bearer realm="zemi-fleet"`)
+				c.Abort()
+				s.errorResponse(c, http.StatusUnauthorized, "invalid or missing bearer token")
+				return
+			}
+		}
+
 		presented := c.GetHeader(apiKeyHeader)
 		sum := config.HashAPIKey(presented)
 		client, matched := "", 0
@@ -74,6 +99,52 @@ func (s *Server) requireAPIKey() gin.HandlerFunc {
 		}
 
 		c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), clientNameKey{}, client))
+		c.Next()
+	}
+}
+
+func (s *Server) requireScope(scope string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if s.cfg.Auth.Mode == "apikey" || tokenSubject(c.Request.Context()) == "" || tokenScopes(c.Request.Context())["dispatcher"] || tokenScopes(c.Request.Context())[scope] {
+			c.Next()
+			return
+		}
+		c.Abort()
+		s.errorResponse(c, http.StatusForbidden, "insufficient token scope")
+	}
+}
+
+func (s *Server) requireRiderScope(scope string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if s.cfg.Auth.Mode == "apikey" || tokenSubject(c.Request.Context()) == "" || tokenScopes(c.Request.Context())["dispatcher"] {
+			c.Next()
+			return
+		}
+		if !tokenScopes(c.Request.Context())[scope] {
+			c.Abort()
+			s.errorResponse(c, http.StatusForbidden, "insufficient token scope")
+			return
+		}
+		want := c.Param("id")
+		if want == "" {
+			body, err := io.ReadAll(c.Request.Body)
+			if err != nil {
+				c.Abort()
+				s.errorResponse(c, http.StatusBadRequest, "invalid request body")
+				return
+			}
+			c.Request.Body = io.NopCloser(strings.NewReader(string(body)))
+			var v struct {
+				RiderID string `json:"rider_id"`
+			}
+			_ = json.Unmarshal(body, &v)
+			want = v.RiderID
+		}
+		if want != tokenSubject(c.Request.Context()) {
+			c.Abort()
+			s.errorResponse(c, http.StatusForbidden, "rider does not match token subject")
+			return
+		}
 		c.Next()
 	}
 }

@@ -53,6 +53,8 @@ type Server struct {
 	limiter     *limiter // nil when LIMITER_ENABLED is false
 	wg          sync.WaitGroup
 	version     string
+	tokens      *tokenManager
+	identity    IdentityVerifier
 }
 
 // NewServer wires the dependencies together.
@@ -65,6 +67,10 @@ func NewServer(cfg config.Config, logger *slog.Logger, db Pinger, svc Services, 
 		cfg: cfg, logger: logger, db: db, version: version, clock: clk,
 		orders: svc.Orders, riders: svc.Riders, matching: svc.Matching, batches: svc.Batches,
 		preferences: svc.Preferences, idempotency: svc.Idempotency, lifecycle: svc.Lifecycle, offline: svc.Offline,
+	}
+	if cfg.Auth.Mode == "token" || cfg.Auth.Mode == "both" {
+		s.tokens = newTokenManager(cfg.Auth.SigningKey, cfg.Auth.TokenTTL)
+		s.identity = developmentIdentityVerifier{riders: s.riders}
 	}
 	counters := svc.Metrics
 	if counters == nil {

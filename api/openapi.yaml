@@ -185,6 +185,74 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         '500': {$ref: '#/components/responses/ServerError'}
+  /orders/{id}/attempts:
+    post:
+      tags: [Orders]
+      summary: Record a failed delivery attempt
+      description: Records a reason-coded failed attempt. The third attempt moves the order to `returning`.
+      operationId: recordDeliveryAttempt
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, pattern: '^ord_[0-9A-Za-z]{1,40}$'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+        - {$ref: '#/components/parameters/RequestIdHeader'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/LifecycleReasonRequest'}
+            example: {reason_code: recipient_unavailable}
+      responses:
+        '200':
+          description: The order after recording the attempt.
+          headers:
+            Idempotent-Replay: {$ref: '#/components/headers/IdempotentReplay'}
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json: {schema: {$ref: '#/components/schemas/OrderResponse'}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '500': {$ref: '#/components/responses/ServerError'}
+  /orders/{id}/cancel:
+    post:
+      tags: [Orders]
+      summary: Cancel an active order
+      description: Cancels an assigned or picked-up order. Picked-up orders may earn the configured cancellation compensation.
+      operationId: cancelOrder
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, pattern: '^ord_[0-9A-Za-z]{1,40}$'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+        - {$ref: '#/components/parameters/RequestIdHeader'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/LifecycleReasonRequest'}
+            example: {reason_code: customer_cancelled}
+      responses:
+        '200':
+          description: The cancelled order.
+          headers:
+            Idempotent-Replay: {$ref: '#/components/headers/IdempotentReplay'}
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json: {schema: {$ref: '#/components/schemas/OrderResponse'}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '500': {$ref: '#/components/responses/ServerError'}
   /orders/batch:
     post:
       tags: [Order Batching]
@@ -380,6 +448,37 @@ paths:
                   value: {batches: [], metadata: {}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '422': {$ref: '#/components/responses/Unprocessable'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '500': {$ref: '#/components/responses/ServerError'}
+  /batches/{id}/stops/{seq}/complete:
+    post:
+      tags: [Batches]
+      summary: Complete a batch stop
+      description: Confirms a pickup or delivery stop. A pickup moves the order to `picked_up`; the final delivery completes the batch.
+      operationId: completeBatchStop
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, pattern: '^batch_[0-9A-Za-z]{1,40}$'}
+        - name: seq
+          in: path
+          required: true
+          schema: {type: integer, minimum: 1, maximum: 10}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+        - {$ref: '#/components/parameters/RequestIdHeader'}
+      responses:
+        '200':
+          description: The order after completing the stop.
+          headers:
+            Idempotent-Replay: {$ref: '#/components/headers/IdempotentReplay'}
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json: {schema: {$ref: '#/components/schemas/OrderResponse'}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         '500': {$ref: '#/components/responses/ServerError'}
   /batches/{id}/accept:
@@ -765,6 +864,14 @@ components:
         application/json:
           schema: {$ref: '#/components/schemas/Error'}
           example: {error: 'body contains badly-formed JSON (at character 11)'}
+    Conflict:
+      description: The requested lifecycle transition conflicts with the order or batch's current state.
+      headers:
+        X-Request-ID: {$ref: '#/components/headers/RequestId'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+          example: {error: 'unable to update the record due to an edit conflict, please try again'}
     Unauthorized:
       description: The `X-API-Key` header is missing or wrong (the same answer for both).
       headers:
@@ -875,7 +982,7 @@ components:
         id: {type: string, pattern: '^ord_[0-9A-Za-z]{1,40}$'}
         vendor_id: {type: string}
         category: {type: string}
-        status: {type: string, enum: [pending, batched, assigned, picked_up, delivered, cancelled]}
+        status: {type: string, enum: [pending, batched, assigned, picked_up, delivered, returning, returned, cancelled]}
         pickup_location: {$ref: '#/components/schemas/Location'}
         delivery_location: {$ref: '#/components/schemas/Location'}
         trip_distance_km: {type: number, minimum: 0}
@@ -887,6 +994,10 @@ components:
         platform_fee_kes: {type: number}
         batch_id: {type: string, nullable: true}
         rider_id: {type: string, nullable: true}
+        delivery_attempts: {type: integer, minimum: 0, maximum: 3}
+        cancelled_at: {type: string, format: date-time, nullable: true}
+        cancel_reason: {type: string, nullable: true, pattern: '^[a-z][a-z0-9_]{1,39}$'}
+        rider_compensation_kes: {type: number, minimum: 0}
         created_at: {type: string, format: date-time}
         version: {type: integer, minimum: 1}
     OrderResponse:
@@ -895,6 +1006,12 @@ components:
       additionalProperties: false
       properties:
         order: {$ref: '#/components/schemas/Order'}
+    LifecycleReasonRequest:
+      type: object
+      required: [reason_code]
+      additionalProperties: false
+      properties:
+        reason_code: {type: string, pattern: '^[a-z][a-z0-9_]{1,39}$'}
     Preferences:
       type: object
       required: [min_order_value_kes, preferred_categories, preferred_areas]

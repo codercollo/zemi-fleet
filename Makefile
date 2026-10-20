@@ -17,7 +17,13 @@ export
 export MSYS_NO_PATHCONV=1
 
 # Version stamped into every binary (Let's Go Further ch. 20.6).
+ifeq ($(OS),Windows_NT)
+SHELL := cmd.exe
+VERSION         := dev
+SHELL := sh
+else
 VERSION         := $(shell git describe --always --dirty --tags 2>/dev/null || echo dev)
+endif
 LDFLAGS         := -s -X main.version=$(VERSION)
 
 MOCKGEN_VERSION := v0.6.0
@@ -135,16 +141,25 @@ dev/vulncheck:
 
 ## dev/test: run all unit tests
 .PHONY: dev/test
+ifeq ($(OS),Windows_NT)
+dev/test: SHELL := cmd.exe
+endif
 dev/test:
 	go test -count=1 ./...
 
 ## dev/test/integration: migrate TEST_DATABASE_URL, then run the integration tests (build tag: integration)
 .PHONY: dev/test/integration
+ifeq ($(OS),Windows_NT)
+dev/test/integration: SHELL := cmd.exe
+endif
 dev/test/integration: test/db/migrate
 	go test -tags=integration -count=1 -p 1 -run Integration ./...
 
 ## dev/test/e2e: migrate TEST_DATABASE_URL, then run the whole-API scenarios (build tag: e2e)
 .PHONY: dev/test/e2e
+ifeq ($(OS),Windows_NT)
+dev/test/e2e: SHELL := cmd.exe
+endif
 dev/test/e2e: test/db/migrate
 	go test -tags=e2e -count=1 -p 1 ./internal/e2e/...
 
@@ -154,9 +169,17 @@ dev/test/all: dev/test dev/test/integration dev/test/e2e
 
 # Bring the throwaway test database to the latest schema. Never touches DATABASE_URL.
 .PHONY: test/db/migrate
+ifeq ($(OS),Windows_NT)
+test/db/migrate: SHELL := cmd.exe
+endif
 test/db/migrate:
+ifeq ($(OS),Windows_NT)
+	if not defined TEST_DATABASE_URL (echo TEST_DATABASE_URL is not set (see .env.example) & exit /b 1)
+	migrate -path ./db/migrations -database "$(TEST_DATABASE_URL)" up
+else
 	@test -n "$(TEST_DATABASE_URL)" || (echo 'TEST_DATABASE_URL is not set (see .env.example)' && exit 1)
 	migrate -path ./db/migrations -database "$(TEST_DATABASE_URL)" up
+endif
 
 ## dev/test/race: run tests with the race detector (needs cgo/gcc; CI always runs it)
 .PHONY: dev/test/race

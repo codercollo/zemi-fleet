@@ -67,6 +67,8 @@ const (
 	OrderStatusPickedUp  OrderStatus = "picked_up"
 	OrderStatusDelivered OrderStatus = "delivered"
 	OrderStatusCancelled OrderStatus = "cancelled"
+	OrderStatusReturning OrderStatus = "returning"
+	OrderStatusReturned  OrderStatus = "returned"
 )
 
 func (e *OrderStatus) Scan(src interface{}) error {
@@ -214,28 +216,32 @@ type IdempotencyKey struct {
 }
 
 type Order struct {
-	ID                 string      `json:"id"`
-	VendorID           string      `json:"vendor_id"`
-	CategoryCode       string      `json:"category_code"`
-	Status             OrderStatus `json:"status"`
-	PickupLat          float64     `json:"pickup_lat"`
-	PickupLng          float64     `json:"pickup_lng"`
-	DeliveryLat        float64     `json:"delivery_lat"`
-	DeliveryLng        float64     `json:"delivery_lng"`
-	TripDistanceM      int32       `json:"trip_distance_m"`
-	TripBearingDeg     float64     `json:"trip_bearing_deg"`
-	ValueCents         int64       `json:"value_cents"`
-	DeliveryFeeCents   int64       `json:"delivery_fee_cents"`
-	RiderPayoutBps     int32       `json:"rider_payout_bps"`
-	RiderEarningsCents *int64      `json:"rider_earnings_cents"`
-	PlatformFeeCents   *int64      `json:"platform_fee_cents"`
-	BatchID            *string     `json:"batch_id"`
-	RiderID            *string     `json:"rider_id"`
-	BatchSeq           *int16      `json:"batch_seq"`
-	CreatedAt          time.Time   `json:"created_at"`
-	UpdatedAt          time.Time   `json:"updated_at"`
-	DeliveredAt        *time.Time  `json:"delivered_at"`
-	Version            int32       `json:"version"`
+	ID                     string      `json:"id"`
+	VendorID               string      `json:"vendor_id"`
+	CategoryCode           string      `json:"category_code"`
+	Status                 OrderStatus `json:"status"`
+	PickupLat              float64     `json:"pickup_lat"`
+	PickupLng              float64     `json:"pickup_lng"`
+	DeliveryLat            float64     `json:"delivery_lat"`
+	DeliveryLng            float64     `json:"delivery_lng"`
+	TripDistanceM          int32       `json:"trip_distance_m"`
+	TripBearingDeg         float64     `json:"trip_bearing_deg"`
+	ValueCents             int64       `json:"value_cents"`
+	DeliveryFeeCents       int64       `json:"delivery_fee_cents"`
+	RiderPayoutBps         int32       `json:"rider_payout_bps"`
+	RiderEarningsCents     *int64      `json:"rider_earnings_cents"`
+	PlatformFeeCents       *int64      `json:"platform_fee_cents"`
+	BatchID                *string     `json:"batch_id"`
+	RiderID                *string     `json:"rider_id"`
+	BatchSeq               *int16      `json:"batch_seq"`
+	CreatedAt              time.Time   `json:"created_at"`
+	UpdatedAt              time.Time   `json:"updated_at"`
+	DeliveredAt            *time.Time  `json:"delivered_at"`
+	Version                int32       `json:"version"`
+	DeliveryAttempts       int16       `json:"delivery_attempts"`
+	CancelledAt            *time.Time  `json:"cancelled_at"`
+	CancelReason           *string     `json:"cancel_reason"`
+	RiderCompensationCents int64       `json:"rider_compensation_cents"`
 }
 
 type Rider struct {

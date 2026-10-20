@@ -25,6 +25,7 @@ var (
 	areaIDPattern     = regexp.MustCompile(`^area_[0-9A-Za-z]{1,40}$`)
 	categoryPattern   = regexp.MustCompile(`^[a-z][a-z_]{1,39}$`) // the categories.code CHECK
 	idempotencyFormat = regexp.MustCompile(`^[\x21-\x7E]{1,64}$`) // visible ASCII, no spaces
+	reasonCodeFormat  = regexp.MustCompile(`^[a-z][a-z0-9_]{1,39}$`)
 )
 
 // idFormat describes a pattern for error messages.

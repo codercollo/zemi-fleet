@@ -26,6 +26,7 @@ type Services struct {
 	Batches     *service.BatchService
 	Preferences *service.PreferenceService
 	Idempotency *service.IdempotencyService
+	Lifecycle   *service.LifecycleService
 	// Metrics are the domain counters the services increment; the HTTP layer publishes them. Nil means a fresh set.
 	Metrics *metrics.Counters
 	// Clock is the source of time for the HTTP layer (access-log durations, the rate limiter). Nil means clock.Real{}.
@@ -44,6 +45,7 @@ type Server struct {
 	batches     *service.BatchService
 	preferences *service.PreferenceService
 	idempotency *service.IdempotencyService
+	lifecycle   *service.LifecycleService
 	clock       clock.Clock
 	metrics     *requestMetrics
 	limiter     *limiter // nil when LIMITER_ENABLED is false
@@ -60,7 +62,7 @@ func NewServer(cfg config.Config, logger *slog.Logger, db Pinger, svc Services, 
 	s := &Server{
 		cfg: cfg, logger: logger, db: db, version: version, clock: clk,
 		orders: svc.Orders, riders: svc.Riders, matching: svc.Matching, batches: svc.Batches,
-		preferences: svc.Preferences, idempotency: svc.Idempotency,
+		preferences: svc.Preferences, idempotency: svc.Idempotency, lifecycle: svc.Lifecycle,
 	}
 	counters := svc.Metrics
 	if counters == nil {

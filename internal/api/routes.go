@@ -72,6 +72,8 @@ func (s *Server) router(extra ...func(*gin.Engine)) *gin.Engine {
 	v2.POST("/orders/batch", s.idempotent(), s.createBatchesHandler)
 	v2.POST("/orders/match-riders", s.matchRidersHandler)
 	v2.GET("/orders/:id", s.showOrderHandler)
+	v2.POST("/orders/:id/attempts", s.idempotent(), s.recordAttemptHandler)
+	v2.POST("/orders/:id/cancel", s.idempotent(), s.cancelOrderHandler)
 
 	// Static path next to the :id routes: Gin matches it first. It is a POST, which has no :id sibling.
 	v2.POST("/riders/match-orders", s.matchOrdersHandler)
@@ -82,6 +84,7 @@ func (s *Server) router(extra ...func(*gin.Engine)) *gin.Engine {
 
 	v2.GET("/batches", s.listBatchesHandler)
 	v2.POST("/batches/:id/accept", s.acceptBatchHandler)
+	v2.POST("/batches/:id/stops/:seq/complete", s.idempotent(), s.completeBatchStopHandler)
 
 	for _, register := range extra {
 		register(r)

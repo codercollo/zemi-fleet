@@ -21,9 +21,13 @@ type Querier interface {
 	AssignOrderToBatch(ctx context.Context, arg AssignOrderToBatchParams) (int64, error)
 	// Used after replacing preferences, which live in other tables, so clients see the rider change.
 	BumpRiderVersion(ctx context.Context, arg BumpRiderVersionParams) (Rider, error)
+	CancelOrder(ctx context.Context, arg CancelOrderParams) (Order, error)
 	// Atomic: of any number of concurrent requests with one key, exactly one inserts the row.
 	ClaimIdempotencyKey(ctx context.Context, arg ClaimIdempotencyKeyParams) (int64, error)
+	CompleteBatchIfDone(ctx context.Context, arg CompleteBatchIfDoneParams) (Batch, error)
+	CompleteBatchStop(ctx context.Context, arg CompleteBatchStopParams) (int64, error)
 	CompleteIdempotencyKey(ctx context.Context, arg CompleteIdempotencyKeyParams) error
+	CompleteOrderStops(ctx context.Context, arg CompleteOrderStopsParams) error
 	// SQL-mode candidate count: bounding box plus exact great-circle radius.
 	CountOpenBatchSummariesSQL(ctx context.Context, arg CountOpenBatchSummariesSQLParams) (int64, error)
 	CreateBatch(ctx context.Context, arg CreateBatchParams) (Batch, error)
@@ -44,11 +48,17 @@ type Querier interface {
 	ExpireStaleBatches(ctx context.Context, now time.Time) ([]string, error)
 	GetAreasByIDs(ctx context.Context, ids []string) ([]Area, error)
 	GetBatch(ctx context.Context, id string) (Batch, error)
+	GetBatchForUpdate(ctx context.Context, id string) (Batch, error)
+	GetBatchStop(ctx context.Context, arg GetBatchStopParams) (BatchStop, error)
 	GetBatchesByIDs(ctx context.Context, ids []string) ([]Batch, error)
 	GetCategoriesByCodes(ctx context.Context, codes []string) ([]Category, error)
 	GetCategory(ctx context.Context, code string) (Category, error)
 	GetIdempotencyKey(ctx context.Context, arg GetIdempotencyKeyParams) (IdempotencyKey, error)
 	GetOrder(ctx context.Context, id string) (Order, error)
+	GetOrderForUpdate(ctx context.Context, id string) (Order, error)
+	// Queries used by the Phase 4 lifecycle transactions. Callers lock rider rows
+	// before batch rows, matching the accept transaction's deadlock-safe order.
+	GetOrderRider(ctx context.Context, id string) (GetOrderRiderRow, error)
 	GetPreferences(ctx context.Context, riderID string) (RiderPreference, error)
 	GetRider(ctx context.Context, id string) (Rider, error)
 	// Row lock: serialises concurrent preference replacements for one rider.
@@ -81,7 +91,12 @@ type Querier interface {
 	ListPreferredAreasForRiders(ctx context.Context, riderIds []string) ([]ListPreferredAreasForRidersRow, error)
 	ListPreferredCategories(ctx context.Context, riderID string) ([]string, error)
 	ListPreferredCategoriesForRiders(ctx context.Context, riderIds []string) ([]RiderPreferredCategory, error)
+	MarkBatchInProgress(ctx context.Context, id string) (int64, error)
 	MarkBatchOfferAccepted(ctx context.Context, arg MarkBatchOfferAcceptedParams) error
+	MarkOrderDelivered(ctx context.Context, arg MarkOrderDeliveredParams) (Order, error)
+	MarkOrderPickedUp(ctx context.Context, id string) (Order, error)
+	MarkOrderReturned(ctx context.Context, id string) (Order, error)
+	RecordDeliveryAttempt(ctx context.Context, id string) (Order, error)
 	// The rider takes on n orders and one more accepted offer. The version bump makes a client holding a
 	// stale X-Expected-Version conflict, because the rider's state really did change.
 	RecordRiderAccept(ctx context.Context, arg RecordRiderAcceptParams) error
@@ -89,6 +104,7 @@ type Querier interface {
 	ReleaseIdempotencyKey(ctx context.Context, arg ReleaseIdempotencyKeyParams) error
 	// Orders of expired batches go back to the pending pool.
 	ReleaseOrdersFromBatches(ctx context.Context, batchIds []string) error
+	ReleaseRiderCapacity(ctx context.Context, id string) error
 	// A claim whose request never completed (a crash) can be taken over once it is older than the processing timeout.
 	TakeOverIdempotencyKey(ctx context.Context, arg TakeOverIdempotencyKeyParams) (int64, error)
 	UpdateRiderAvailability(ctx context.Context, arg UpdateRiderAvailabilityParams) (Rider, error)

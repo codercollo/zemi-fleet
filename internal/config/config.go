@@ -32,6 +32,9 @@ type Config struct {
 	// (9000 = 90%). It is snapshotted on every order, so changing it never
 	// rewrites history.
 	RiderPayoutBPS int `mapstructure:"RIDER_PAYOUT_BPS"`
+	// CancelCompensationBPS is the rider compensation share of the delivery fee
+	// when an order is cancelled after pickup.
+	CancelCompensationBPS int `mapstructure:"CANCEL_COMPENSATION_BPS"`
 
 	// OrderMinTripM is the shortest allowed pickup-to-delivery distance in metres. A shorter trip has
 	// no meaningful direction and is not worth a rider; creating one is a 422.
@@ -195,26 +198,27 @@ type DBConfig struct {
 
 // Default settings .
 var defaults = map[string]any{
-	"APP_ENV":               EnvDevelopment,
-	"PORT":                  4000,
-	"APP_TIMEZONE":          "Africa/Nairobi",
-	"DATABASE_URL":          "",
-	"DB_MAX_CONNS":          25,
-	"DB_MIN_CONNS":          2,
-	"DB_MAX_CONN_IDLE_TIME": "15m",
-	"DB_QUERY_TIMEOUT":      "3s",
-	"RIDER_PAYOUT_BPS":      9000,
-	"LIMITER_ENABLED":       true,
-	"LIMITER_RPS":           10,
-	"LIMITER_BURST":         20,
-	"TRUSTED_PROXIES":       "",
-	"API_KEYS":              "",
-	"CORS_TRUSTED_ORIGINS":  "",
-	"SHUTDOWN_TIMEOUT":      "30s",
-	"CONE_RADIUS_KM":        1,
-	"CONE_HALF_ANGLE_DEG":   30,
-	"CONE_MIN_SPEED_KMH":    3,
-	"CONE_MAX_RESULTS":      20,
+	"APP_ENV":                 EnvDevelopment,
+	"PORT":                    4000,
+	"APP_TIMEZONE":            "Africa/Nairobi",
+	"DATABASE_URL":            "",
+	"DB_MAX_CONNS":            25,
+	"DB_MIN_CONNS":            2,
+	"DB_MAX_CONN_IDLE_TIME":   "15m",
+	"DB_QUERY_TIMEOUT":        "3s",
+	"RIDER_PAYOUT_BPS":        9000,
+	"CANCEL_COMPENSATION_BPS": 0,
+	"LIMITER_ENABLED":         true,
+	"LIMITER_RPS":             10,
+	"LIMITER_BURST":           20,
+	"TRUSTED_PROXIES":         "",
+	"API_KEYS":                "",
+	"CORS_TRUSTED_ORIGINS":    "",
+	"SHUTDOWN_TIMEOUT":        "30s",
+	"CONE_RADIUS_KM":          1,
+	"CONE_HALF_ANGLE_DEG":     30,
+	"CONE_MIN_SPEED_KMH":      3,
+	"CONE_MAX_RESULTS":        20,
 
 	"MATCH_MAX_DISTANCE_KM":      10,
 	"RIDER_LOCATION_STALE_AFTER": "30m",
@@ -313,6 +317,9 @@ func (c Config) validate() error {
 	}
 	if c.RiderPayoutBPS < 0 || c.RiderPayoutBPS > MaxPayoutBPS {
 		errs = append(errs, fmt.Errorf("RIDER_PAYOUT_BPS must be 0-%d (got %d)", MaxPayoutBPS, c.RiderPayoutBPS))
+	}
+	if c.CancelCompensationBPS < 0 || c.CancelCompensationBPS > c.RiderPayoutBPS {
+		errs = append(errs, fmt.Errorf("CANCEL_COMPENSATION_BPS must be 0-%d (got %d)", c.RiderPayoutBPS, c.CancelCompensationBPS))
 	}
 	if c.DB.QueryTimeout <= 0 {
 		errs = append(errs, fmt.Errorf("DB_QUERY_TIMEOUT must be greater than zero (got %s)", c.DB.QueryTimeout))

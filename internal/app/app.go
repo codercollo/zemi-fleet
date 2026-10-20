@@ -34,6 +34,7 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, clk clock.C
 		Batches:     service.NewBatchService(store, clk, cfg.Batch).WithMetrics(counters),
 		Preferences: service.NewPreferenceService(store, clk, cfg.Match, cfg.OrderMinTripM).WithMetrics(counters),
 		Idempotency: service.NewIdempotencyService(store, clk, cfg.IdempotencyTTL, cfg.IdempotencyProcessingTimeout).WithMetrics(counters),
+		Lifecycle:   service.NewLifecycleService(store, clk, cfg.CancelCompensationBPS, service.NoopEventSink{}),
 		Metrics:     counters,
 		Clock:       clk,
 	}, version)

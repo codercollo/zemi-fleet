@@ -1039,6 +1039,7 @@ on an invalid value. `.env.example` lists every key; `docker-compose.yml` passes
 | `DB_MAX_CONN_IDLE_TIME` | `15m` | Idle connection lifetime |
 | `DB_QUERY_TIMEOUT` | `3s` | Upper bound for every SQL statement (a timeout is a `500`) |
 | `RIDER_PAYOUT_BPS` | `9000` | Rider's share of each delivery fee in basis points (9000 = 90%), snapshotted on every order |
+| `CANCEL_COMPENSATION_BPS` | `0` | Rider compensation, in basis points of the delivery fee, when cancelling after pickup; cannot exceed `RIDER_PAYOUT_BPS` |
 | `ORDER_MIN_TRIP_M` | `50` | Shortest allowed pickup-to-delivery distance in metres; shorter is a `422` |
 | `ORDER_MAX_VALUE_KES` / `ORDER_MAX_DELIVERY_FEE_KES` | `10000000` | Upper bounds for order value and delivery fee (validated at most 1e9) |
 | `IDEMPOTENCY_TTL` | `24h` | How long an `Idempotency-Key` is remembered |
@@ -1320,7 +1321,7 @@ erDiagram
 | `batch_offers` | Which rider was shown which batch, and the response: the audit trail and the source of the acceptance rate | PK `(batch_id, rider_id)`, so an offer is recorded once; index `(rider_id, offered_at DESC)` |
 | `idempotency_keys` | Stored responses for `Idempotency-Key` | PK `(key, endpoint)`; `chk_idempotency_response` (status and body are both set or both null); index on `created_at` for cleanup |
 
-Enums: `order_status` (`pending`, `batched`, `assigned`, `picked_up`, `delivered`, `cancelled`), `batch_status` (`open`, `accepted`, `in_progress`, `completed`,
+Enums: `order_status` (`pending`, `batched`, `assigned`, `picked_up`, `delivered`, `returning`, `returned`, `cancelled`), `batch_status` (`open`, `accepted`, `in_progress`, `completed`,
 `cancelled`, `expired`), `stop_type` (`pickup`, `delivery`). A trigger, `set_updated_at`, owns every `updated_at`.
 
 **Constraints as the last line of defence.** The application checks capacity and state transitions, but the database refuses an inconsistent row regardless: a
@@ -1673,10 +1674,9 @@ keep the last few pings per rider, derive the heading from the displacement over
 and a long-time rider's rate barely moves. *Proposal:* weight offers by recency (an exponential decay or a rolling 30-day window) when computing the rate used in the score,
 keeping the smoothing for newcomers. *Why:* the score reflects how a rider behaves now, and a rider can recover their ranking.
 
-**Batch lifecycle endpoints.** *Problem:* a batch stops at `accepted`; the schema already has `in_progress` and `completed`, `batch_stops.completed_at` and the order states
-`picked_up` and `delivered`, but nothing moves them. *Proposal:* `POST /batches/:id/stops/:seq/complete` to confirm each pickup and delivery, which advances the order and batch
-states, decrements the rider's `current_orders_count` and triggers the earnings ledger entry, plus a cancel endpoint that releases the orders. *Why:* it completes the loop so
-capacity frees up as deliveries finish and the acceptance and earnings figures rest on real outcomes.
+**Batch lifecycle endpoints.** `POST /batches/:id/stops/:seq/complete` confirms each pickup and delivery. The order lifecycle also exposes
+`POST /orders/:id/attempts` (three failed attempts move an order to `returning`) and `POST /orders/:id/cancel`; all three are idempotent and use conditional
+state updates. Delivered, returned and cancelled orders release rider capacity, and the final completed stop moves the batch to `completed`.
 
 **A Redis-backed rate limiter and Prometheus/OpenTelemetry.** *Problem:* the limiter's buckets and the expvar counters are per process, so with several API instances each enforces
 its own limits and a scraper must sum and reconcile restarts; there are no traces across the handler, service and database. *Proposal:* a Redis token bucket (or sliding window)

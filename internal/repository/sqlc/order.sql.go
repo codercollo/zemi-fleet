@@ -17,7 +17,7 @@ INSERT INTO orders (
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
 )
-RETURNING id, vendor_id, category_code, status, pickup_lat, pickup_lng, delivery_lat, delivery_lng, trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps, rider_earnings_cents, platform_fee_cents, batch_id, rider_id, batch_seq, created_at, updated_at, delivered_at, version
+RETURNING id, vendor_id, category_code, status, pickup_lat, pickup_lng, delivery_lat, delivery_lng, trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps, rider_earnings_cents, platform_fee_cents, batch_id, rider_id, batch_seq, created_at, updated_at, delivered_at, version, delivery_attempts, cancelled_at, cancel_reason, rider_compensation_cents
 `
 
 type CreateOrderParams struct {
@@ -77,12 +77,16 @@ func (q *Queries) CreateOrder(ctx context.Context, arg CreateOrderParams) (Order
 		&i.UpdatedAt,
 		&i.DeliveredAt,
 		&i.Version,
+		&i.DeliveryAttempts,
+		&i.CancelledAt,
+		&i.CancelReason,
+		&i.RiderCompensationCents,
 	)
 	return i, err
 }
 
 const getOrder = `-- name: GetOrder :one
-SELECT id, vendor_id, category_code, status, pickup_lat, pickup_lng, delivery_lat, delivery_lng, trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps, rider_earnings_cents, platform_fee_cents, batch_id, rider_id, batch_seq, created_at, updated_at, delivered_at, version FROM orders WHERE id = $1
+SELECT id, vendor_id, category_code, status, pickup_lat, pickup_lng, delivery_lat, delivery_lng, trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps, rider_earnings_cents, platform_fee_cents, batch_id, rider_id, batch_seq, created_at, updated_at, delivered_at, version, delivery_attempts, cancelled_at, cancel_reason, rider_compensation_cents FROM orders WHERE id = $1
 `
 
 func (q *Queries) GetOrder(ctx context.Context, id string) (Order, error) {
@@ -111,6 +115,10 @@ func (q *Queries) GetOrder(ctx context.Context, id string) (Order, error) {
 		&i.UpdatedAt,
 		&i.DeliveredAt,
 		&i.Version,
+		&i.DeliveryAttempts,
+		&i.CancelledAt,
+		&i.CancelReason,
+		&i.RiderCompensationCents,
 	)
 	return i, err
 }

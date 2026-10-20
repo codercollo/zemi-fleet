@@ -36,6 +36,10 @@ type Store interface {
 
 	// ListOpenBatches pages through open, unexpired batches near a point, read-only (batch_listing.go).
 	ListOpenBatches(ctx context.Context, arg ListOpenBatchesParams) ([]domain.Batch, int, error)
+
+	CompleteBatchStopTx(ctx context.Context, arg CompleteStopParams) (LifecycleResult, error)
+	RecordDeliveryAttemptTx(ctx context.Context, arg AttemptParams) (sqlc.Order, error)
+	CancelOrderTx(ctx context.Context, arg CancelParams) (sqlc.Order, error)
 }
 
 // SQLStore is the PostgreSQL implementation of Store.

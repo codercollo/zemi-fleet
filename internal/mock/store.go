@@ -857,3 +857,201 @@ func (mr *MockStoreMockRecorder) UpsertPreferences(ctx, arg any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertPreferences", reflect.TypeOf((*MockStore)(nil).UpsertPreferences), ctx, arg)
 }
+
+// CompleteBatchStopTx mocks base method.
+func (m *MockStore) CompleteBatchStopTx(ctx context.Context, arg repository.CompleteStopParams) (repository.LifecycleResult, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CompleteBatchStopTx", ctx, arg)
+	ret0, _ := ret[0].(repository.LifecycleResult)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CompleteBatchStopTx indicates an expected call of CompleteBatchStopTx.
+func (mr *MockStoreMockRecorder) CompleteBatchStopTx(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CompleteBatchStopTx", reflect.TypeOf((*MockStore)(nil).CompleteBatchStopTx), ctx, arg)
+}
+
+// RecordDeliveryAttemptTx mocks base method.
+func (m *MockStore) RecordDeliveryAttemptTx(ctx context.Context, arg repository.AttemptParams) (sqlc.Order, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RecordDeliveryAttemptTx", ctx, arg)
+	ret0, _ := ret[0].(sqlc.Order)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// RecordDeliveryAttemptTx indicates an expected call of RecordDeliveryAttemptTx.
+func (mr *MockStoreMockRecorder) RecordDeliveryAttemptTx(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordDeliveryAttemptTx", reflect.TypeOf((*MockStore)(nil).RecordDeliveryAttemptTx), ctx, arg)
+}
+
+// CancelOrderTx mocks base method.
+func (m *MockStore) CancelOrderTx(ctx context.Context, arg repository.CancelParams) (sqlc.Order, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CancelOrderTx", ctx, arg)
+	ret0, _ := ret[0].(sqlc.Order)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CancelOrderTx indicates an expected call of CancelOrderTx.
+func (mr *MockStoreMockRecorder) CancelOrderTx(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CancelOrderTx", reflect.TypeOf((*MockStore)(nil).CancelOrderTx), ctx, arg)
+}
+
+func (m *MockStore) CancelOrder(ctx context.Context, arg sqlc.CancelOrderParams) (sqlc.Order, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CancelOrder", ctx, arg)
+	ret0, _ := ret[0].(sqlc.Order)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+func (mr *MockStoreMockRecorder) CancelOrder(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CancelOrder", reflect.TypeOf((*MockStore)(nil).CancelOrder), ctx, arg)
+}
+func (m *MockStore) CompleteBatchIfDone(ctx context.Context, arg sqlc.CompleteBatchIfDoneParams) (sqlc.Batch, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CompleteBatchIfDone", ctx, arg)
+	ret0, _ := ret[0].(sqlc.Batch)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+func (mr *MockStoreMockRecorder) CompleteBatchIfDone(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CompleteBatchIfDone", reflect.TypeOf((*MockStore)(nil).CompleteBatchIfDone), ctx, arg)
+}
+func (m *MockStore) CompleteBatchStop(ctx context.Context, arg sqlc.CompleteBatchStopParams) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CompleteBatchStop", ctx, arg)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+func (mr *MockStoreMockRecorder) CompleteBatchStop(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CompleteBatchStop", reflect.TypeOf((*MockStore)(nil).CompleteBatchStop), ctx, arg)
+}
+func (m *MockStore) CompleteOrderStops(ctx context.Context, arg sqlc.CompleteOrderStopsParams) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CompleteOrderStops", ctx, arg)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+func (mr *MockStoreMockRecorder) CompleteOrderStops(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CompleteOrderStops", reflect.TypeOf((*MockStore)(nil).CompleteOrderStops), ctx, arg)
+}
+func (m *MockStore) GetBatchForUpdate(ctx context.Context, id string) (sqlc.Batch, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetBatchForUpdate", ctx, id)
+	ret0, _ := ret[0].(sqlc.Batch)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+func (mr *MockStoreMockRecorder) GetBatchForUpdate(ctx, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetBatchForUpdate", reflect.TypeOf((*MockStore)(nil).GetBatchForUpdate), ctx, id)
+}
+func (m *MockStore) GetBatchStop(ctx context.Context, arg sqlc.GetBatchStopParams) (sqlc.BatchStop, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetBatchStop", ctx, arg)
+	ret0, _ := ret[0].(sqlc.BatchStop)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+func (mr *MockStoreMockRecorder) GetBatchStop(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetBatchStop", reflect.TypeOf((*MockStore)(nil).GetBatchStop), ctx, arg)
+}
+func (m *MockStore) GetOrderForUpdate(ctx context.Context, id string) (sqlc.Order, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetOrderForUpdate", ctx, id)
+	ret0, _ := ret[0].(sqlc.Order)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+func (mr *MockStoreMockRecorder) GetOrderForUpdate(ctx, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetOrderForUpdate", reflect.TypeOf((*MockStore)(nil).GetOrderForUpdate), ctx, id)
+}
+func (m *MockStore) GetOrderRider(ctx context.Context, id string) (sqlc.GetOrderRiderRow, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetOrderRider", ctx, id)
+	ret0, _ := ret[0].(sqlc.GetOrderRiderRow)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+func (mr *MockStoreMockRecorder) GetOrderRider(ctx, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetOrderRider", reflect.TypeOf((*MockStore)(nil).GetOrderRider), ctx, id)
+}
+func (m *MockStore) MarkBatchInProgress(ctx context.Context, id string) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MarkBatchInProgress", ctx, id)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+func (mr *MockStoreMockRecorder) MarkBatchInProgress(ctx, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkBatchInProgress", reflect.TypeOf((*MockStore)(nil).MarkBatchInProgress), ctx, id)
+}
+func (m *MockStore) MarkOrderDelivered(ctx context.Context, arg sqlc.MarkOrderDeliveredParams) (sqlc.Order, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MarkOrderDelivered", ctx, arg)
+	ret0, _ := ret[0].(sqlc.Order)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+func (mr *MockStoreMockRecorder) MarkOrderDelivered(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkOrderDelivered", reflect.TypeOf((*MockStore)(nil).MarkOrderDelivered), ctx, arg)
+}
+func (m *MockStore) MarkOrderPickedUp(ctx context.Context, id string) (sqlc.Order, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MarkOrderPickedUp", ctx, id)
+	ret0, _ := ret[0].(sqlc.Order)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+func (mr *MockStoreMockRecorder) MarkOrderPickedUp(ctx, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkOrderPickedUp", reflect.TypeOf((*MockStore)(nil).MarkOrderPickedUp), ctx, id)
+}
+func (m *MockStore) MarkOrderReturned(ctx context.Context, id string) (sqlc.Order, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MarkOrderReturned", ctx, id)
+	ret0, _ := ret[0].(sqlc.Order)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+func (mr *MockStoreMockRecorder) MarkOrderReturned(ctx, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkOrderReturned", reflect.TypeOf((*MockStore)(nil).MarkOrderReturned), ctx, id)
+}
+func (m *MockStore) RecordDeliveryAttempt(ctx context.Context, id string) (sqlc.Order, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RecordDeliveryAttempt", ctx, id)
+	ret0, _ := ret[0].(sqlc.Order)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+func (mr *MockStoreMockRecorder) RecordDeliveryAttempt(ctx, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordDeliveryAttempt", reflect.TypeOf((*MockStore)(nil).RecordDeliveryAttempt), ctx, id)
+}
+func (m *MockStore) ReleaseRiderCapacity(ctx context.Context, id string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ReleaseRiderCapacity", ctx, id)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+func (mr *MockStoreMockRecorder) ReleaseRiderCapacity(ctx, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleaseRiderCapacity", reflect.TypeOf((*MockStore)(nil).ReleaseRiderCapacity), ctx, id)
+}

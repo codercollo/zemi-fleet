@@ -38,10 +38,19 @@ func assertInvariants(t *testing.T, pool *pgxpool.Pool, responses []string) {
 			                      AND b.status IN ('accepted', 'in_progress', 'completed') AND b.rider_id = o.rider_id)`,
 		},
 		{
-			"every rider's current_orders_count equals their assigned orders and is within max_capacity",
+			"every rider's current_orders_count equals their active orders and is within max_capacity",
 			`SELECT r.id FROM riders r
-			  WHERE r.current_orders_count <> (SELECT count(*) FROM orders o WHERE o.rider_id = r.id AND o.status IN ('assigned', 'picked_up'))
+			  WHERE r.current_orders_count <> (SELECT count(*) FROM orders o WHERE o.rider_id = r.id AND o.status IN ('assigned', 'picked_up', 'returning'))
 			     OR r.current_orders_count > r.max_capacity`,
+		},
+		{
+			"delivery attempts and cancellation compensation stay within lifecycle bounds",
+			`SELECT id FROM orders
+			  WHERE delivery_attempts < 0 OR delivery_attempts > 3
+			     OR rider_compensation_cents < 0
+			     OR rider_compensation_cents + platform_fee_cents > delivery_fee_cents
+			     OR (status IN ('delivered', 'returned', 'cancelled') AND rider_id IS NOT NULL
+			         AND EXISTS (SELECT 1 FROM riders r WHERE r.id = orders.rider_id AND r.current_orders_count < 0))`,
 		},
 		{
 			"no order is in two non-expired batches",

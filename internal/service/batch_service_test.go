@@ -71,6 +71,37 @@ func TestCreateBatches_RiderCannotTakeOrders(t *testing.T) {
 	}
 }
 
+func TestExpireBatches_UsesTestClockAndCountsOnlyCommittedWork(t *testing.T) {
+	f := newBatchFixture(t)
+	counters := metrics.New()
+	f.svc.WithMetrics(counters)
+	f.store.EXPECT().ExpireBatchesTx(gomock.Any(), testNow).Return(2, nil)
+
+	n, err := f.svc.ExpireBatches(context.Background())
+
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+	assert.Equal(t, int64(2), counters.Vars()["batches_expired"].Value())
+
+	f.clk.Advance(time.Minute)
+	f.store.EXPECT().ExpireBatchesTx(gomock.Any(), testNow.Add(time.Minute)).Return(0, nil)
+	n, err = f.svc.ExpireBatches(context.Background())
+	require.NoError(t, err)
+	assert.Zero(t, n)
+}
+
+func TestExpireBatches_DoesNotCountFailedSweep(t *testing.T) {
+	f := newBatchFixture(t)
+	counters := metrics.New()
+	f.svc.WithMetrics(counters)
+	f.store.EXPECT().ExpireBatchesTx(gomock.Any(), testNow).Return(0, errors.New("database unavailable"))
+
+	_, err := f.svc.ExpireBatches(context.Background())
+
+	assert.EqualError(t, err, "database unavailable")
+	assert.Equal(t, int64(0), counters.Vars()["batches_expired"].Value())
+}
+
 func TestCreateBatches_UnknownRider(t *testing.T) {
 	f := newBatchFixture(t)
 	f.store.EXPECT().GetRider(gomock.Any(), "rider_999").Return(sqlc.Rider{}, domain.ErrNotFound)

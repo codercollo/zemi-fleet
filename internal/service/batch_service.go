@@ -35,6 +35,19 @@ func (s *BatchService) WithMetrics(c *metrics.Counters) *BatchService {
 	return s
 }
 
+// ExpireBatches runs one expiry sweep. The repository reports only committed
+// batches, so the metric cannot count work that was rolled back.
+func (s *BatchService) ExpireBatches(ctx context.Context) (int, error) {
+	n, err := s.store.ExpireBatchesTx(ctx, s.clock.Now())
+	if err != nil {
+		return 0, err
+	}
+	if n > 0 {
+		s.metrics.BatchesExpired(n)
+	}
+	return n, nil
+}
+
 // CreateBatchesInput is a validated POST /orders/batch request.
 type CreateBatchesInput struct {
 	RiderID       string

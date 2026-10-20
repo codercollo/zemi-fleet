@@ -37,6 +37,8 @@ CREATE DATABASE zemi_fleet_test OWNER zemi;
 - **Services (mocked `Store`)** prove the *orchestration*: which store calls are made, in what order, with which arguments; that errors map to the right domain errors; that capacity and availability short-circuit before expensive work; that the injected clock is the only source of time.
 - **Handlers (mocked `Store`)** prove the *HTTP contract*: status codes (200/201/400/404/409/422/500), field names and key order, validation messages, headers, that a 500 never leaks internals.
 - **End to end** proves that *the features work together* on the real stack: an order created over HTTP is matched, batched, listed, accepted and counted consistently; capacity is enforced by every feature; expiry releases orders; concurrent riders never double-book. It is deliberately small. Each scenario drives the API over HTTP only and ends by running `assertInvariants`, which checks the database with SQL:
+
+Background batch expiry adds clock-controlled service tests for the committed counter, a lifecycle test that verifies the managed worker is awaited during shutdown, and an integration concurrency test covering `FOR UPDATE SKIP LOCKED`. With `BATCH_EXPIRY_INTERVAL=0`, the existing lazy-expiry scenario remains covered.
   1. every `batched` order belongs to exactly one open batch (and `orders.batch_id` points at it);
   2. every `assigned` order belongs to an accepted batch with the same rider;
   3. each rider's `current_orders_count` equals their assigned orders and is at most `max_capacity`;

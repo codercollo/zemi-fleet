@@ -121,6 +121,8 @@ type BatchConfig struct {
 	VisibilityRadiusKM float64 `mapstructure:"BATCH_VISIBILITY_RADIUS_KM"`
 	// TTL is how long an open batch stays on offer before it expires and its orders return to pending.
 	TTL time.Duration `mapstructure:"BATCH_TTL"`
+	// ExpiryInterval controls the background expiry sweep. Zero disables the worker and preserves lazy expiry.
+	ExpiryInterval time.Duration `mapstructure:"BATCH_EXPIRY_INTERVAL"`
 	// AvgSpeedKMH and StopDwellMin drive the delivery time estimates.
 	AvgSpeedKMH  float64 `mapstructure:"AVG_SPEED_KMH"`
 	StopDwellMin float64 `mapstructure:"STOP_DWELL_MIN"`
@@ -234,6 +236,7 @@ var defaults = map[string]any{
 	"IDEMPOTENCY_TTL":                "24h",
 	"IDEMPOTENCY_PROCESSING_TIMEOUT": "2m",
 	"BATCH_TTL":                      "10m",
+	"BATCH_EXPIRY_INTERVAL":          "0",
 	"AVG_SPEED_KMH":                  20,
 	"STOP_DWELL_MIN":                 2,
 	"GEO_BOUNDS_ENABLED":             false,
@@ -403,6 +406,9 @@ func (b BatchConfig) validate() []error {
 	}
 	if b.TTL <= 0 {
 		errs = append(errs, fmt.Errorf("BATCH_TTL must be greater than zero (got %s)", b.TTL))
+	}
+	if b.ExpiryInterval < 0 {
+		errs = append(errs, fmt.Errorf("BATCH_EXPIRY_INTERVAL must be zero or greater (got %s)", b.ExpiryInterval))
 	}
 	if b.AvgSpeedKMH <= 0 || b.AvgSpeedKMH > maxBatchAvgSpeed {
 		errs = append(errs, fmt.Errorf("AVG_SPEED_KMH must be greater than 0 and at most %v (got %v)", maxBatchAvgSpeed, b.AvgSpeedKMH))

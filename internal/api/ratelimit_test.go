@@ -14,8 +14,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 
+	"github.com/codercollo/zemi-fleet/internal/clock"
 	"github.com/codercollo/zemi-fleet/internal/config"
+	"github.com/codercollo/zemi-fleet/internal/metrics"
+	"github.com/codercollo/zemi-fleet/internal/mock"
+	"github.com/codercollo/zemi-fleet/internal/service"
 )
 
 func limited(rps float64, burst int, proxies ...string) func(*config.Config) {
@@ -238,6 +243,37 @@ func TestBackground_APanicIsRecoveredAndLogged(t *testing.T) {
 	require.Len(t, lines, 1)
 	assert.Equal(t, "worker blew up", lines[0]["panic"])
 	assert.NotEmpty(t, lines[0]["stack"])
+}
+
+func TestServe_BackgroundExpiryRunsImmediatelyAndStopsBeforeServeReturns(t *testing.T) {
+	store := mock.NewMockStore(gomock.NewController(t))
+	clk := clock.NewTest(testNow)
+	cfg := testConfig()
+	cfg.Limiter.Enabled = false
+	cfg.Batch.ExpiryInterval = time.Hour
+	finished := make(chan struct{})
+	store.EXPECT().ExpireBatchesTx(gomock.Any(), testNow).DoAndReturn(func(context.Context, time.Time) (int, error) {
+		close(finished)
+		return 1, nil
+	})
+	s := NewServer(cfg, discardLogger(), fakeDB{}, Services{
+		Batches: service.NewBatchService(store, clk, cfg.Batch).WithMetrics(metrics.New()),
+		Clock:   clk,
+	}, "test")
+	ln := listenLocal(t)
+	httpSrv := &http.Server{Handler: s.Routes(), Addr: ln.Addr().String()}
+	ctx, cancel := context.WithCancel(context.Background())
+	served := make(chan error, 1)
+	go func() { served <- s.Serve(ctx, httpSrv, ln, time.Second) }()
+
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("expiry worker did not run its startup sweep")
+	}
+	cancel()
+	require.NoError(t, <-served)
+	s.wg.Wait()
 }
 
 func listenLocal(t *testing.T) net.Listener {

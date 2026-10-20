@@ -81,7 +81,7 @@ func TestMetrics_PublishesEveryValue(t *testing.T) {
 		"version", "goroutines", "timestamp", "database", "memstats",
 		"total_requests_received", "total_responses_sent", "total_processing_time_μs", "total_responses_sent_by_status",
 		"orders_created", "batches_formed", "batches_accepted", "batch_accept_conflicts", "batch_capacity_rejections",
-		"cone_matches_served", "rider_matches_served", "idempotent_replays",
+		"cone_matches_served", "rider_matches_served", "idempotent_replays", "batches_expired",
 	} {
 		assert.Contains(t, v, name)
 	}

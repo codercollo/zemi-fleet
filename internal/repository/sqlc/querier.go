@@ -39,6 +39,8 @@ type Querier interface {
 	DeletePreferredCategories(ctx context.Context, riderID string) error
 	// Queries for batch creation (POST /orders/batch). All timestamps come from the injected clock.
 	// Open batches past their TTL are no longer on offer.
+	// The locking CTE lets several application instances sweep safely: each instance
+	// claims a disjoint set of expired batches before changing their state.
 	ExpireStaleBatches(ctx context.Context, now time.Time) ([]string, error)
 	GetAreasByIDs(ctx context.Context, ids []string) ([]Area, error)
 	GetBatch(ctx context.Context, id string) (Batch, error)

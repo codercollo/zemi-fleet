@@ -1054,6 +1054,7 @@ on an invalid value. `.env.example` lists every key; `docker-compose.yml` passes
 | `BATCH_SEARCH_RADIUS_KM` | `5` | How far from the rider orders are batched and open batches are shown |
 | `BATCH_VISIBILITY_RADIUS_KM` | `3` | Default `radius_km` of `GET /batches` (a request may use up to the search radius) |
 | `BATCH_TTL` | `10m` | How long an open batch is offered before it expires and its orders return to `pending` |
+| `BATCH_EXPIRY_INTERVAL` | `0` | Background sweep cadence for expired open batches; `0` disables the worker and retains lazy expiry |
 | `AVG_SPEED_KMH` | `20` | Driving speed for time estimates |
 | `STOP_DWELL_MIN` | `2` | Minutes spent at each earlier stop |
 | `GEO_BOUNDS_ENABLED` | `false` | Reject coordinates outside the configured Kenya service-area bounds |
@@ -1507,7 +1508,7 @@ Every decision the brief and Raphael's email did not settle, in one place. Where
 
 - "Within 2 km of each other" is **pairwise**: every pickup is within the radius of every other pickup in the batch, not just of the first.
 - "Similar directions" means each trip's bearing is within `BATCH_DIRECTION_TOLERANCE_DEG` (45) of the batch seed's trip bearing; delivery clustering is a bonus, not a requirement (clarification 2).
-- An open batch is offered for `BATCH_TTL` (10 minutes); an expired batch returns its orders to `pending`, lazily, the next time someone asks.
+- An open batch is offered for `BATCH_TTL` (10 minutes); when `BATCH_EXPIRY_INTERVAL` is enabled, a managed background sweep returns expired orders to `pending` without waiting for another request. The legacy lazy path remains active when the interval is `0`.
 - A speed near zero makes the bearing unreliable, so below `CONE_MIN_SPEED_KMH` (or with no bearing) the cone falls back to the full circle and the response says so (`direction_filter_applied: false`).
 - A rider's last location older than `RIDER_LOCATION_STALE_AFTER` is unknown: not a reason to exclude them, but they score 0 for proximity.
 - Preferences are hard filters; an empty preference means "accepts everything"; the score only ranks the riders who pass.
@@ -1649,11 +1650,6 @@ clusters, which is the goal Zemi stated (minimise travel to the vendor).
 cluster, and orders that belong together end up in two small batches that nobody re-examines until they expire. *Proposal:* a periodic pass over open, unaccepted batches that
 merges batches whose pickups are within the radius and whose combined size fits, or a short advisory lock per cluster. *Why:* fuller batches mean fewer trips to the same vendor
 and more earnings per rider trip.
-
-**A background expiry job instead of lazy expiry.** *Problem:* open batches are expired only when someone calls `POST /orders/batch` or `match-orders`, so in a quiet period
-orders stay `batched` behind a dead offer, and `GET /batches` merely hides expired rows. *Proposal:* a ticker started through `Server.background` that expires batches and
-returns their orders to `pending` every few seconds, with a metric for how many it released. *Why:* orders become matchable the moment an offer lapses, and the read paths no
-longer need to repair state.
 
 **Per-rider tokens with permission scopes.** *Problem:* the API key identifies a client application, not a rider, so any key holder can accept a batch or move a location as
 any rider (CWE-639, OWASP A01; see "Known limitation" under Security). *Proposal:* `POST /auth/token` issues a short-lived PASETO whose subject is a `rider_id`, handlers take

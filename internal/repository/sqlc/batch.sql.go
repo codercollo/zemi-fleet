@@ -281,14 +281,24 @@ func (q *Queries) CreateBatchStop(ctx context.Context, arg CreateBatchStopParams
 
 const expireStaleBatches = `-- name: ExpireStaleBatches :many
 
-UPDATE batches
+WITH expired AS (
+    SELECT b.id
+    FROM batches b
+    WHERE b.status = 'open' AND b.expires_at <= $1
+    ORDER BY b.expires_at, b.id
+    FOR UPDATE SKIP LOCKED
+)
+UPDATE batches b
 SET status = 'expired'
-WHERE status = 'open' AND expires_at <= $1
-RETURNING id
+FROM expired
+WHERE b.id = expired.id
+RETURNING b.id
 `
 
 // Queries for batch creation (POST /orders/batch). All timestamps come from the injected clock.
 // Open batches past their TTL are no longer on offer.
+// The locking CTE lets several application instances sweep safely: each instance
+// claims a disjoint set of expired batches before changing their state.
 func (q *Queries) ExpireStaleBatches(ctx context.Context, now time.Time) ([]string, error) {
 	rows, err := q.db.Query(ctx, expireStaleBatches, now)
 	if err != nil {

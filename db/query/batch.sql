@@ -2,10 +2,20 @@
 
 -- name: ExpireStaleBatches :many
 -- Open batches past their TTL are no longer on offer.
-UPDATE batches
+-- The locking CTE lets several application instances sweep safely: each instance
+-- claims a disjoint set of expired batches before changing their state.
+WITH expired AS (
+    SELECT b.id
+    FROM batches b
+    WHERE b.status = 'open' AND b.expires_at <= sqlc.arg(now)
+    ORDER BY b.expires_at, b.id
+    FOR UPDATE SKIP LOCKED
+)
+UPDATE batches b
 SET status = 'expired'
-WHERE status = 'open' AND expires_at <= sqlc.arg(now)
-RETURNING id;
+FROM expired
+WHERE b.id = expired.id
+RETURNING b.id;
 
 -- name: ReleaseOrdersFromBatches :exec
 -- Orders of expired batches go back to the pending pool.

@@ -176,3 +176,30 @@ func TestQueryTimeout(t *testing.T) {
 		})
 	}
 }
+
+func TestBatchExpiryInterval(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		want time.Duration
+		err  bool
+	}{
+		{"disabled by default", "", 0, false},
+		{"configured interval", "BATCH_EXPIRY_INTERVAL=15s\n", 15 * time.Second, false},
+		{"negative rejected", "BATCH_EXPIRY_INTERVAL=-1s\n", 0, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			clearEnv(t)
+			path := writeEnvFile(t, "DATABASE_URL=postgres://u:p@localhost:5432/db\n"+tc.env)
+			cfg, err := Load(path)
+			if tc.err {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "BATCH_EXPIRY_INTERVAL")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, cfg.Batch.ExpiryInterval)
+		})
+	}
+}

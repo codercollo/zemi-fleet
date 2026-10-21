@@ -78,12 +78,14 @@ func (s *Server) createBatchesHandler(c *gin.Context) {
 		return
 	}
 
+	started := s.clock.Now()
 	offers, err := s.batches.CreateBatches(c.Request.Context(), service.CreateBatchesInput{
 		RiderID:       req.RiderID,
 		RiderLocation: position,
 		MaxOrders:     maxOrders,
 		RadiusKM:      radiusKM,
 	})
+	s.prom.observeAlgorithm("batching", s.clock.Now().Sub(started))
 	if err != nil {
 		s.handleServiceError(c, err)
 		return

@@ -61,4 +61,35 @@ Record p50, p95, p99, error rate, and the `EXPLAIN` plans here before changing s
 
 ## Current status
 
-The reproducible generator, local load client, and development Make targets are implemented. Toxiproxy fault-injection and the nightly CI publication remain separate Phase 0 work; no staging run is required for the development workflow.
+The reproducible generator, local load client, development Make targets, opt-in Toxiproxy profile, and nightly CI baseline workflow are implemented. The first numeric baseline was captured before Phase 11 using the run below; the nightly workflow repeats the same measurement and publishes the load and query-plan artifacts.
+
+The chaos suite is not allowed to silently pass when infrastructure was requested. With `TOXIPROXY_API_URL` unset, the tagged tests are intentionally skipped for ordinary local runs. When it is set, an unreachable Toxiproxy endpoint is a test failure.
+
+## Recorded 10k baseline — 2026-10-21
+
+This run used the isolated Docker staging stack, 500 generated riders, 10,000 generated pending orders, `LIMITER_ENABLED=false`, a 60-second workload, and 20 concurrent workers. The load client exercised matching and batching, including batch acceptance. The result was:
+
+| Requests | Successful | Errors | Error rate | p50 | p95 | p99 |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 13,977 | 4,744 | 9,233 | 66.06% | 40.995 ms | 278.533 ms | 429.107 ms |
+
+The high error rate is retained as observed: the workload intentionally races batch creation/acceptance and reports all non-2xx responses as errors. The proposed Phase 0 target of p95 under 200 ms was not met (`278.533 ms`), so this is the comparison baseline for later spatial and observability changes.
+
+The captured plans were:
+
+```text
+orders pending pickup window: Index Scan using idx_orders_pending_created
+  actual time=0.102..0.898 ms, rows=1001, Buffers: shared hit=32
+  Incremental Sort actual time=0.362..1.504 ms
+  Execution Time: 1.825 ms
+
+available riders: Seq Scan on riders
+  actual time=0.021..0.246 ms, rows=508, Buffers: shared hit=11
+  Execution Time: 0.300 ms
+
+open batches centroid window: Index Scan using idx_batches_open_centroid
+  actual time=0.044..0.045 ms, rows=0, Buffers: shared hit=2
+  Execution Time: 0.117 ms
+```
+
+The rider candidate query is the notable plan: PostgreSQL chose a sequential scan for the 510-row rider table. The complete raw output is retained in the local run artifact and should be uploaded by the nightly workflow for future comparisons.

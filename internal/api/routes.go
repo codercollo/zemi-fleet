@@ -62,6 +62,7 @@ func (s *Server) router(extra ...func(*gin.Engine)) *gin.Engine {
 	// Behind the same chain as everything else: it needs the API key and is rate limited. Disabled means no route (404).
 	if s.cfg.MetricsEnabled {
 		r.GET(metricsPath, s.metricsHandler)
+		r.GET("/metrics", func(c *gin.Context) { s.prom.handler().ServeHTTP(c.Writer, c.Request) })
 	}
 
 	v2 := r.Group(apiPrefix)

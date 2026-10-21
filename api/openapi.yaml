@@ -780,6 +780,28 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         '500': {$ref: '#/components/responses/ServerError'}
+  /metrics:
+    servers:
+      - url: /
+    get:
+      tags: [Operations]
+      summary: Prometheus metrics
+      description: Prometheus text exposition for request, algorithm, pool, webhook, sweeper and routing-breaker metrics. It requires the API key, is rate limited, and exists only when METRICS_ENABLED is enabled.
+      operationId: prometheusMetrics
+      parameters:
+        - {$ref: '#/components/parameters/RequestIdHeader'}
+      responses:
+        '200':
+          description: Prometheus text exposition.
+          headers:
+            X-Request-ID: {$ref: '#/components/headers/RequestId'}
+          content:
+            text/plain:
+              schema: {type: string}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '500': {$ref: '#/components/responses/ServerError'}
   /docs:
     servers:
       - url: /

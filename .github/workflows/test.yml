@@ -69,6 +69,9 @@ jobs:
       - name: govulncheck (blocking)
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
+      - name: Validate Prometheus alert rules
+        run: docker run --rm -v "$PWD:/work:ro" prom/prometheus:v2.54.1 promtool check rules /work/deploy/monitoring/alerts.yml
+
   migrations:
     name: migrations up / down / up
     runs-on: ubuntu-latest

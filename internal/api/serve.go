@@ -103,7 +103,10 @@ func (s *Server) runWebhookDispatch(ctx context.Context) {
 
 func (s *Server) runBatchExpiry(ctx context.Context) {
 	sweep := func() {
-		if _, err := s.batches.ExpireBatches(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		n, err := s.batches.ExpireBatches(ctx)
+		if err == nil {
+			s.prom.setBatchSweep(s.clock.Now(), n)
+		} else if !errors.Is(err, context.Canceled) {
 			s.logger.Error("batch expiry sweep failed", "error", err)
 		}
 	}
@@ -125,7 +128,10 @@ func (s *Server) runBatchExpiry(ctx context.Context) {
 
 func (s *Server) runOfflineSweep(ctx context.Context) {
 	sweep := func() {
-		if _, err := s.offline.Sweep(ctx, s.cfg.RiderOfflineAfter); err != nil && !errors.Is(err, context.Canceled) {
+		n, err := s.offline.Sweep(ctx, s.cfg.RiderOfflineAfter)
+		if err == nil {
+			s.prom.setOfflineSweep(s.clock.Now(), n)
+		} else if !errors.Is(err, context.Canceled) {
 			s.logger.Error("rider offline sweep failed", "error", err)
 		}
 	}

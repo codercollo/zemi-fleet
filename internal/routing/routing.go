@@ -163,6 +163,21 @@ type Resilient struct {
 	opened   time.Time
 	halfOpen bool
 }
+
+// State is exported for observability only: 0 is closed, 1 open, 2 half-open.
+// It reads the injected clock, never the process clock.
+func (r *Resilient) State() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.halfOpen {
+		return 2
+	}
+	if !r.opened.IsZero() && r.now.Now().Sub(r.opened) < r.cfg.BreakerOpen {
+		return 1
+	}
+	return 0
+}
+
 type cacheEntry struct {
 	matrix [][]float64
 	result Result
@@ -224,6 +239,7 @@ func (r *Resilient) call(ctx context.Context, fn func(context.Context) error) er
 	}
 	r.mu.Unlock()
 	var err error
+retryLoop:
 	for attempt := 0; attempt <= r.cfg.Retries; attempt++ {
 		callCtx, cancel := context.WithTimeout(ctx, r.cfg.Timeout)
 		err = fn(callCtx)
@@ -237,7 +253,7 @@ func (r *Resilient) call(ctx context.Context, fn func(context.Context) error) er
 		}
 		select {
 		case <-ctx.Done():
-			break
+			break retryLoop
 		case <-time.After(time.Duration(attempt+1) * 25 * time.Millisecond):
 		}
 	}

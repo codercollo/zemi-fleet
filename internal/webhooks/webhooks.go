@@ -58,6 +58,8 @@ type Dispatcher struct {
 	Sender  Sender
 	Now     func() time.Time
 	Enabled bool
+	// Record is called only after the delivery state change commits.
+	Record func(string)
 }
 
 func (d Dispatcher) RunOnce(ctx context.Context) error {
@@ -71,15 +73,31 @@ func (d Dispatcher) RunOnce(ctx context.Context) error {
 	}
 	status, sendErr := d.Sender.Send(ctx, *item)
 	if sendErr == nil && status >= 200 && status < 300 {
-		return d.Store.MarkDelivered(ctx, item.ID, now)
+		err := d.Store.MarkDelivered(ctx, item.ID, now)
+		if err == nil && d.Record != nil {
+			d.Record("delivered")
+		}
+		return err
 	}
 	if sendErr == nil && !IsRetryableStatus(status) {
-		return d.Store.MarkFailed(ctx, item.ID, now, status)
+		err := d.Store.MarkFailed(ctx, item.ID, now, status)
+		if err == nil && d.Record != nil {
+			d.Record("failed")
+		}
+		return err
 	}
 	if item.Attempts >= len(RetryAfter) {
-		return d.Store.MarkFailed(ctx, item.ID, now, status)
+		err := d.Store.MarkFailed(ctx, item.ID, now, status)
+		if err == nil && d.Record != nil {
+			d.Record("failed")
+		}
+		return err
 	}
-	return d.Store.MarkRetry(ctx, item.ID, now.Add(RetryAfter[item.Attempts]), item.Attempts+1, status)
+	err = d.Store.MarkRetry(ctx, item.ID, now.Add(RetryAfter[item.Attempts]), item.Attempts+1, status)
+	if err == nil && d.Record != nil {
+		d.Record("retry")
+	}
+	return err
 }
 
 type HTTPSender struct{ Client *http.Client }

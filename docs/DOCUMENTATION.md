@@ -447,6 +447,7 @@ curl -s -H "X-API-Key: $KEY" -X PUT localhost:8080/api/v2/riders/rider_002/prefe
 | `GET /docs` | Swagger UI (no key; `DOCS_ENABLED`) |
 | `GET /openapi.yaml` | The contract (no key; `DOCS_ENABLED`) |
 | `GET /debug/vars` | expvar metrics (needs a key; `METRICS_ENABLED`); see "Metrics" |
+| `GET /metrics` | Prometheus metrics (same key, rate-limit and feature flag); see "Metrics" |
 
 ### Idempotency
 
@@ -1095,7 +1096,7 @@ on an invalid value. `.env.example` lists every key; `docker-compose.yml` passes
 | `TRUSTED_PROXIES` | empty | Comma-separated IPs/CIDRs whose `X-Forwarded-For` is believed; empty trusts none |
 | `SHUTDOWN_TIMEOUT` | `30s` | How long shutdown waits for in-flight requests |
 | `CORS_TRUSTED_ORIGINS` | empty | Comma-separated exact origins allowed to call the API from a browser; empty sends no CORS headers |
-| `METRICS_ENABLED` | on in development and staging, off in production | Whether `GET /debug/vars` exists |
+| `METRICS_ENABLED` | on in development and staging, off in production | Whether `GET /debug/vars` and `GET /metrics` exist |
 | `DOCS_ENABLED` | on in development and staging, off in production | Whether `GET /docs` and `GET /openapi.yaml` exist |
 | `API_KEYS` | none (required) | `name=key,name=key`; key at least 16 characters in development, 32 in staging and production |
 | `DB_USER` / `DB_PASSWORD` / `DB_NAME` | `zemi` / `zemi_staging_password` / `zemi_fleet` | Staging only: the Postgres container's credentials |
@@ -1168,15 +1169,18 @@ If in-flight requests outlast the timeout the server gives up and exits with an 
 
 ### Metrics
 
-`GET /debug/vars` serves the process's metrics as JSON, using Go's `expvar` (Let's Go Further ch. 19). It is outside `/api/v2`
+`GET /debug/vars` serves the process's metrics as JSON, using Go's `expvar` (Let's Go Further ch. 19). `GET /metrics` serves
+Prometheus text exposition. Both are outside `/api/v2`
 because it is operations data, not part of the API.
 
 #### Protection
 
-- `METRICS_ENABLED` decides whether the route exists. When it is not set it is **true in development and staging and false in
+- `METRICS_ENABLED` decides whether both routes exist. When it is not set it is **true in development and staging and false in
   production**. Disabled means the route is not registered at all: `404`, and the metrics middleware is not installed.
 - When enabled, the route sits behind the same chain as every other route: it needs a valid `X-API-Key` (`401` otherwise) and it is
-  rate limited. Nothing is exempt. In production, switch it on only if the key holders are trusted and ideally scrape it from inside
+  rate limited. Nothing is exempt. Prometheus labels are limited to route template, method and status; raw IDs never become label values.
+  Request and algorithm durations use the injected application clock. Pool, outbox, webhook, sweeper and routing-breaker gauges are also
+  exposed. In production, switch metrics on only if the key holders are trusted and ideally scrape it from inside
   the network: the numbers reveal traffic volume and the Go runtime's memory use.
 
 #### Published values

@@ -11,6 +11,16 @@
 # The fallback values below match .env.example (staging section), so `make staging/up` and a plain
 # `docker compose up` create the same database credentials.
 services:
+  toxiproxy:
+    profiles: [chaos]
+    image: ghcr.io/shopify/toxiproxy:2.9.0
+    ports:
+      - "${TOXIPROXY_API_PORT:-8474}:8474"
+      - "${TOXIPROXY_POSTGRES_PORT:-15432}:15432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   postgres:
     image: postgres:16-alpine
     environment:
@@ -19,6 +29,8 @@ services:
       POSTGRES_DB: ${DB_NAME:-zemi_fleet}
     volumes:
       - pgdata:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-}:5432"
     healthcheck:
       # -h 127.0.0.1 forces TCP: during first-run init Postgres only listens on a unix socket,
       # so a socket check goes healthy too early and migrate hits "connection refused".

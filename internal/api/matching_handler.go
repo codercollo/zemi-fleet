@@ -80,6 +80,7 @@ func (s *Server) matchOrdersHandler(c *gin.Context) {
 		return
 	}
 
+	started := s.clock.Now()
 	result, err := s.matching.MatchOrders(c.Request.Context(), service.MatchOrdersInput{
 		RiderID:             req.RiderID,
 		Position:            position,
@@ -87,6 +88,7 @@ func (s *Server) matchOrdersHandler(c *gin.Context) {
 		SpeedKMH:            req.SpeedKMH,
 		ReportedOrdersCount: reported,
 	})
+	s.prom.observeAlgorithm("match_orders", s.clock.Now().Sub(started))
 	if err != nil {
 		s.handleServiceError(c, err)
 		return

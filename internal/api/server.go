@@ -35,6 +35,8 @@ type Services struct {
 	Metrics *metrics.Counters
 	// Clock is the source of time for the HTTP layer (access-log durations, the rate limiter). Nil means clock.Real{}.
 	Clock clock.Clock
+	// BreakerState returns 0 closed, 1 open, or 2 half-open for routing metrics.
+	BreakerState func() int
 }
 
 // Server holds the HTTP layer's dependencies (the book's `application` struct).
@@ -55,6 +57,7 @@ type Server struct {
 	webhookDispatcher *webhooks.Dispatcher
 	clock             clock.Clock
 	metrics           *requestMetrics
+	prom              *prometheusMetrics
 	limiter           *limiter // nil when LIMITER_ENABLED is false
 	wg                sync.WaitGroup
 	version           string
@@ -83,6 +86,10 @@ func NewServer(cfg config.Config, logger *slog.Logger, db Pinger, svc Services, 
 		counters = metrics.New()
 	}
 	s.metrics = s.newRequestMetrics(counters)
+	s.prom = newPrometheusMetrics(s, svc.BreakerState)
+	if svc.WebhookDispatcher != nil {
+		svc.WebhookDispatcher.Record = s.prom.recordWebhook
+	}
 	if cfg.Limiter.Enabled {
 		s.limiter = newLimiter(cfg.Limiter.RPS, cfg.Limiter.Burst, clk)
 	}

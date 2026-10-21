@@ -61,7 +61,9 @@ func (s *Server) matchRidersHandler(c *gin.Context) {
 		return
 	}
 
+	started := s.clock.Now()
 	matches, err := s.preferences.MatchRiders(c.Request.Context(), in)
+	s.prom.observeAlgorithm("match_riders", s.clock.Now().Sub(started))
 	if err != nil {
 		s.handleServiceError(c, err)
 		return

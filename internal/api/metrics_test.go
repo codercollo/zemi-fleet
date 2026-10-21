@@ -143,6 +143,37 @@ func TestMetrics_DisabledIs404(t *testing.T) {
 	assert.NotContains(t, rec.Body.String(), "total_requests_received")
 }
 
+func TestPrometheus_UsesPerServerRegistryAndTemplateLabels(t *testing.T) {
+	first, store := newMetricsHandler(t, nil)
+	second, _ := newMetricsHandler(t, nil) // a global registry would panic here
+
+	store.EXPECT().GetRider(gomock.Any(), "rider_001").Return(sqlc.Rider{}, domain.ErrNotFound)
+	rec := send(t, first, http.MethodGet, "/api/v2/riders/rider_001", "")
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+	metricsResponse := send(t, first, http.MethodGet, "/metrics", "")
+	require.Equal(t, http.StatusOK, metricsResponse.Code, metricsResponse.Body.String())
+	body := metricsResponse.Body.String()
+	assert.Contains(t, body, `zemi_http_request_duration_seconds_count`)
+	assert.Contains(t, body, `route="/api/v2/riders/:id"`)
+	assert.Contains(t, body, `status="404"`)
+	assert.NotContains(t, body, "rider_001", "IDs must never become label values")
+	assert.NotContains(t, body, "rider_", "raw rider IDs must never become label values")
+
+	secondResponse := send(t, second, http.MethodGet, "/metrics", "")
+	assert.Equal(t, http.StatusOK, secondResponse.Code)
+}
+
+func TestPrometheus_MetricsRouteStillRequiresKeyAndLimiter(t *testing.T) {
+	h, _ := newMetricsHandler(t, func(c *config.Config) {
+		c.Limiter = config.LimiterConfig{Enabled: true, RPS: 0.001, Burst: 1}
+	})
+	withoutKey := httptest.NewRecorder()
+	h.ServeHTTP(withoutKey, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	assert.Equal(t, http.StatusUnauthorized, withoutKey.Code)
+	first := send(t, h, http.MethodGet, "/metrics", "")
+	assert.Equal(t, http.StatusTooManyRequests, first.Code, "the no-key request consumed the only token")
+}
+
 func TestMetrics_RequiresAPIKey(t *testing.T) {
 	h, _ := newMetricsHandler(t, nil)
 

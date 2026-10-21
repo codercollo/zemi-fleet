@@ -183,7 +183,7 @@ def folder_orders():
                 'pm.test("The order we created", () => {',
                 '  const order = pm.response.json().order;',
                 '  pm.expect(order.id).to.eql(pm.collectionVariables.get("order_id"));',
-                '  pm.expect(order).to.have.all.keys("id", "vendor_id", "category", "status", "pickup_location", "delivery_location", "trip_distance_km", "trip_bearing_degrees", "value_kes", "delivery_fee_kes", "rider_payout_percent", "estimated_earnings_kes", "platform_fee_kes", "batch_id", "rider_id", "created_at", "version");',
+                '  pm.expect(order).to.have.all.keys("id", "vendor_id", "category", "status", "pickup_location", "delivery_location", "trip_distance_km", "trip_bearing_degrees", "value_kes", "delivery_fee_kes", "rider_payout_percent", "estimated_earnings_kes", "platform_fee_kes", "delivery_attempts", "cancelled_at", "cancel_reason", "rider_compensation_kes", "batch_id", "rider_id", "created_at", "version");',
                 '});'),
              200,
              examples=[ex("404 Not Found: unknown order", 404, url="{{base_url}}/api/v2/orders/ord_unknown"),

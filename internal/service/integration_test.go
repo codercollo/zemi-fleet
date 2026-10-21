@@ -127,4 +127,11 @@ func TestIntegration_ReferenceDataMatchesSeed(t *testing.T) {
 		assert.NotEmpty(t, fromReference[table], table)
 		assert.Equal(t, fromSeed[table], fromReference[table], "%s differ between db/testdata/reference.sql and db/seed/seed.sql", table)
 	}
+
+	var riderCountDrift int
+	err := pool.QueryRow(ctx, `SELECT count(*) FROM riders r
+		WHERE r.current_orders_count <> (SELECT count(*) FROM orders o
+			WHERE o.rider_id = r.id AND o.status IN ('assigned', 'picked_up'))`).Scan(&riderCountDrift)
+	require.NoError(t, err)
+	assert.Zero(t, riderCountDrift, "seeded rider current_orders_count must match assigned/picked_up orders")
 }

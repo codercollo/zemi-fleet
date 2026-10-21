@@ -11,15 +11,18 @@
 # The fallback values below match .env.example (staging section), so `make staging/up` and a plain
 # `docker compose up` create the same database credentials.
 services:
+  # Opt-in fault injection for Phase 0. The API still talks directly to Postgres
+  # unless CHAOS_DATABASE_URL is supplied (see scripts/chaos/setup.sh).
   toxiproxy:
     profiles: [chaos]
-    image: ghcr.io/shopify/toxiproxy:2.9.0
+    image: shopify/toxiproxy:2.9.0
     ports:
       - "${TOXIPROXY_API_PORT:-8474}:8474"
       - "${TOXIPROXY_POSTGRES_PORT:-15432}:15432"
     depends_on:
       postgres:
         condition: service_healthy
+    restart: unless-stopped
 
   postgres:
     image: postgres:16-alpine
@@ -90,7 +93,7 @@ services:
     environment:
       APP_ENV: staging
       PORT: 4000
-      DATABASE_URL: postgres://${DB_USER:-zemi}:${DB_PASSWORD:-zemi_staging_password}@postgres:5432/${DB_NAME:-zemi_fleet}?sslmode=disable
+      DATABASE_URL: ${CHAOS_DATABASE_URL:-postgres://${DB_USER:-zemi}:${DB_PASSWORD:-zemi_staging_password}@postgres:5432/${DB_NAME:-zemi_fleet}?sslmode=disable}
       APP_TIMEZONE: ${APP_TIMEZONE:-Africa/Nairobi}
       DB_MAX_CONNS: ${DB_MAX_CONNS:-25}
       DB_MIN_CONNS: ${DB_MIN_CONNS:-2}

@@ -4,7 +4,7 @@ VALUES ($1, $2, $3, $4);
 
 -- name: ClaimDueWebhookDelivery :one
 WITH candidate AS (
-    SELECT d.id
+    SELECT d.id, d.attempts
     FROM webhook_deliveries d
     JOIN webhook_subscriptions s ON s.id = d.subscription_id
     WHERE d.status = 'pending' AND d.next_attempt_at <= $1 AND s.enabled
@@ -14,10 +14,12 @@ WITH candidate AS (
 )
 UPDATE webhook_deliveries d
 SET attempts = d.attempts + 1
+  , next_attempt_at = $1::timestamptz + interval '5 minutes'
 FROM candidate c
-JOIN webhook_subscriptions s ON s.id = d.subscription_id
-JOIN outbox_events e ON e.id = d.event_id
-WHERE d.id = c.id
+JOIN webhook_deliveries claimed ON claimed.id = c.id
+JOIN webhook_subscriptions s ON s.id = claimed.subscription_id
+JOIN outbox_events e ON e.id = claimed.event_id
+WHERE d.id = c.id AND d.attempts = c.attempts
 RETURNING d.id, d.attempts, d.next_attempt_at, e.id AS event_id, e.event_type, e.payload, s.url, s.secret;
 
 -- name: MarkWebhookDelivered :exec

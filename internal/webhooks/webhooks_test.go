@@ -3,6 +3,7 @@ package webhooks
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"testing"
 	"time"
@@ -66,5 +67,9 @@ func TestSignAndSSRFGuard(t *testing.T) {
 	}
 	if err := ValidateURL("https://localhost/hook"); err == nil {
 		t.Fatal("accepted loopback URL")
+	}
+	s := HTTPSender{Resolve: func(string) ([]net.IP, error) { return []net.IP{net.ParseIP("10.0.0.8")}, nil }}
+	if _, err := s.Send(context.Background(), Delivery{URL: "https://partner.example/hook", Event: e}); err == nil {
+		t.Fatal("accepted a private address returned by the resolver")
 	}
 }

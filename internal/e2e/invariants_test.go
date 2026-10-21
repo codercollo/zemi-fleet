@@ -100,6 +100,19 @@ func assertInvariants(t *testing.T, pool *pgxpool.Pool, responses []string) {
 			  WHERE (status IN ('open', 'expired') AND (rider_id IS NOT NULL OR accepted_at IS NOT NULL))
 			     OR (status = 'accepted' AND (rider_id IS NULL OR accepted_at IS NULL))`,
 		},
+		{
+			"webhook delivery identity is unique",
+			`SELECT event_id || ':' || subscription_id FROM webhook_deliveries
+			 GROUP BY event_id, subscription_id HAVING count(*) > 1`,
+		},
+		{
+			"exhausted webhook deliveries are failed",
+			`SELECT id FROM webhook_deliveries WHERE attempts >= 5 AND status <> 'failed'`,
+		},
+		{
+			"pending webhook deliveries have a scheduled retry time",
+			`SELECT id FROM webhook_deliveries WHERE status = 'pending' AND (next_attempt_at IS NULL OR next_attempt_at <= now())`,
+		},
 	}
 
 	for _, inv := range invariants {

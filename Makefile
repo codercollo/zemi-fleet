@@ -208,23 +208,18 @@ dev/load/apply: dev/load/seed
 dev/test/load:
 	go run ./scripts/loadtest -base-url=$(or $(LOAD_BASE_URL),http://localhost:4000/api/v2) -api-key=$(or $(LOAD_API_KEY),dev-key-change-me-0123456789) -duration=$(or $(LOAD_DURATION),30s) -concurrency=$(or $(LOAD_CONCURRENCY),10)
 
-## chaos/up: start Postgres behind the opt-in Toxiproxy profile and create its proxy
+## chaos/up: start the staging database behind the opt-in Toxiproxy profile
 .PHONY: chaos/up
 chaos/up:
 	$(STAGING_COMPOSE) --profile chaos up -d --wait postgres toxiproxy
 	sh scripts/chaos/setup.sh
 
-## chaos/test: run Phase 0 fault-injection tests; requires TEST_DATABASE_URL through Toxiproxy
+## chaos/test: run the opt-in connection, timeout and pool fault tests
 .PHONY: chaos/test
-ifeq ($(OS),Windows_NT)
 chaos/test:
-	powershell -NoProfile -File scripts/chaos/test.ps1
-else
-chaos/test:
-	TEST_DATABASE_URL=$${TEST_DATABASE_URL:-postgres://zemi:zemi_staging_password@127.0.0.1:15432/zemi_fleet_test?sslmode=disable} TOXIPROXY_API_URL=$${TOXIPROXY_API_URL:-http://127.0.0.1:8474} go test -tags='e2e,chaos' -timeout=90s -count=1 -p 1 -run Chaos ./internal/e2e/...
-endif
+	go test -tags='integration,e2e,chaos' -count=1 -p 1 -run Chaos ./internal/e2e/...
 
-## chaos/down: remove the Toxiproxy profile
+## chaos/down: remove the Toxiproxy profile and its proxy definition
 .PHONY: chaos/down
 chaos/down:
 	-sh scripts/chaos/teardown.sh

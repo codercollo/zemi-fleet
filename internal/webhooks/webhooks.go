@@ -100,23 +100,62 @@ func (d Dispatcher) RunOnce(ctx context.Context) error {
 	return err
 }
 
-type HTTPSender struct{ Client *http.Client }
+type HTTPSender struct {
+	Client  *http.Client
+	Resolve func(string) ([]net.IP, error) // injectable for deterministic DNS/SSRF tests
+}
 
 func (s HTTPSender) Send(ctx context.Context, d Delivery) (int, error) {
-	if err := ValidateURL(d.URL); err != nil {
-		return 0, err
+	u, err := url.Parse(d.URL)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" {
+		return 0, errors.New("webhook URL must use https")
+	}
+	resolve := s.Resolve
+	if resolve == nil {
+		resolve = net.LookupIP
+	}
+	ips, err := resolve(u.Hostname())
+	if err != nil {
+		return 0, fmt.Errorf("resolve webhook host: %w", err)
+	}
+	for _, ip := range ips {
+		if isBlockedIP(ip) {
+			return 0, errors.New("webhook URL resolves to a private or local address")
+		}
+	}
+	if len(ips) == 0 {
+		return 0, errors.New("webhook URL has no address")
+	}
+	if strings.EqualFold(u.Hostname(), "localhost") || isBlockedIP(net.ParseIP(u.Hostname())) {
+		return 0, errors.New("webhook URL resolves to a private or local address")
 	}
 	sig := Sign(d.Secret, d.Event)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.URL, bytes.NewReader(d.Event.Payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(d.Event.Payload))
 	if err != nil {
 		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Zemi-Event-ID", d.Event.ID)
 	req.Header.Set("X-Zemi-Signature", sig)
-	client := s.Client
-	if client == nil {
-		client = http.DefaultClient
+	base := http.DefaultTransport.(*http.Transport).Clone()
+	if s.Client != nil {
+		if custom, ok := s.Client.Transport.(*http.Transport); ok {
+			base = custom.Clone()
+		}
+	}
+	dialer := &net.Dialer{}
+	ip := ips[0]
+	port := u.Port()
+	if port == "" {
+		port = "443"
+	}
+	base.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+	}
+	defer base.CloseIdleConnections()
+	client := &http.Client{Transport: base}
+	if s.Client != nil {
+		client.Timeout = s.Client.Timeout
 	}
 	resp, err := client.Do(req)
 	if err != nil {

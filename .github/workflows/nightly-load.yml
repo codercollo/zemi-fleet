@@ -10,8 +10,9 @@ permissions:
 
 jobs:
   load:
+    name: 10k load and query-plan baseline
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 25
     env:
       DB_URL: postgres://zemi:zemi_nightly_password@127.0.0.1:5433/zemi_fleet?sslmode=disable
       API_KEY: zemi-nightly-load-key-012345678901234567890123
@@ -25,14 +26,14 @@ jobs:
       - name: Start isolated staging stack
         run: |
           export DB_USER=zemi DB_PASSWORD=zemi_nightly_password DB_NAME=zemi_fleet
-          export POSTGRES_PORT=5433 STAGING_API_PORT=8080 STAGING_API_KEYS=nightly=$API_KEY LIMITER_ENABLED=false
+          export POSTGRES_PORT=5433 STAGING_API_PORT=8080 STAGING_API_KEYS=nightly=$API_KEY
           docker compose --profile demo up -d --build --wait
-      - name: Generate and apply load data
+      - name: Generate and apply 10k load data
         run: |
           go run ./scripts/loadseed -riders=500 -orders=10000 -output=db/seed/load.sql
           docker run --rm --network host -v "$PWD/db/seed/load.sql:/load.sql:ro" postgres:16-alpine \
             psql "$DB_URL" -v ON_ERROR_STOP=1 -f /load.sql
-      - name: Run workload and capture query plans
+      - name: Run workload and capture plans
         run: |
           mkdir -p artifacts
           LOAD_BASE_URL=http://127.0.0.1:8080/api/v2 LOAD_API_KEY=$API_KEY \
@@ -42,11 +43,12 @@ jobs:
             -c "EXPLAIN (ANALYZE, BUFFERS) SELECT id, last_lat, last_lng, current_orders_count, max_capacity FROM riders WHERE is_available AND current_orders_count < max_capacity;" \
             -c "EXPLAIN (ANALYZE, BUFFERS) SELECT id, pickup_centroid_lat, pickup_centroid_lng, expires_at FROM batches WHERE status = 'open' AND expires_at > now() AND pickup_centroid_lat BETWEEN -1.31 AND -1.24 AND pickup_centroid_lng BETWEEN 36.77 AND 36.86;" \
             | tee artifacts/explain.txt
-      - uses: actions/upload-artifact@v4
+      - name: Publish baseline artifacts
+        uses: actions/upload-artifact@v4
         with:
           name: phase-0-baseline-${{ github.run_id }}
           path: artifacts/
           retention-days: 30
-      - if: always()
-        name: Stop isolated stack
+      - name: Stop stack
+        if: always()
         run: docker compose --profile demo down -v

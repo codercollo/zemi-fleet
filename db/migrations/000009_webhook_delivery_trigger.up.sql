@@ -1,7 +1,7 @@
 CREATE OR REPLACE FUNCTION enqueue_webhook_deliveries() RETURNS trigger AS $$
 BEGIN
     INSERT INTO webhook_deliveries (id, event_id, subscription_id, next_attempt_at)
-    SELECT NEW.id || ':' || s.id, NEW.id, s.id, NEW.created_at
+    SELECT NEW.id || ':' || s.id, NEW.id, s.id, GREATEST(NEW.created_at, now()) + interval '1 second'
     FROM webhook_subscriptions s WHERE s.enabled
     ON CONFLICT (event_id, subscription_id) DO NOTHING;
     RETURN NEW;

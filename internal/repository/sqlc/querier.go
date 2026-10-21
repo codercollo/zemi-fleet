@@ -23,7 +23,7 @@ type Querier interface {
 	BumpRiderVersion(ctx context.Context, arg BumpRiderVersionParams) (Rider, error)
 	CancelBatchIfNoActiveOrders(ctx context.Context, id string) error
 	CancelOrder(ctx context.Context, arg CancelOrderParams) (Order, error)
-	ClaimDueWebhookDelivery(ctx context.Context, nextAttemptAt time.Time) (ClaimDueWebhookDeliveryRow, error)
+	ClaimDueWebhookDelivery(ctx context.Context, dollar_1 time.Time) (ClaimDueWebhookDeliveryRow, error)
 	// Atomic: of any number of concurrent requests with one key, exactly one inserts the row.
 	ClaimIdempotencyKey(ctx context.Context, arg ClaimIdempotencyKeyParams) (int64, error)
 	CompleteBatchIfDone(ctx context.Context, arg CompleteBatchIfDoneParams) (Batch, error)

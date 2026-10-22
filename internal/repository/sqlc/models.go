@@ -67,6 +67,8 @@ const (
 	OrderStatusPickedUp  OrderStatus = "picked_up"
 	OrderStatusDelivered OrderStatus = "delivered"
 	OrderStatusCancelled OrderStatus = "cancelled"
+	OrderStatusReturning OrderStatus = "returning"
+	OrderStatusReturned  OrderStatus = "returned"
 )
 
 func (e *OrderStatus) Scan(src interface{}) error {
@@ -214,28 +216,43 @@ type IdempotencyKey struct {
 }
 
 type Order struct {
-	ID                 string      `json:"id"`
-	VendorID           string      `json:"vendor_id"`
-	CategoryCode       string      `json:"category_code"`
-	Status             OrderStatus `json:"status"`
-	PickupLat          float64     `json:"pickup_lat"`
-	PickupLng          float64     `json:"pickup_lng"`
-	DeliveryLat        float64     `json:"delivery_lat"`
-	DeliveryLng        float64     `json:"delivery_lng"`
-	TripDistanceM      int32       `json:"trip_distance_m"`
-	TripBearingDeg     float64     `json:"trip_bearing_deg"`
-	ValueCents         int64       `json:"value_cents"`
-	DeliveryFeeCents   int64       `json:"delivery_fee_cents"`
-	RiderPayoutBps     int32       `json:"rider_payout_bps"`
-	RiderEarningsCents *int64      `json:"rider_earnings_cents"`
-	PlatformFeeCents   *int64      `json:"platform_fee_cents"`
-	BatchID            *string     `json:"batch_id"`
-	RiderID            *string     `json:"rider_id"`
-	BatchSeq           *int16      `json:"batch_seq"`
-	CreatedAt          time.Time   `json:"created_at"`
-	UpdatedAt          time.Time   `json:"updated_at"`
-	DeliveredAt        *time.Time  `json:"delivered_at"`
-	Version            int32       `json:"version"`
+	ID                     string      `json:"id"`
+	VendorID               string      `json:"vendor_id"`
+	CategoryCode           string      `json:"category_code"`
+	Status                 OrderStatus `json:"status"`
+	PickupLat              float64     `json:"pickup_lat"`
+	PickupLng              float64     `json:"pickup_lng"`
+	DeliveryLat            float64     `json:"delivery_lat"`
+	DeliveryLng            float64     `json:"delivery_lng"`
+	TripDistanceM          int32       `json:"trip_distance_m"`
+	TripBearingDeg         float64     `json:"trip_bearing_deg"`
+	ValueCents             int64       `json:"value_cents"`
+	DeliveryFeeCents       int64       `json:"delivery_fee_cents"`
+	RiderPayoutBps         int32       `json:"rider_payout_bps"`
+	RiderEarningsCents     *int64      `json:"rider_earnings_cents"`
+	PlatformFeeCents       *int64      `json:"platform_fee_cents"`
+	BatchID                *string     `json:"batch_id"`
+	RiderID                *string     `json:"rider_id"`
+	BatchSeq               *int16      `json:"batch_seq"`
+	CreatedAt              time.Time   `json:"created_at"`
+	UpdatedAt              time.Time   `json:"updated_at"`
+	DeliveredAt            *time.Time  `json:"delivered_at"`
+	Version                int32       `json:"version"`
+	DeliveryAttempts       int16       `json:"delivery_attempts"`
+	CancelledAt            *time.Time  `json:"cancelled_at"`
+	CancelReason           *string     `json:"cancel_reason"`
+	RiderCompensationCents int64       `json:"rider_compensation_cents"`
+	Urgency                int16       `json:"urgency"`
+	WeightG                int64       `json:"weight_g"`
+	VolumeCm3              int64       `json:"volume_cm3"`
+}
+
+type OutboxEvent struct {
+	ID          string     `json:"id"`
+	EventType   string     `json:"event_type"`
+	Payload     []byte     `json:"payload"`
+	CreatedAt   time.Time  `json:"created_at"`
+	PublishedAt *time.Time `json:"published_at"`
 }
 
 type Rider struct {
@@ -256,6 +273,7 @@ type Rider struct {
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at"`
 	Version            int32      `json:"version"`
+	OfflineFlaggedAt   *time.Time `json:"offline_flagged_at"`
 }
 
 type RiderPreference struct {
@@ -282,4 +300,24 @@ type Vendor struct {
 	Lng       float64   `json:"lng"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	Rating    float64   `json:"rating"`
+}
+
+type WebhookDelivery struct {
+	ID             string    `json:"id"`
+	EventID        string    `json:"event_id"`
+	SubscriptionID string    `json:"subscription_id"`
+	Status         string    `json:"status"`
+	Attempts       int32     `json:"attempts"`
+	NextAttemptAt  time.Time `json:"next_attempt_at"`
+	LastStatus     *int32    `json:"last_status"`
+}
+
+type WebhookSubscription struct {
+	ID         string    `json:"id"`
+	ClientName string    `json:"client_name"`
+	Url        string    `json:"url"`
+	Secret     string    `json:"secret"`
+	Enabled    bool      `json:"enabled"`
+	CreatedAt  time.Time `json:"created_at"`
 }

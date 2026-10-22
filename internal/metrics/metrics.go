@@ -19,6 +19,7 @@ type Counters struct {
 	coneMatchesServed      expvar.Int
 	riderMatchesServed     expvar.Int
 	idempotentReplays      expvar.Int
+	batchesExpired         expvar.Int
 }
 
 // New returns zeroed counters.
@@ -35,6 +36,7 @@ func (c *Counters) Vars() map[string]*expvar.Int {
 		"cone_matches_served":       &c.coneMatchesServed,
 		"rider_matches_served":      &c.riderMatchesServed,
 		"idempotent_replays":        &c.idempotentReplays,
+		"batches_expired":           &c.batchesExpired,
 	}
 }
 
@@ -94,5 +96,12 @@ func (c *Counters) RiderMatchServed() {
 func (c *Counters) IdempotentReplay() {
 	if c != nil {
 		add(&c.idempotentReplays, 1)
+	}
+}
+
+// BatchesExpired records batches released by a committed expiry sweep.
+func (c *Counters) BatchesExpired(n int) {
+	if c != nil && n > 0 {
+		add(&c.batchesExpired, int64(n))
 	}
 }

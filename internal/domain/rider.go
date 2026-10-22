@@ -26,6 +26,7 @@ type Rider struct {
 	BearingDeg        *float64
 	SpeedKmh          *float64
 	LocationUpdatedAt *time.Time
+	OfflineFlaggedAt  *time.Time
 	OffersCount       int
 	AcceptedCount     int
 	AcceptanceRate    float64

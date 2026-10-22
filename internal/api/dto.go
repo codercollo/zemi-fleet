@@ -55,6 +55,10 @@ type orderDTO struct {
 	RiderPayoutPercent   float64     `json:"rider_payout_percent"`
 	EstimatedEarningsKES float64     `json:"estimated_earnings_kes"`
 	PlatformFeeKES       float64     `json:"platform_fee_kes"`
+	DeliveryAttempts     int         `json:"delivery_attempts"`
+	CancelledAt          *time.Time  `json:"cancelled_at"`
+	CancelReason         *string     `json:"cancel_reason"`
+	RiderCompensationKES float64     `json:"rider_compensation_kes"`
 	BatchID              *string     `json:"batch_id"`
 	RiderID              *string     `json:"rider_id"`
 	CreatedAt            time.Time   `json:"created_at"`
@@ -76,6 +80,10 @@ func newOrderDTO(o domain.Order) orderDTO {
 		RiderPayoutPercent:   float64(o.RiderPayoutBPS) / 100,
 		EstimatedEarningsKES: centsToKES(o.RiderEarningsCents),
 		PlatformFeeKES:       centsToKES(o.PlatformFeeCents),
+		DeliveryAttempts:     o.DeliveryAttempts,
+		CancelledAt:          o.CancelledAt,
+		CancelReason:         o.CancelReason,
+		RiderCompensationKES: centsToKES(o.RiderCompensationCents),
 		BatchID:              o.BatchID,
 		RiderID:              o.RiderID,
 		CreatedAt:            o.CreatedAt.UTC(),
@@ -110,6 +118,7 @@ type riderDTO struct {
 	BearingDegrees      *float64       `json:"bearing_degrees"`
 	SpeedKMH            *float64       `json:"speed_kmh"`
 	LocationUpdatedAt   *time.Time     `json:"location_updated_at"`
+	OfflineFlaggedAt    *time.Time     `json:"offline_flagged_at"`
 	AcceptanceRate      float64        `json:"acceptance_rate"`
 	Preferences         preferencesDTO `json:"preferences"`
 	Version             int            `json:"version"`
@@ -137,6 +146,10 @@ func newRiderDTO(r domain.Rider) riderDTO {
 	if r.LocationUpdatedAt != nil {
 		t := r.LocationUpdatedAt.UTC()
 		dto.LocationUpdatedAt = &t
+	}
+	if r.OfflineFlaggedAt != nil {
+		t := r.OfflineFlaggedAt.UTC()
+		dto.OfflineFlaggedAt = &t
 	}
 	return dto
 }

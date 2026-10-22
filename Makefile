@@ -2,7 +2,7 @@
 #
 # Two machines, two target groups:
 #   dev/*      your machine: the API (`go run`) and your locally installed PostgreSQL, no Docker.
-#              Create the database and role once by hand (README "Development"), then set
+#              Create the database and role once by hand (README "Local development"), then set
 #              DATABASE_URL in app.env. Needs the golang-migrate CLI on PATH.
 #   staging/*  Docker Desktop: a Linux binary is built here, baked into the image and run
 #              with Compose. That image is exactly what production runs.
@@ -17,10 +17,18 @@ export
 export MSYS_NO_PATHCONV=1
 
 # Version stamped into every binary (Let's Go Further ch. 20.6).
+ifeq ($(OS),Windows_NT)
+SHELL := cmd.exe
+VERSION         := dev
+SHELL := sh
+else
 VERSION         := $(shell git describe --always --dirty --tags 2>/dev/null || echo dev)
+endif
 LDFLAGS         := -s -X main.version=$(VERSION)
 
 MOCKGEN_VERSION := v0.6.0
+# newman (the Postman command-line runner), pinned for staging/postman.
+NEWMAN_VERSION  := 6.2.3
 # govulncheck, pinned. It must be a release built for the Go toolchain in use (v1.1.x crashes on Go 1.27).
 # CI runs the same version as a BLOCKING step (.github/workflows/test.yml).
 GOVULNCHECK_VERSION := v1.9.0
@@ -49,7 +57,7 @@ confirm:
 	@echo -n 'Are you sure? [y/N] ' && read ans && [ $${ans:-N} = y ]
 
 # ==================================================================================== #
-# DEVELOPMENT  (your machine)
+# DEVELOPMENT  
 # ==================================================================================== #
 
 ## dev/run: run the API natively with go run (http://localhost:$PORT)
@@ -72,7 +80,7 @@ dev/db/seed: confirm
 ## dev/sqlc: generate Go code from db/query + db/migrations with sqlc
 .PHONY: dev/sqlc
 dev/sqlc:
-	@if ls db/query/*.sql >/dev/null 2>&1; then sqlc generate; else echo 'no queries in db/query yet (added in Phase 3); sqlc rejects an empty set'; fi
+	@if ls db/query/*.sql >/dev/null 2>&1; then sqlc generate; else echo 'no queries in db/query; sqlc rejects an empty set'; fi
 
 ## dev/db/migrations/new name=$1: create a new pair of migration files
 .PHONY: dev/db/migrations/new
@@ -133,16 +141,25 @@ dev/vulncheck:
 
 ## dev/test: run all unit tests
 .PHONY: dev/test
+ifeq ($(OS),Windows_NT)
+dev/test: SHELL := cmd.exe
+endif
 dev/test:
 	go test -count=1 ./...
 
 ## dev/test/integration: migrate TEST_DATABASE_URL, then run the integration tests (build tag: integration)
 .PHONY: dev/test/integration
+ifeq ($(OS),Windows_NT)
+dev/test/integration: SHELL := cmd.exe
+endif
 dev/test/integration: test/db/migrate
 	go test -tags=integration -count=1 -p 1 -run Integration ./...
 
 ## dev/test/e2e: migrate TEST_DATABASE_URL, then run the whole-API scenarios (build tag: e2e)
 .PHONY: dev/test/e2e
+ifeq ($(OS),Windows_NT)
+dev/test/e2e: SHELL := cmd.exe
+endif
 dev/test/e2e: test/db/migrate
 	go test -tags=e2e -count=1 -p 1 ./internal/e2e/...
 
@@ -152,9 +169,17 @@ dev/test/all: dev/test dev/test/integration dev/test/e2e
 
 # Bring the throwaway test database to the latest schema. Never touches DATABASE_URL.
 .PHONY: test/db/migrate
+ifeq ($(OS),Windows_NT)
+test/db/migrate: SHELL := cmd.exe
+endif
 test/db/migrate:
+ifeq ($(OS),Windows_NT)
+	if not defined TEST_DATABASE_URL (echo TEST_DATABASE_URL is not set (see .env.example) & exit /b 1)
+	migrate -path ./db/migrations -database "$(TEST_DATABASE_URL)" up
+else
 	@test -n "$(TEST_DATABASE_URL)" || (echo 'TEST_DATABASE_URL is not set (see .env.example)' && exit 1)
 	migrate -path ./db/migrations -database "$(TEST_DATABASE_URL)" up
+endif
 
 ## dev/test/race: run tests with the race detector (needs cgo/gcc; CI always runs it)
 .PHONY: dev/test/race
@@ -166,6 +191,39 @@ dev/test/race:
 dev/test/cover:
 	go test -count=1 -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out -o coverage.html
+
+## dev/load/seed: generate local load SQL (override LOAD_RIDERS and LOAD_ORDERS)
+.PHONY: dev/load/seed
+dev/load/seed:
+	go run ./scripts/loadseed -riders=$(or $(LOAD_RIDERS),500) -orders=$(or $(LOAD_ORDERS),10000) -output=db/seed/load.sql
+
+## dev/load/apply: apply generated load SQL to the local development database
+.PHONY: dev/load/apply
+dev/load/apply: dev/load/seed
+	@test -n "$(DATABASE_URL)" || (echo 'DATABASE_URL is not set (see .env.example)' && exit 1)
+	psql "$(DATABASE_URL)" -v ON_ERROR_STOP=1 -f db/seed/load.sql
+
+## dev/test/load: run the local HTTP load client against an already-running dev API
+.PHONY: dev/test/load
+dev/test/load:
+	go run ./scripts/loadtest -base-url=$(or $(LOAD_BASE_URL),http://localhost:4000/api/v2) -api-key=$(or $(LOAD_API_KEY),dev-key-change-me-0123456789) -duration=$(or $(LOAD_DURATION),30s) -concurrency=$(or $(LOAD_CONCURRENCY),10)
+
+## chaos/up: start the staging database behind the opt-in Toxiproxy profile
+.PHONY: chaos/up
+chaos/up:
+	$(STAGING_COMPOSE) --profile chaos up -d --wait postgres toxiproxy
+	sh scripts/chaos/setup.sh
+
+## chaos/test: run the opt-in connection, timeout and pool fault tests
+.PHONY: chaos/test
+chaos/test:
+	go test -tags='integration,e2e,chaos' -count=1 -p 1 -run Chaos ./internal/e2e/...
+
+## chaos/down: remove the Toxiproxy profile and its proxy definition
+.PHONY: chaos/down
+chaos/down:
+	-sh scripts/chaos/teardown.sh
+	$(STAGING_COMPOSE) --profile chaos down
 
 # ---- build (ch. 20.5) ----------------------------------------------------------------
 
@@ -196,14 +254,18 @@ staging/up: staging/build
 	API_BUILD_TARGET=prebuilt $(STAGING_COMPOSE) up -d --wait
 	@echo 'Staging API $(VERSION): $(STAGING_URL)/api/v2/healthz'
 
-## staging/smoke: check the healthcheck, that a missing key is refused (401) and that the key is accepted (200)
+## staging/smoke: call every endpoint once with the key and check its status (needs the demo seed: make staging/seed)
 .PHONY: staging/smoke
 staging/smoke:
-	curl --fail --silent --show-error $(STAGING_URL)/api/v2/healthz
-	@echo
-	@test "$$(curl --silent --output /dev/null --write-out '%{http_code}' $(STAGING_URL)/api/v2/batches)" = 401 		|| (echo 'smoke: a request without a key was not refused with 401' && exit 1)
-	@test "$$(curl --silent --output /dev/null --write-out '%{http_code}' -H 'X-API-Key: $(STAGING_API_KEY)' $(STAGING_URL)/api/v2/riders/rider_nobody)" = 404 		|| (echo 'smoke: the API key was not accepted (expected the request to reach the handler: 404 for an unknown rider)' && exit 1)
-	@echo 'smoke: ok (healthz 200, no key 401, key accepted)'
+	BASE_URL=$(STAGING_URL) API_KEY=$(STAGING_API_KEY) bash scripts/smoke_test.sh
+
+## staging/postman: run the Postman collection against the running stack with newman (needs the demo seed; reseed between runs)
+.PHONY: staging/postman
+staging/postman:
+	npx --yes newman@$(NEWMAN_VERSION) run postman/Zemi_Fleet_V2.postman_collection.json \
+		--environment postman/Zemi_Fleet_V2.postman_environment.json \
+		--env-var base_url=$(STAGING_URL) --env-var api_key=$(STAGING_API_KEY) \
+		--color off --delay-request 120
 
 ## staging/logs: follow the API container logs
 .PHONY: staging/logs

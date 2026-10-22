@@ -16,6 +16,22 @@ const EarthRadiusM = 6_371_008.8
 
 const fullCircleDeg = 360.0
 
+// Density counts points no farther than radiusM from center, inclusively.
+// It is intentionally small and pure so adaptive batching can be tested
+// independently of configuration and persistence.
+func Density(center domain.Location, points []domain.Location, radiusM float64) int {
+	if radiusM < 0 {
+		return 0
+	}
+	n := 0
+	for _, point := range points {
+		if Haversine(center, point) <= radiusM {
+			n++
+		}
+	}
+	return n
+}
+
 func radians(deg float64) float64 { return deg * math.Pi / 180 }
 func degrees(rad float64) float64 { return rad * 180 / math.Pi }
 

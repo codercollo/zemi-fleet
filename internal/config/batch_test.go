@@ -16,8 +16,10 @@ func TestBatchDefaults(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, BatchConfig{
-		MaxOrders: 5, PickupRadiusKM: 2, DirectionToleranceDeg: 45, SearchRadiusKM: 5, VisibilityRadiusKM: 3,
-		TTL: 10 * time.Minute, AvgSpeedKMH: 20, StopDwellMin: 2,
+		SpatialQueryMode: "legacy", MaxOrders: 5, PickupRadiusKM: 2, DirectionToleranceDeg: 45, SearchRadiusKM: 5, VisibilityRadiusKM: 3,
+		TTL: 10 * time.Minute, AvgSpeedKMH: 20, StopDwellMin: 2, Ordering: "fifo", RadiusMode: "fixed",
+		WeightAge: .4, WeightValue: .3, WeightRating: .2, WeightUrgency: .1, DensityRadiusKM: 1,
+		DensityLowThreshold: 5, DensityHighThreshold: 15, DensityLowRadiusKM: 2, DensityMediumRadiusKM: 1.5, DensityHighRadiusKM: 1,
 	}, cfg.Batch)
 }
 
@@ -30,13 +32,16 @@ func TestBatchFromFile(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, BatchConfig{
-		MaxOrders: 3, PickupRadiusKM: 1.5, DirectionToleranceDeg: 30, SearchRadiusKM: 8, VisibilityRadiusKM: 3,
-		TTL: 90 * time.Second, AvgSpeedKMH: 25, StopDwellMin: 0,
+		SpatialQueryMode: "legacy", MaxOrders: 3, PickupRadiusKM: 1.5, DirectionToleranceDeg: 30, SearchRadiusKM: 8, VisibilityRadiusKM: 3,
+		TTL: 90 * time.Second, AvgSpeedKMH: 25, StopDwellMin: 0, Ordering: "fifo", RadiusMode: "fixed",
+		WeightAge: .4, WeightValue: .3, WeightRating: .2, WeightUrgency: .1, DensityRadiusKM: 1,
+		DensityLowThreshold: 5, DensityHighThreshold: 15, DensityLowRadiusKM: 2, DensityMediumRadiusKM: 1.5, DensityHighRadiusKM: 1,
 	}, cfg.Batch)
 }
 
 func TestBatchValidation(t *testing.T) {
 	tests := []struct{ name, env, want string }{
+		{"invalid spatial query mode", "SPATIAL_QUERY_MODE=invalid", "SPATIAL_QUERY_MODE"},
 		{"zero max orders", "BATCH_MAX_ORDERS=0", "BATCH_MAX_ORDERS"},
 		{"max orders above the database limit", "BATCH_MAX_ORDERS=6", "BATCH_MAX_ORDERS"},
 		{"zero pickup radius", "BATCH_PICKUP_RADIUS_KM=0", "BATCH_PICKUP_RADIUS_KM"},

@@ -4,6 +4,7 @@
 package batching
 
 import (
+	"math"
 	"slices"
 	"strings"
 	"time"
@@ -20,6 +21,9 @@ type Order struct {
 	CreatedAt          time.Time
 	DeliveryFeeCents   int64
 	RiderEarningsCents int64
+	ValueCents         int64
+	VendorRating       float64
+	Urgency            int
 }
 
 // Params are the batching rules; in production they come from config (and the request).
@@ -31,13 +35,23 @@ type Params struct {
 	// DirectionToleranceDeg is the largest allowed difference between a trip's bearing and the seed's.
 	DirectionToleranceDeg float64
 	// AvgSpeedKMH and StopDwellMin turn the route into time estimates (see scoring.go).
-	AvgSpeedKMH  float64
-	StopDwellMin float64
+	AvgSpeedKMH                                                 float64
+	StopDwellMin                                                float64
+	Ordering                                                    string
+	Now                                                         time.Time
+	WeightAge, WeightValue, WeightRating, WeightUrgency         float64
+	RadiusMode                                                  string
+	DensityRadiusM                                              float64
+	DensityLowThreshold, DensityHighThreshold                   int
+	DensityLowRadiusM, DensityMediumRadiusM, DensityHighRadiusM float64
+	Distance                                                    func(domain.Location, domain.Location) float64
+	Sequencer                                                   string
+	MinScore                                                    float64
 }
 
 // Form groups the orders into batches. It is deterministic.
 //
-//  1. Sort by created_at, then id (FIFO).
+//  1. Sort by priority when enabled, then created_at and id (FIFO).
 //  2. The seed is the oldest order not yet in a batch.
 //  3. Walk the remaining unused orders in FIFO order and add one when
 //     (a) its pickup is within PickupRadiusM of EVERY pickup already in the batch, not just the
@@ -57,6 +71,15 @@ func Form(orders []Order, p Params) []Batch {
 
 	fifo := slices.Clone(orders)
 	slices.SortStableFunc(fifo, func(a, b Order) int {
+		if p.Ordering == "priority" {
+			sa, sb := PriorityScore(a, p.Now, p), PriorityScore(b, p.Now, p)
+			if math.Abs(sa-sb) > 1e-9 {
+				if sa > sb {
+					return -1
+				}
+				return 1
+			}
+		}
 		if c := a.CreatedAt.Compare(b.CreatedAt); c != 0 {
 			return c
 		}
@@ -70,19 +93,53 @@ func Form(orders []Order, p Params) []Batch {
 		}
 		used[i] = true
 		members := []Order{seed}
+		radius := p.PickupRadiusM
+		if p.RadiusMode == "adaptive" {
+			radius = adaptiveRadius(seed.Pickup, fifo, p)
+		}
+		formParams := p
+		formParams.PickupRadiusM = radius
 
 		for j := i + 1; j < len(fifo) && len(members) < p.MaxOrders; j++ {
 			if used[j] {
 				continue
 			}
-			if fits(fifo[j], seed, members, p) {
+			if fits(fifo[j], seed, members, formParams) {
 				used[j] = true
 				members = append(members, fifo[j])
 			}
 		}
-		batches = append(batches, build(members, p))
+		b := build(members, p)
+		if p.MinScore > 0 && b.Score < p.MinScore && len(members) > 1 {
+			for _, member := range members {
+				batches = append(batches, build([]Order{member}, p))
+			}
+		} else {
+			batches = append(batches, b)
+		}
 	}
 	return batches
+}
+
+func adaptiveRadius(seed domain.Location, orders []Order, p Params) float64 {
+	if p.DensityRadiusM <= 0 {
+		return p.PickupRadiusM
+	}
+	points := make([]domain.Location, 0, len(orders))
+	for _, order := range orders {
+		points = append(points, order.Pickup)
+	}
+	density := geo.Density(seed, points, p.DensityRadiusM)
+	radius := p.DensityLowRadiusM
+	if density >= p.DensityHighThreshold {
+		radius = p.DensityHighRadiusM
+	} else if density >= p.DensityLowThreshold {
+		radius = p.DensityMediumRadiusM
+	}
+	if radius <= 0 {
+		return p.PickupRadiusM
+	}
+	return math.Min(radius, p.PickupRadiusM)
 }
 
 // fits reports whether candidate may join the batch of members (whose first element is the seed).

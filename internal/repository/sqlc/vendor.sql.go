@@ -10,7 +10,7 @@ import (
 )
 
 const getVendor = `-- name: GetVendor :one
-SELECT id, name, phone, lat, lng, created_at, updated_at FROM vendors WHERE id = $1
+SELECT id, name, phone, lat, lng, created_at, updated_at, rating FROM vendors WHERE id = $1
 `
 
 func (q *Queries) GetVendor(ctx context.Context, id string) (Vendor, error) {
@@ -24,6 +24,7 @@ func (q *Queries) GetVendor(ctx context.Context, id string) (Vendor, error) {
 		&i.Lng,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Rating,
 	)
 	return i, err
 }

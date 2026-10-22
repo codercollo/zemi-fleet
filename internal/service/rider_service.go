@@ -124,6 +124,19 @@ func (s *RiderService) UpdateLocation(ctx context.Context, id string, in Locatio
 	return s.withPreferences(ctx, row)
 }
 
+// UpdateTelemetryLocation records a ping without optimistic locking. Telemetry
+// is last-write-wins and must never turn a stale app snapshot into a 409.
+func (s *RiderService) UpdateTelemetryLocation(ctx context.Context, id string, in LocationUpdate) (domain.Rider, error) {
+	row, err := s.store.UpdateRiderLocationTelemetry(ctx, sqlc.UpdateRiderLocationTelemetryParams{
+		LastLat: &in.Lat, LastLng: &in.Lng, LastBearingDeg: in.BearingDeg,
+		LastSpeedKmh: in.SpeedKmh, LocationUpdatedAt: ptr(s.clock.Now()), ID: id,
+	})
+	if err != nil {
+		return domain.Rider{}, fmt.Errorf("update rider telemetry: %w", err)
+	}
+	return s.withPreferences(ctx, row)
+}
+
 // UpdateAvailability switches a rider on or off shift, with the same optimistic locking.
 func (s *RiderService) UpdateAvailability(ctx context.Context, id string, available bool, expectedVersion *int) (domain.Rider, error) {
 	cur, err := s.store.GetRider(ctx, id)

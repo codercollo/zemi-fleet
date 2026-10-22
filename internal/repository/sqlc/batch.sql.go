@@ -107,6 +107,56 @@ func (q *Queries) AssignOrderToBatch(ctx context.Context, arg AssignOrderToBatch
 	return result.RowsAffected(), nil
 }
 
+const countOpenBatchSummariesSQL = `-- name: CountOpenBatchSummariesSQL :one
+WITH candidates AS (
+    SELECT b.id,
+           6371000.0 * 2.0 * asin(sqrt(
+               power(sin(radians(s.lat - $2::float8) / 2.0), 2) +
+               cos(radians($2::float8)) * cos(radians(s.lat)) *
+               power(sin(radians(s.lng - $3::float8) / 2.0), 2)
+           )) AS distance_m
+    FROM batches b
+    JOIN batch_stops s ON s.batch_id = b.id AND s.seq = 1
+    JOIN orders o ON o.batch_id = b.id
+    WHERE b.status = 'open'
+      AND b.expires_at > $4
+      AND s.lat BETWEEN $5::float8 AND $6::float8
+      AND s.lng BETWEEN $7::float8 AND $8::float8
+    GROUP BY b.id, s.lat, s.lng
+)
+SELECT count(*)::bigint
+FROM candidates
+WHERE distance_m <= $1::float8
+`
+
+type CountOpenBatchSummariesSQLParams struct {
+	RadiusM  float64   `json:"radius_m"`
+	PointLat float64   `json:"point_lat"`
+	PointLng float64   `json:"point_lng"`
+	Now      time.Time `json:"now"`
+	MinLat   float64   `json:"min_lat"`
+	MaxLat   float64   `json:"max_lat"`
+	MinLng   float64   `json:"min_lng"`
+	MaxLng   float64   `json:"max_lng"`
+}
+
+// SQL-mode candidate count: bounding box plus exact great-circle radius.
+func (q *Queries) CountOpenBatchSummariesSQL(ctx context.Context, arg CountOpenBatchSummariesSQLParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countOpenBatchSummariesSQL,
+		arg.RadiusM,
+		arg.PointLat,
+		arg.PointLng,
+		arg.Now,
+		arg.MinLat,
+		arg.MaxLat,
+		arg.MinLng,
+		arg.MaxLng,
+	)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createBatch = `-- name: CreateBatch :one
 INSERT INTO batches (
     id, pickup_centroid_lat, pickup_centroid_lng, pickup_spread_m, orders_count, total_distance_m,
@@ -231,14 +281,24 @@ func (q *Queries) CreateBatchStop(ctx context.Context, arg CreateBatchStopParams
 
 const expireStaleBatches = `-- name: ExpireStaleBatches :many
 
-UPDATE batches
+WITH expired AS (
+    SELECT b.id
+    FROM batches b
+    WHERE b.status = 'open' AND b.expires_at <= $1
+    ORDER BY b.expires_at, b.id
+    FOR UPDATE SKIP LOCKED
+)
+UPDATE batches b
 SET status = 'expired'
-WHERE status = 'open' AND expires_at <= $1
-RETURNING id
+FROM expired
+WHERE b.id = expired.id
+RETURNING b.id
 `
 
 // Queries for batch creation (POST /orders/batch). All timestamps come from the injected clock.
 // Open batches past their TTL are no longer on offer.
+// The locking CTE lets several application instances sweep safely: each instance
+// claims a disjoint set of expired batches before changing their state.
 func (q *Queries) ExpireStaleBatches(ctx context.Context, now time.Time) ([]string, error) {
 	rows, err := q.db.Query(ctx, expireStaleBatches, now)
 	if err != nil {
@@ -478,6 +538,90 @@ func (q *Queries) ListOpenBatchSummaries(ctx context.Context, arg ListOpenBatchS
 	return items, nil
 }
 
+const listOpenBatchSummariesSQL = `-- name: ListOpenBatchSummariesSQL :many
+WITH candidates AS (
+    SELECT b.id, s.lat AS first_lat, s.lng AS first_lng,
+           MIN(o.created_at)::timestamptz AS oldest_order_at,
+           6371000.0 * 2.0 * asin(sqrt(
+               power(sin(radians(s.lat - $4::float8) / 2.0), 2) +
+               cos(radians($4::float8)) * cos(radians(s.lat)) *
+               power(sin(radians(s.lng - $5::float8) / 2.0), 2)
+           )) AS distance_m
+    FROM batches b
+    JOIN batch_stops s ON s.batch_id = b.id AND s.seq = 1
+    JOIN orders o ON o.batch_id = b.id
+    WHERE b.status = 'open'
+      AND b.expires_at > $6
+      AND s.lat BETWEEN $7::float8 AND $8::float8
+      AND s.lng BETWEEN $9::float8 AND $10::float8
+    GROUP BY b.id, s.lat, s.lng
+)
+SELECT id, first_lat, first_lng, oldest_order_at, distance_m
+FROM candidates
+WHERE distance_m <= $1::float8
+ORDER BY distance_m, oldest_order_at, id
+LIMIT $3::int OFFSET $2::int
+`
+
+type ListOpenBatchSummariesSQLParams struct {
+	RadiusM    float64   `json:"radius_m"`
+	PageOffset int32     `json:"page_offset"`
+	PageLimit  int32     `json:"page_limit"`
+	PointLat   float64   `json:"point_lat"`
+	PointLng   float64   `json:"point_lng"`
+	Now        time.Time `json:"now"`
+	MinLat     float64   `json:"min_lat"`
+	MaxLat     float64   `json:"max_lat"`
+	MinLng     float64   `json:"min_lng"`
+	MaxLng     float64   `json:"max_lng"`
+}
+
+type ListOpenBatchSummariesSQLRow struct {
+	ID            string    `json:"id"`
+	FirstLat      float64   `json:"first_lat"`
+	FirstLng      float64   `json:"first_lng"`
+	OldestOrderAt time.Time `json:"oldest_order_at"`
+	DistanceM     int32     `json:"distance_m"`
+}
+
+// SQL-mode exact radius filter and stable ordering. Go still maps the selected rows and preserves the response DTO.
+func (q *Queries) ListOpenBatchSummariesSQL(ctx context.Context, arg ListOpenBatchSummariesSQLParams) ([]ListOpenBatchSummariesSQLRow, error) {
+	rows, err := q.db.Query(ctx, listOpenBatchSummariesSQL,
+		arg.RadiusM,
+		arg.PageOffset,
+		arg.PageLimit,
+		arg.PointLat,
+		arg.PointLng,
+		arg.Now,
+		arg.MinLat,
+		arg.MaxLat,
+		arg.MinLng,
+		arg.MaxLng,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOpenBatchSummariesSQLRow
+	for rows.Next() {
+		var i ListOpenBatchSummariesSQLRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.FirstLat,
+			&i.FirstLng,
+			&i.OldestOrderAt,
+			&i.DistanceM,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOpenBatchesNearPoint = `-- name: ListOpenBatchesNearPoint :many
 SELECT b.id, s.lat AS first_lat, s.lng AS first_lng
 FROM batches b
@@ -534,13 +678,15 @@ func (q *Queries) ListOpenBatchesNearPoint(ctx context.Context, arg ListOpenBatc
 }
 
 const listPendingOrdersForBatching = `-- name: ListPendingOrdersForBatching :many
-SELECT id, pickup_lat, pickup_lng, delivery_lat, delivery_lng, created_at, delivery_fee_cents, rider_earnings_cents
-FROM orders
-WHERE status = 'pending'
-  AND pickup_lat BETWEEN $1::float8 AND $2::float8
-  AND pickup_lng BETWEEN $3::float8 AND $4::float8
-ORDER BY created_at, id
-FOR UPDATE SKIP LOCKED
+SELECT o.id, o.pickup_lat, o.pickup_lng, o.delivery_lat, o.delivery_lng, o.created_at,
+       o.delivery_fee_cents, o.rider_earnings_cents, o.value_cents, v.rating, o.urgency
+FROM orders o
+JOIN vendors v ON v.id = o.vendor_id
+WHERE o.status = 'pending'
+  AND o.pickup_lat BETWEEN $1::float8 AND $2::float8
+  AND o.pickup_lng BETWEEN $3::float8 AND $4::float8
+ORDER BY o.created_at, o.id
+FOR UPDATE OF o SKIP LOCKED
 `
 
 type ListPendingOrdersForBatchingParams struct {
@@ -559,6 +705,9 @@ type ListPendingOrdersForBatchingRow struct {
 	CreatedAt          time.Time `json:"created_at"`
 	DeliveryFeeCents   int64     `json:"delivery_fee_cents"`
 	RiderEarningsCents *int64    `json:"rider_earnings_cents"`
+	ValueCents         int64     `json:"value_cents"`
+	Rating             float64   `json:"rating"`
+	Urgency            int16     `json:"urgency"`
 }
 
 // Pending pickups inside a bounding box, oldest first, row-locked. SKIP LOCKED means a concurrent
@@ -586,6 +735,9 @@ func (q *Queries) ListPendingOrdersForBatching(ctx context.Context, arg ListPend
 			&i.CreatedAt,
 			&i.DeliveryFeeCents,
 			&i.RiderEarningsCents,
+			&i.ValueCents,
+			&i.Rating,
+			&i.Urgency,
 		); err != nil {
 			return nil, err
 		}

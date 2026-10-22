@@ -64,6 +64,9 @@ func (s *Server) listBatchesHandler(c *gin.Context) {
 	if lngOK {
 		v.Check(validator.Between(lng, -maxLongitude, maxLongitude), "lng", "must be between -180 and 180")
 	}
+	if latOK && lngOK {
+		s.checkServiceArea(v, "location", domain.Location{Lat: lat, Lng: lng})
+	}
 
 	radiusKM := cfg.VisibilityRadiusKM // default
 	if raw := c.Query("radius_km"); raw != "" {

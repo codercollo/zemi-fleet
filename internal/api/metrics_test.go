@@ -81,7 +81,7 @@ func TestMetrics_PublishesEveryValue(t *testing.T) {
 		"version", "goroutines", "timestamp", "database", "memstats",
 		"total_requests_received", "total_responses_sent", "total_processing_time_μs", "total_responses_sent_by_status",
 		"orders_created", "batches_formed", "batches_accepted", "batch_accept_conflicts", "batch_capacity_rejections",
-		"cone_matches_served", "rider_matches_served", "idempotent_replays",
+		"cone_matches_served", "rider_matches_served", "idempotent_replays", "batches_expired",
 	} {
 		assert.Contains(t, v, name)
 	}
@@ -141,6 +141,37 @@ func TestMetrics_DisabledIs404(t *testing.T) {
 
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 	assert.NotContains(t, rec.Body.String(), "total_requests_received")
+}
+
+func TestPrometheus_UsesPerServerRegistryAndTemplateLabels(t *testing.T) {
+	first, store := newMetricsHandler(t, nil)
+	second, _ := newMetricsHandler(t, nil) // a global registry would panic here
+
+	store.EXPECT().GetRider(gomock.Any(), "rider_001").Return(sqlc.Rider{}, domain.ErrNotFound)
+	rec := send(t, first, http.MethodGet, "/api/v2/riders/rider_001", "")
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+	metricsResponse := send(t, first, http.MethodGet, "/metrics", "")
+	require.Equal(t, http.StatusOK, metricsResponse.Code, metricsResponse.Body.String())
+	body := metricsResponse.Body.String()
+	assert.Contains(t, body, `zemi_http_request_duration_seconds_count`)
+	assert.Contains(t, body, `route="/api/v2/riders/:id"`)
+	assert.Contains(t, body, `status="404"`)
+	assert.NotContains(t, body, "rider_001", "IDs must never become label values")
+	assert.NotContains(t, body, "rider_", "raw rider IDs must never become label values")
+
+	secondResponse := send(t, second, http.MethodGet, "/metrics", "")
+	assert.Equal(t, http.StatusOK, secondResponse.Code)
+}
+
+func TestPrometheus_MetricsRouteStillRequiresKeyAndLimiter(t *testing.T) {
+	h, _ := newMetricsHandler(t, func(c *config.Config) {
+		c.Limiter = config.LimiterConfig{Enabled: true, RPS: 0.001, Burst: 1}
+	})
+	withoutKey := httptest.NewRecorder()
+	h.ServeHTTP(withoutKey, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	assert.Equal(t, http.StatusUnauthorized, withoutKey.Code)
+	first := send(t, h, http.MethodGet, "/metrics", "")
+	assert.Equal(t, http.StatusTooManyRequests, first.Code, "the no-key request consumed the only token")
 }
 
 func TestMetrics_RequiresAPIKey(t *testing.T) {
@@ -248,30 +279,27 @@ func TestMetrics_IdempotentReplaysCounted(t *testing.T) {
 }
 
 func TestMetrics_BatchAcceptCounters(t *testing.T) {
-	freshlyAccepted := acceptedBatch("rider_002")
-	at := testNow
-	freshlyAccepted.AcceptedAt = &at
-
 	tests := []struct {
 		name string
 		// result of the store call, and what each counter should read afterwards
 		batch                         domain.Batch
+		held                          bool
 		err                           error
 		wantStatus                    int
 		accepted, conflicts, capacity float64
 	}{
-		{"a win counts as accepted", freshlyAccepted, nil, http.StatusOK, 1, 0, 0},
-		{"an idempotent retry by the winner is not a second win", acceptedBatch("rider_002"), nil, http.StatusOK, 0, 0, 0},
-		{"a lost race counts as a conflict, not as accepted", domain.Batch{}, fmt.Errorf("accept batch: %w", domain.ErrBatchTaken), http.StatusConflict, 0, 1, 0},
-		{"no room counts as a capacity rejection", domain.Batch{}, fmt.Errorf("accept batch: %w", domain.ErrRiderAtCapacity), http.StatusUnprocessableEntity, 0, 0, 1},
-		{"an unknown batch counts as nothing", domain.Batch{}, fmt.Errorf("accept batch: %w", domain.ErrNotFound), http.StatusNotFound, 0, 0, 0},
-		{"an unavailable rider counts as nothing", domain.Batch{}, fmt.Errorf("accept batch: %w", domain.ErrRiderUnavailable), http.StatusUnprocessableEntity, 0, 0, 0},
-		{"a server error counts as nothing", domain.Batch{}, fmt.Errorf("accept batch: boom"), http.StatusInternalServerError, 0, 0, 0},
+		{"a win counts as accepted", acceptedBatch("rider_002"), false, nil, http.StatusOK, 1, 0, 0},
+		{"an idempotent retry by the winner is not a second win", acceptedBatch("rider_002"), true, nil, http.StatusOK, 0, 0, 0},
+		{"a lost race counts as a conflict, not as accepted", domain.Batch{}, false, fmt.Errorf("accept batch: %w", domain.ErrBatchTaken), http.StatusConflict, 0, 1, 0},
+		{"no room counts as a capacity rejection", domain.Batch{}, false, fmt.Errorf("accept batch: %w", domain.ErrRiderAtCapacity), http.StatusUnprocessableEntity, 0, 0, 1},
+		{"an unknown batch counts as nothing", domain.Batch{}, false, fmt.Errorf("accept batch: %w", domain.ErrNotFound), http.StatusNotFound, 0, 0, 0},
+		{"an unavailable rider counts as nothing", domain.Batch{}, false, fmt.Errorf("accept batch: %w", domain.ErrRiderUnavailable), http.StatusUnprocessableEntity, 0, 0, 0},
+		{"a server error counts as nothing", domain.Batch{}, false, fmt.Errorf("accept batch: boom"), http.StatusInternalServerError, 0, 0, 0},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			h, store := newMetricsHandler(t, nil)
-			store.EXPECT().AcceptBatchTx(gomock.Any(), gomock.Any()).Return(tc.batch, tc.err)
+			store.EXPECT().AcceptBatchTx(gomock.Any(), gomock.Any()).Return(tc.batch, tc.held, tc.err)
 
 			rec := send(t, h, http.MethodPost, acceptPath("batch_X1"), `{"rider_id":"rider_002"}`)
 

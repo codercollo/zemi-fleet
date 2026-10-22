@@ -9,9 +9,10 @@ import (
 
 // Prefixes of the IDs the app generates.
 const (
-	PrefixOrder = "ord_"
-	PrefixRider = "rider_"
-	PrefixBatch = "batch_"
+	PrefixOrder  = "ord_"
+	PrefixRider  = "rider_"
+	PrefixBatch  = "batch_"
+	PrefixOutbox = "out_"
 )
 
 // crockford is Crockford's base32 alphabet. Its characters are in ascending ASCII
@@ -24,9 +25,10 @@ const (
 )
 
 // NewOrderID, NewRiderID and NewBatchID return IDs like "ord_01HX9Z3K4M7Q2R8T5V".
-func NewOrderID(now time.Time) string { return NewID(PrefixOrder, now) }
-func NewRiderID(now time.Time) string { return NewID(PrefixRider, now) }
-func NewBatchID(now time.Time) string { return NewID(PrefixBatch, now) }
+func NewOrderID(now time.Time) string  { return NewID(PrefixOrder, now) }
+func NewRiderID(now time.Time) string  { return NewID(PrefixRider, now) }
+func NewBatchID(now time.Time) string  { return NewID(PrefixBatch, now) }
+func NewOutboxID(now time.Time) string { return NewID(PrefixOutbox, now) }
 
 // NewID returns prefix + a time-sortable suffix: IDs created later sort after
 // earlier ones (millisecond resolution), which keeps primary-key inserts mostly

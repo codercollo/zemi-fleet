@@ -1,0 +1,10 @@
+{
+  "title": "Zemi Fleet Operations",
+  "schemaVersion": 39,
+  "panels": [
+    {"type": "timeseries", "title": "HTTP p99 latency", "targets": [{"expr": "histogram_quantile(0.99, sum by (le) (rate(zemi_http_request_duration_seconds_bucket[5m])))"}]},
+    {"type": "timeseries", "title": "HTTP 5xx ratio", "targets": [{"expr": "sum(rate(zemi_http_request_duration_seconds_count{status=~\"5..\"}[5m])) / clamp_min(sum(rate(zemi_http_request_duration_seconds_count[5m])), 1)"}]},
+    {"type": "stat", "title": "Pending webhooks", "targets": [{"expr": "zemi_outbox_pending"}]},
+    {"type": "stat", "title": "Routing breaker", "targets": [{"expr": "zemi_routing_breaker_state_current"}]}
+  ]
+}

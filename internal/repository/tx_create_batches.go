@@ -10,6 +10,7 @@ import (
 	"github.com/codercollo/zemi-fleet/internal/domain"
 	"github.com/codercollo/zemi-fleet/internal/geo"
 	"github.com/codercollo/zemi-fleet/internal/repository/sqlc"
+	"github.com/codercollo/zemi-fleet/internal/routing"
 	"github.com/codercollo/zemi-fleet/internal/util"
 )
 
@@ -26,6 +27,7 @@ type CreateBatchesParams struct {
 	// Batching holds the grouping rules. MaxOrders is the rider's effective batch size and
 	// PickupRadiusM is the request's pairwise pickup radius.
 	Batching batching.Params
+	Router   routing.Router
 }
 
 // CreateBatchesTx forms batches from the pending orders near a rider and returns every open batch
@@ -40,24 +42,28 @@ type CreateBatchesParams struct {
 //  5. load the batches in full.
 //
 // Batches stay 'open' with no rider: per the client, a batch is assigned only when a rider accepts it.
-func (s *SQLStore) CreateBatchesTx(ctx context.Context, arg CreateBatchesParams) ([]domain.Batch, error) {
+//
+// formed is how many batches this call newly created; the others returned were already open. The count is exact:
+// it is the number of inserts, not inferred from timestamps.
+func (s *SQLStore) CreateBatchesTx(ctx context.Context, arg CreateBatchesParams) ([]domain.Batch, int, error) {
 	var result []domain.Batch
+	var formed int
 	err := s.ExecTx(ctx, func(q sqlc.Querier) error {
 		var err error
-		result, err = createBatches(ctx, q, arg)
+		result, formed, err = createBatches(ctx, q, arg)
 		return err
 	})
 	if err != nil {
-		return nil, fmt.Errorf("create batches: %w", err)
+		return nil, 0, fmt.Errorf("create batches: %w", err)
 	}
-	return result, nil
+	return result, formed, nil
 }
 
 // createBatches is the body of the transaction, split out so it runs against any Querier.
-func createBatches(ctx context.Context, q sqlc.Querier, arg CreateBatchesParams) ([]domain.Batch, error) {
+func createBatches(ctx context.Context, q sqlc.Querier, arg CreateBatchesParams) (batches []domain.Batch, formed int, err error) {
 	// 1. expiry
 	if _, err := expireStale(ctx, q, arg.Now); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	// 2. candidates: bounding box in SQL (row-locked), exact distance in Go
@@ -66,7 +72,7 @@ func createBatches(ctx context.Context, q sqlc.Querier, arg CreateBatchesParams)
 		MinLat: minLat, MaxLat: maxLat, MinLng: minLng, MaxLng: maxLng,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("list pending orders: %w", err)
+		return nil, 0, fmt.Errorf("list pending orders: %w", err)
 	}
 	candidates := make([]batching.Order, 0, len(rows))
 	for _, r := range rows {
@@ -85,15 +91,40 @@ func createBatches(ctx context.Context, q sqlc.Querier, arg CreateBatchesParams)
 			CreatedAt:          r.CreatedAt,
 			DeliveryFeeCents:   r.DeliveryFeeCents,
 			RiderEarningsCents: earnings,
+			ValueCents:         r.ValueCents,
+			VendorRating:       r.Rating,
+			Urgency:            int(r.Urgency),
 		})
 	}
 
 	// 3. form and store
+	if arg.Router != nil && len(candidates) > 1 {
+		points := make([]domain.Location, 0, len(candidates)*2)
+		for _, c := range candidates {
+			points = append(points, c.Pickup, c.Delivery)
+		}
+		matrix, matrixErr := arg.Router.Matrix(ctx, points)
+		if matrixErr == nil {
+			arg.Batching.Distance = func(a, b domain.Location) float64 {
+				for i, p := range points {
+					if p == a {
+						for j, q := range points {
+							if q == b {
+								return matrix[i][j]
+							}
+						}
+					}
+				}
+				return geo.Haversine(a, b)
+			}
+		}
+	}
 	expiresAt := arg.Now.Add(arg.TTL)
 	for _, b := range batching.Form(candidates, arg.Batching) {
 		if err := insertBatch(ctx, q, b, arg.Now, expiresAt); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
+		formed++
 	}
 
 	// 4. which open batches does this rider get to see? New ones plus existing ones that fit.
@@ -102,7 +133,7 @@ func createBatches(ctx context.Context, q sqlc.Querier, arg CreateBatchesParams)
 		MinLat: minLat, MaxLat: maxLat, MinLng: minLng, MaxLng: maxLng,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("list open batches: %w", err)
+		return nil, 0, fmt.Errorf("list open batches: %w", err)
 	}
 	ids := make([]string, 0, len(open))
 	for _, o := range open {
@@ -111,12 +142,12 @@ func createBatches(ctx context.Context, q sqlc.Querier, arg CreateBatchesParams)
 		}
 	}
 	if len(ids) == 0 {
-		return []domain.Batch{}, nil
+		return []domain.Batch{}, formed, nil
 	}
 
-	batches, err := loadBatches(ctx, q, ids)
+	batches, err = loadBatches(ctx, q, ids)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	// 5. offers
@@ -129,16 +160,16 @@ func createBatches(ctx context.Context, q sqlc.Querier, arg CreateBatchesParams)
 			OfferedAt: arg.Now,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("create batch offer: %w", err)
+			return nil, 0, fmt.Errorf("create batch offer: %w", err)
 		}
 		newOffers += int32(n)
 	}
 	if newOffers > 0 {
 		if err := q.AddRiderOffers(ctx, sqlc.AddRiderOffersParams{ID: arg.RiderID, Offers: newOffers}); err != nil {
-			return nil, fmt.Errorf("add rider offers: %w", err)
+			return nil, 0, fmt.Errorf("add rider offers: %w", err)
 		}
 	}
-	return batches, nil
+	return batches, formed, nil
 }
 
 // insertBatch writes one formed batch, its stops, and marks its orders batched.

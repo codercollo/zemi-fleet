@@ -51,6 +51,9 @@ type createOrderRequest struct {
 	DeliveryLocation *locationInput `json:"delivery_location"`
 	ValueKES         *float64       `json:"value_kes"`
 	DeliveryFeeKES   *float64       `json:"delivery_fee_kes"`
+	Urgency          *int           `json:"urgency"`
+	WeightG          *int64         `json:"weight_g"`
+	VolumeCM3        *int64         `json:"volume_cm3"`
 }
 
 // createOrderHandler handles POST /api/v2/orders.
@@ -67,9 +70,26 @@ func (s *Server) createOrderHandler(c *gin.Context) {
 	checkID(v, "vendor_id", req.VendorID, vendorID)
 	checkID(v, "category", req.Category, categoryID)
 	delivery := checkLocation(v, "delivery_location", req.DeliveryLocation)
+	if req.DeliveryLocation != nil && req.DeliveryLocation.Lat != nil && req.DeliveryLocation.Lng != nil {
+		s.checkServiceArea(v, "delivery_location", delivery)
+	}
 
 	valueCents := checkAmount(v, "value_kes", req.ValueKES, true, s.cfg.OrderMaxValueKES)
 	feeCents := checkAmount(v, "delivery_fee_kes", req.DeliveryFeeKES, false, s.cfg.OrderMaxDeliveryFeeKES)
+	urgency := 0
+	if req.Urgency != nil {
+		v.Check(*req.Urgency >= 0 && *req.Urgency <= 100, "urgency", "must be between 0 and 100")
+		urgency = *req.Urgency
+	}
+	weightG, volumeCM3 := int64(0), int64(0)
+	if req.WeightG != nil {
+		v.Check(*req.WeightG >= 0, "weight_g", "must not be negative")
+		weightG = *req.WeightG
+	}
+	if req.VolumeCM3 != nil {
+		v.Check(*req.VolumeCM3 >= 0, "volume_cm3", "must not be negative")
+		volumeCM3 = *req.VolumeCM3
+	}
 	if !v.Valid() {
 		s.failedValidationResponse(c, v.Errors)
 		return
@@ -81,6 +101,9 @@ func (s *Server) createOrderHandler(c *gin.Context) {
 		Delivery:         delivery,
 		ValueCents:       valueCents,
 		DeliveryFeeCents: feeCents,
+		Urgency:          urgency,
+		WeightG:          weightG,
+		VolumeCM3:        volumeCM3,
 	})
 	if err != nil {
 		s.handleServiceError(c, err)

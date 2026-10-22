@@ -1,0 +1,3507 @@
+{
+  "info": {
+    "_postman_id": "5d0c6c0e-7f3a-4a43-9b0e-2f1d6a9e1c11",
+    "name": "Zemi Fleet V2",
+    "description": "Zemi Africa's rider-app API: order batching, 60 degree proximity matching and preference matching.\n\nRun the folders in order against a freshly seeded stack (`docker compose --profile demo up --build`); every request has test scripts, and every saved example is a real response captured from the demo stack. Reseed between runs: the run uses up some of the demo data.\n\nSet `base_url` and `api_key` in the environment (`Zemi_Fleet_V2.postman_environment.json`).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      {
+        "key": "key",
+        "value": "X-API-Key",
+        "type": "string"
+      },
+      {
+        "key": "value",
+        "value": "{{api_key}}",
+        "type": "string"
+      },
+      {
+        "key": "in",
+        "value": "header",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "rider_a",
+      "value": "rider_001",
+      "type": "string"
+    },
+    {
+      "key": "rider_b",
+      "value": "rider_004",
+      "type": "string"
+    },
+    {
+      "key": "order_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "batch_id",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "description": "Liveness and database check. No API key needed.",
+      "item": [
+        {
+          "name": "Healthz",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Body is JSON\", () => pm.response.to.be.json);",
+                  "const body = pm.response.json();",
+                  "pm.test(\"The service and the database are up\", () => {",
+                  "  pm.expect(body.status).to.eql(\"available\");",
+                  "  pm.expect(body.system_info.database).to.eql(\"up\");",
+                  "});",
+                  "pm.test(\"A request ID is returned\", () => pm.response.to.have.header(\"X-Request-ID\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/healthz",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "healthz"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "Reports `available` with the database state. Exempt from the API key and the rate limiter."
+          },
+          "response": [
+            {
+              "name": "200 OK: success",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/healthz",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "healthz"
+                  ]
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "06a1d7e39dad713ead6ed5452563821a"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"status\":\"available\",\"system_info\":{\"database\":\"up\",\"environment\":\"staging\",\"version\":\"docker\"}}\n"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Orders",
+      "description": "Create and read orders. Money is KES with at most two decimals.",
+      "item": [
+        {
+          "name": "Create order",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idem_key\", \"postman-\" + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"Body is JSON\", () => pm.response.to.be.json);",
+                  "const order = pm.response.json().order;",
+                  "pm.test(\"A pending order with the rider's 90% share\", () => {",
+                  "  pm.expect(order.id).to.match(/^ord_/);",
+                  "  pm.expect(order.status).to.eql(\"pending\");",
+                  "  pm.expect(order.estimated_earnings_kes).to.eql(225);",
+                  "  pm.expect(order.platform_fee_kes).to.eql(25);",
+                  "  pm.expect(order.batch_id).to.eql(null);",
+                  "});",
+                  "pm.test(\"Location points at the new order\", () => pm.expect(pm.response.headers.get(\"Location\")).to.eql(\"/api/v2/orders/\" + order.id));",
+                  "pm.collectionVariables.set(\"order_id\", order.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idem_key}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v2/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"vendor_id\": \"ven_001\",\n  \"category\": \"electronics\",\n  \"delivery_location\": {\n    \"lat\": -1.25,\n    \"lng\": 36.83\n  },\n  \"value_kes\": 4500.5,\n  \"delivery_fee_kes\": 250\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Creates a `pending` order. The `Idempotency-Key` header (set to a fresh value by the pre-request script) makes a retry safe: see the next request."
+          },
+          "response": [
+            {
+              "name": "201 Created: success",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{idem_key}}",
+                    "type": "text"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/orders",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "orders"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"vendor_id\": \"ven_001\",\n  \"category\": \"electronics\",\n  \"delivery_location\": {\n    \"lat\": -1.25,\n    \"lng\": 36.83\n  },\n  \"value_kes\": 4500.5,\n  \"delivery_fee_kes\": 250\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Location",
+                  "value": "/api/v2/orders/ord_01M5FAX9DM964XTHCZ9F"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "15863ce7e15579159a97b342c8960c92"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"order\":{\"id\":\"ord_01M5FAX9DM964XTHCZ9F\",\"vendor_id\":\"ven_001\",\"category\":\"electronics\",\"status\":\"pending\",\"pickup_location\":{\"lat\":-1.2635,\"lng\":36.803},\"delivery_location\":{\"lat\":-1.25,\"lng\":36.83},\"trip_distance_km\":3.356,\"trip_bearing_degrees\":63.4,\"value_kes\":4500.5,\"delivery_fee_kes\":250,\"rider_payout_percent\":90,\"estimated_earnings_kes\":225,\"platform_fee_kes\":25,\"delivery_attempts\":0,\"cancelled_at\":null,\"cancel_reason\":null,\"rider_compensation_kes\":0,\"batch_id\":null,\"rider_id\":null,\"created_at\":\"2026-10-21T13:37:46.420983Z\",\"version\":1}}\n"
+            },
+            {
+              "name": "422 Unprocessable Entity: invalid fields",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/orders",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "orders"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"vendor_id\": \"ven_001\",\n  \"category\": \"electronics\",\n  \"delivery_location\": {\n    \"lat\": -1.25,\n    \"lng\": 36.83\n  },\n  \"value_kes\": -5\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Unprocessable Entity",
+              "code": 422,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "90ad28538826e45398c4d26d5e25a7bb"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"error\":{\"delivery_fee_kes\":\"must be provided\",\"value_kes\":\"must be greater than zero\"}}\n"
+            },
+            {
+              "name": "400 Bad Request: malformed JSON",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/orders",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "orders"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"vendor_id\": ",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "a6e8eb875c3b44d66a6f9a3bb94b9e5c"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"error\":\"body contains badly-formed JSON\"}\n"
+            },
+            {
+              "name": "401 Unauthorized: no API key",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/orders",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "orders"
+                  ]
+                },
+                "auth": {
+                  "type": "noauth"
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"vendor_id\": \"ven_001\",\n  \"category\": \"electronics\",\n  \"delivery_location\": {\n    \"lat\": -1.25,\n    \"lng\": 36.83\n  },\n  \"value_kes\": 4500.5,\n  \"delivery_fee_kes\": 250\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "Www-Authenticate",
+                  "value": "ApiKey realm=\"zemi-fleet\""
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "13f6d4d9b29c3b31b10ef98b9e10932e"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"error\":\"invalid or missing API key\"}\n"
+            }
+          ]
+        },
+        {
+          "name": "Create order: idempotent replay",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"Answered from the stored response\", () => pm.response.to.have.header(\"Idempotent-Replay\", \"true\"));",
+                  "pm.test(\"Same order as the first request, not a second one\", () => pm.expect(pm.response.json().order.id).to.eql(pm.collectionVariables.get(\"order_id\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idem_key}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v2/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"vendor_id\": \"ven_001\",\n  \"category\": \"electronics\",\n  \"delivery_location\": {\n    \"lat\": -1.25,\n    \"lng\": 36.83\n  },\n  \"value_kes\": 4500.5,\n  \"delivery_fee_kes\": 250\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Sends the same body with the same `Idempotency-Key` as the request above: the first response is replayed (`Idempotent-Replay: true`) and no second order is created."
+          },
+          "response": [
+            {
+              "name": "201 Created: success",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{idem_key}}",
+                    "type": "text"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/orders",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "orders"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"vendor_id\": \"ven_001\",\n  \"category\": \"electronics\",\n  \"delivery_location\": {\n    \"lat\": -1.25,\n    \"lng\": 36.83\n  },\n  \"value_kes\": 4500.5,\n  \"delivery_fee_kes\": 250\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Idempotent-Replay",
+                  "value": "true"
+                },
+                {
+                  "key": "Location",
+                  "value": "/api/v2/orders/ord_01M5FAX9DM964XTHCZ9F"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "2fa959043ec48a9f2055ad017d153bfa"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"order\":{\"id\":\"ord_01M5FAX9DM964XTHCZ9F\",\"vendor_id\":\"ven_001\",\"category\":\"electronics\",\"status\":\"pending\",\"pickup_location\":{\"lat\":-1.2635,\"lng\":36.803},\"delivery_location\":{\"lat\":-1.25,\"lng\":36.83},\"trip_distance_km\":3.356,\"trip_bearing_degrees\":63.4,\"value_kes\":4500.5,\"delivery_fee_kes\":250,\"rider_payout_percent\":90,\"estimated_earnings_kes\":225,\"platform_fee_kes\":25,\"delivery_attempts\":0,\"cancelled_at\":null,\"cancel_reason\":null,\"rider_compensation_kes\":0,\"batch_id\":null,\"rider_id\":null,\"created_at\":\"2026-10-21T13:37:46.420983Z\",\"version\":1}}\n"
+            }
+          ]
+        },
+        {
+          "name": "Get order",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Body is JSON\", () => pm.response.to.be.json);",
+                  "pm.test(\"The order we created\", () => {",
+                  "  const order = pm.response.json().order;",
+                  "  pm.expect(order.id).to.eql(pm.collectionVariables.get(\"order_id\"));",
+                  "  pm.expect(order).to.have.all.keys(\"id\", \"vendor_id\", \"category\", \"status\", \"pickup_location\", \"delivery_location\", \"trip_distance_km\", \"trip_bearing_degrees\", \"value_kes\", \"delivery_fee_kes\", \"rider_payout_percent\", \"estimated_earnings_kes\", \"platform_fee_kes\", \"delivery_attempts\", \"cancelled_at\", \"cancel_reason\", \"rider_compensation_kes\", \"batch_id\", \"rider_id\", \"created_at\", \"version\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/orders/{{order_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "orders",
+                "{{order_id}}"
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK: success",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/orders/{{order_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "orders",
+                    "{{order_id}}"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "eaaab2d1129a440cb9079bb20df81fdd"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"order\":{\"id\":\"ord_01M5FAX9DM964XTHCZ9F\",\"vendor_id\":\"ven_001\",\"category\":\"electronics\",\"status\":\"pending\",\"pickup_location\":{\"lat\":-1.2635,\"lng\":36.803},\"delivery_location\":{\"lat\":-1.25,\"lng\":36.83},\"trip_distance_km\":3.356,\"trip_bearing_degrees\":63.4,\"value_kes\":4500.5,\"delivery_fee_kes\":250,\"rider_payout_percent\":90,\"estimated_earnings_kes\":225,\"platform_fee_kes\":25,\"delivery_attempts\":0,\"cancelled_at\":null,\"cancel_reason\":null,\"rider_compensation_kes\":0,\"batch_id\":null,\"rider_id\":null,\"created_at\":\"2026-10-21T13:37:46.420983Z\",\"version\":1}}\n"
+            },
+            {
+              "name": "404 Not Found: unknown order",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/orders/ord_unknown",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "orders",
+                    "ord_unknown"
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "5d085649c78e47dc4ad4d2a159eebc44"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"error\":\"the requested resource could not be found\"}\n"
+            },
+            {
+              "name": "429 Too Many Requests: over the rate limit",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/orders/ord_unknown",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "orders",
+                    "ord_unknown"
+                  ]
+                }
+              },
+              "status": "Too Many Requests",
+              "code": 429,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Retry-After",
+                  "value": "1"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "e7c324b730759bfd529d17f708873760"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"error\":\"rate limit exceeded\"}\n"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Order Batching",
+      "description": "Group pending orders into batches for a rider (POST /orders/batch).",
+      "item": [
+        {
+          "name": "0. Setup: report rider A's location",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "const rider = pm.response.json().rider;",
+                  "pm.test(\"A fresh position was stored\", () => {",
+                  "  pm.expect(rider.current_location).to.not.eql(null);",
+                  "  pm.expect(new Date(rider.location_updated_at).getTime()).to.be.above(Date.now() - 60000);",
+                  "});",
+                  "pm.collectionVariables.set(\"rider_a_version\", rider.version);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/riders/{{rider_a}}/location",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "riders",
+                "{{rider_a}}",
+                "location"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"latitude\": -1.266,\n  \"longitude\": 36.806,\n  \"bearing_degrees\": 320,\n  \"speed_kmh\": 22\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Seeded rider locations go stale (`RIDER_LOCATION_STALE_AFTER`), so report a fresh one before batching."
+          },
+          "response": [
+            {
+              "name": "200 OK: success",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/riders/{{rider_a}}/location",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "riders",
+                    "{{rider_a}}",
+                    "location"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"latitude\": -1.266,\n  \"longitude\": 36.806,\n  \"bearing_degrees\": 320,\n  \"speed_kmh\": 22\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "f6f090fa3cf1234bdb28e2debfc353f9"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"rider\":{\"id\":\"rider_001\",\"full_name\":\"Brian Otieno\",\"phone\":\"+254722000001\",\"is_available\":true,\"max_capacity\":5,\"current_orders_count\":0,\"max_additional_orders\":5,\"current_location\":{\"lat\":-1.266,\"lng\":36.806},\"bearing_degrees\":320,\"speed_kmh\":22,\"location_updated_at\":\"2026-10-21T13:37:54.846168Z\",\"offline_flagged_at\":null,\"acceptance_rate\":0.775,\"preferences\":{\"min_order_value_kes\":0,\"preferred_categories\":[\"documents\",\"electronics\"],\"preferred_areas\":[\"area_002\",\"area_007\"]},\"version\":1}}\n"
+            }
+          ]
+        },
+        {
+          "name": "Create batches",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Body is JSON\", () => pm.response.to.be.json);",
+                  "const batches = pm.response.json().batches;",
+                  "pm.test(\"At least one batch is on offer\", () => pm.expect(batches).to.be.an(\"array\").that.is.not.empty);",
+                  "pm.test(\"Each batch has the brief's fields and respects max_orders\", () => {",
+                  "  batches.forEach(b => {",
+                  "    pm.expect(b).to.have.all.keys(\"batch_id\", \"orders\", \"sequence\", \"total_distance_km\", \"distance_saved_km\", \"estimated_earnings_kes\", \"route_optimization_score\", \"distance_to_first_pickup_km\", \"expires_at\");",
+                  "    pm.expect(b.orders.length).to.be.within(1, 2);",
+                  "    pm.expect(b.sequence.length).to.eql(2 * b.orders.length);",
+                  "    pm.expect(b.route_optimization_score).to.be.within(0, 1);",
+                  "  });",
+                  "});",
+                  "pm.test(\"Pickups come before their deliveries\", () => {",
+                  "  batches.forEach(b => b.orders.forEach(o => {",
+                  "    const seq = b.sequence.filter(s => s.order_id === o.order_id);",
+                  "    pm.expect(seq[0].type).to.eql(\"pickup\");",
+                  "    pm.expect(seq[1].type).to.eql(\"delivery\");",
+                  "  }));",
+                  "});",
+                  "pm.collectionVariables.set(\"batch_id\", batches[0].batch_id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/orders/batch",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "orders",
+                "batch"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rider_id\": \"{{rider_a}}\",\n  \"rider_location\": {\n    \"latitude\": -1.266,\n    \"longitude\": 36.806\n  },\n  \"max_orders\": 2,\n  \"radius_km\": 2\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Forms batches (at most 2 orders each here, pickups within 2 km of each other, FIFO) and returns every open batch on offer, nearest first. The first batch id is saved for the Batches folder."
+          },
+          "response": [
+            {
+              "name": "200 OK: success",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/orders/batch",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "orders",
+                    "batch"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"rider_id\": \"{{rider_a}}\",\n  \"rider_location\": {\n    \"latitude\": -1.266,\n    \"longitude\": 36.806\n  },\n  \"max_orders\": 2,\n  \"radius_km\": 2\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "88cdcf9a5fd36d0d7ddc8cc75cfea62b"
+                },
+                {
+                  "key": "Transfer-Encoding",
+                  "value": "chunked"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"batches\":[{\"batch_id\":\"batch_01M5FAXJAP1V4N49SEV0\",\"orders\":[{\"order_id\":\"ord_016\",\"pickup\":{\"lat\":-1.266,\"lng\":36.8045},\"delivery\":{\"lat\":-1.315,\"lng\":36.8},\"distance_km\":5.47,\"estimated_time_min\":21},{\"order_id\":\"ord_021\",\"pickup\":{\"lat\":-1.266,\"lng\":36.8045},\"delivery\":{\"lat\":-1.315,\"lng\":36.8},\"distance_km\":5.47,\"estimated_time_min\":23}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_016\",\"location\":{\"lat\":-1.266,\"lng\":36.8045}},{\"seq\":2,\"type\":\"pickup\",\"order_id\":\"ord_021\",\"location\":{\"lat\":-1.266,\"lng\":36.8045}},{\"seq\":3,\"type\":\"delivery\",\"order_id\":\"ord_016\",\"location\":{\"lat\":-1.315,\"lng\":36.8}},{\"seq\":4,\"type\":\"delivery\",\"order_id\":\"ord_021\",\"location\":{\"lat\":-1.315,\"lng\":36.8}}],\"total_distance_km\":5.47,\"distance_saved_km\":5.47,\"estimated_earnings_kes\":468,\"route_optimization_score\":1,\"distance_to_first_pickup_km\":0.17,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"},{\"batch_id\":\"batch_01M5FAXJAP654RYKZVES\",\"orders\":[{\"order_id\":\"ord_040\",\"pickup\":{\"lat\":-1.266,\"lng\":36.8045},\"delivery\":{\"lat\":-1.315,\"lng\":36.8},\"distance_km\":5.47,\"estimated_time_min\":19}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_040\",\"location\":{\"lat\":-1.266,\"lng\":36.8045}},{\"seq\":2,\"type\":\"delivery\",\"order_id\":\"ord_040\",\"location\":{\"lat\":-1.315,\"lng\":36.8}}],\"total_distance_km\":5.47,\"distance_saved_km\":0,\"estimated_earnings_kes\":234,\"route_optimization_score\":1,\"distance_to_first_pickup_km\":0.17,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"},{\"batch_id\":\"batch_01M5FAXJAPB1BP3FV80P\",\"orders\":[{\"order_id\":\"ord_002\",\"pickup\":{\"lat\":-1.2635,\"lng\":36.803},\"delivery\":{\"lat\":-1.222,\"lng\":36.896},\"distance_km\":11.32,\"estimated_time_min\":46},{\"order_id\":\"ord_003\",\"pickup\":{\"lat\":-1.266,\"lng\":36.8045},\"delivery\":{\"lat\":-1.275,\"lng\":36.846},\"distance_km\":4.72,\"estimated_time_min\":20}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_002\",\"location\":{\"lat\":-1.2635,\"lng\":36.803}},{\"seq\":2,\"type\":\"pickup\",\"order_id\":\"ord_003\",\"location\":{\"lat\":-1.266,\"lng\":36.8045}},{\"seq\":3,\"type\":\"delivery\",\"order_id\":\"ord_003\",\"location\":{\"lat\":-1.275,\"lng\":36.846}},{\"seq\":4,\"type\":\"delivery\",\"order_id\":\"ord_002\",\"location\":{\"lat\":-1.222,\"lng\":36.896}}],\"total_distance_km\":13.15,\"distance_saved_km\":2.9,\"estimated_earnings_kes\":612,\"route_optimization_score\":0.931,\"distance_to_first_pickup_km\":0.43,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"},{\"batch_id\":\"batch_01M5FAXJAPEFCD6RKFEP\",\"orders\":[{\"order_id\":\"ord_006\",\"pickup\":{\"lat\":-1.2635,\"lng\":36.803},\"delivery\":{\"lat\":-1.29,\"lng\":36.792},\"distance_km\":3.19,\"estimated_time_min\":14},{\"order_id\":\"ord_015\",\"pickup\":{\"lat\":-1.2635,\"lng\":36.803},\"delivery\":{\"lat\":-1.29,\"lng\":36.792},\"distance_km\":3.19,\"estimated_time_min\":16}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_006\",\"location\":{\"lat\":-1.2635,\"lng\":36.803}},{\"seq\":2,\"type\":\"pickup\",\"order_id\":\"ord_015\",\"location\":{\"lat\":-1.2635,\"lng\":36.803}},{\"seq\":3,\"type\":\"delivery\",\"order_id\":\"ord_006\",\"location\":{\"lat\":-1.29,\"lng\":36.792}},{\"seq\":4,\"type\":\"delivery\",\"order_id\":\"ord_015\",\"location\":{\"lat\":-1.29,\"lng\":36.792}}],\"total_distance_km\":3.19,\"distance_saved_km\":3.19,\"estimated_earnings_kes\":360,\"route_optimization_score\":1,\"distance_to_first_pickup_km\":0.43,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"},{\"batch_id\":\"batch_01M5FAXJAPT7AM97P022\",\"orders\":[{\"order_id\":\"ord_009\",\"pickup\":{\"lat\":-1.2635,\"lng\":36.803},\"delivery\":{\"lat\":-1.222,\"lng\":36.896},\"distance_km\":11.32,\"estimated_time_min\":46},{\"order_id\":\"ord_020\",\"pickup\":{\"lat\":-1.266,\"lng\":36.8045},\"delivery\":{\"lat\":-1.275,\"lng\":36.846},\"distance_km\":4.72,\"estimated_time_min\":20}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_009\",\"location\":{\"lat\":-1.2635,\"lng\":36.803}},{\"seq\":2,\"type\":\"pickup\",\"order_id\":\"ord_020\",\"location\":{\"lat\":-1.266,\"lng\":36.8045}},{\"seq\":3,\"type\":\"delivery\",\"order_id\":\"ord_020\",\"location\":{\"lat\":-1.275,\"lng\":36.846}},{\"seq\":4,\"type\":\"delivery\",\"order_id\":\"ord_009\",\"location\":{\"lat\":-1.222,\"lng\":36.896}}],\"total_distance_km\":13.15,\"distance_saved_km\":2.9,\"estimated_earnings_kes\":612,\"route_optimization_score\":0.931,\"distance_to_first_pickup_km\":0.43,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"},{\"batch_id\":\"batch_01M5FAXJAP9V0YZD46HG\",\"orders\":[{\"order_id\":\"ord_027\",\"pickup\":{\"lat\":-1.2635,\"lng\":36.803},\"delivery\":{\"lat\":-1.29,\"lng\":36.792},\"distance_km\":3.19,\"estimated_time_min\":14},{\"order_id\":\"ord_036\",\"pickup\":{\"lat\":-1.266,\"lng\":36.8045},\"delivery\":{\"lat\":-1.315,\"lng\":36.8},\"distance_km\":5.47,\"estimated_time_min\":25}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_027\",\"location\":{\"lat\":-1.2635,\"lng\":36.803}},{\"seq\":2,\"type\":\"pickup\",\"order_id\":\"ord_036\",\"location\":{\"lat\":-1.266,\"lng\":36.8045}},{\"seq\":3,\"type\":\"delivery\",\"order_id\":\"ord_027\",\"location\":{\"lat\":-1.29,\"lng\":36.792}},{\"seq\":4,\"type\":\"delivery\",\"order_id\":\"ord_036\",\"location\":{\"lat\":-1.315,\"lng\":36.8}}],\"total_distance_km\":6.25,\"distance_saved_km\":2.41,\"estimated_earnings_kes\":414,\"route_optimization_score\":0.94,\"distance_to_first_pickup_km\":0.43,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"},{\"batch_id\":\"batch_01M5FAXJAP161R6P3MQD\",\"orders\":[{\"order_id\":\"ord_029\",\"pickup\":{\"lat\":-1.2635,\"lng\":36.803},\"delivery\":{\"lat\":-1.222,\"lng\":36.896},\"distance_km\":11.32,\"estimated_time_min\":46},{\"order_id\":\"ord_034\",\"pickup\":{\"lat\":-1.266,\"lng\":36.8045},\"delivery\":{\"lat\":-1.275,\"lng\":36.846},\"distance_km\":4.72,\"estimated_time_min\":20}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_029\",\"location\":{\"lat\":-1.2635,\"lng\":36.803}},{\"seq\":2,\"type\":\"pickup\",\"order_id\":\"ord_034\",\"location\":{\"lat\":-1.266,\"lng\":36.8045}},{\"seq\":3,\"type\":\"delivery\",\"order_id\":\"ord_034\",\"location\":{\"lat\":-1.275,\"lng\":36.846}},{\"seq\":4,\"type\":\"delivery\",\"order_id\":\"ord_029\",\"location\":{\"lat\":-1.222,\"lng\":36.896}}],\"total_distance_km\":13.15,\"distance_saved_km\":2.9,\"estimated_earnings_kes\":612,\"route_optimization_score\":0.931,\"distance_to_first_pickup_km\":0.43,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"},{\"batch_id\":\"batch_01M5FAXJAP85G30CMNGT\",\"orders\":[{\"order_id\":\"ord_035\",\"pickup\":{\"lat\":-1.2635,\"lng\":36.803},\"delivery\":{\"lat\":-1.222,\"lng\":36.896},\"distance_km\":11.32,\"estimated_time_min\":40},{\"order_id\":\"ord_01M5FAX9DM964XTHCZ9F\",\"pickup\":{\"lat\":-1.2635,\"lng\":36.803},\"delivery\":{\"lat\":-1.25,\"lng\":36.83},\"distance_km\":3.36,\"estimated_time_min\":15}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_035\",\"location\":{\"lat\":-1.2635,\"lng\":36.803}},{\"seq\":2,\"type\":\"pickup\",\"order_id\":\"ord_01M5FAX9DM964XTHCZ9F\",\"location\":{\"lat\":-1.2635,\"lng\":36.803}},{\"seq\":3,\"type\":\"delivery\",\"order_id\":\"ord_01M5FAX9DM964XTHCZ9F\",\"location\":{\"lat\":-1.25,\"lng\":36.83}},{\"seq\":4,\"type\":\"delivery\",\"order_id\":\"ord_035\",\"location\":{\"lat\":-1.222,\"lng\":36.896}}],\"total_distance_km\":11.33,\"distance_saved_km\":3.35,\"estimated_earnings_kes\":621,\"route_optimization_score\":1,\"distance_to_first_pickup_km\":0.43,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"},{\"batch_id\":\"batch_01M5FAXJAPCNPY6234AZ\",\"orders\":[{\"order_id\":\"ord_007\",\"pickup\":{\"lat\":-1.284,\"lng\":36.823},\"delivery\":{\"lat\":-1.324,\"lng\":36.826},\"distance_km\":4.46,\"estimated_time_min\":18},{\"order_id\":\"ord_012\",\"pickup\":{\"lat\":-1.284,\"lng\":36.823},\"delivery\":{\"lat\":-1.324,\"lng\":36.826},\"distance_km\":4.46,\"estimated_time_min\":20}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_007\",\"location\":{\"lat\":-1.284,\"lng\":36.823}},{\"seq\":2,\"type\":\"pickup\",\"order_id\":\"ord_012\",\"location\":{\"lat\":-1.284,\"lng\":36.823}},{\"seq\":3,\"type\":\"delivery\",\"order_id\":\"ord_007\",\"location\":{\"lat\":-1.324,\"lng\":36.826}},{\"seq\":4,\"type\":\"delivery\",\"order_id\":\"ord_012\",\"location\":{\"lat\":-1.324,\"lng\":36.826}}],\"total_distance_km\":4.46,\"distance_saved_km\":4.46,\"estimated_earnings_kes\":414,\"route_optimization_score\":1,\"distance_to_first_pickup_km\":2.75,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"},{\"batch_id\":\"batch_01M5FAXJAPQK38GNAFR1\",\"orders\":[{\"order_id\":\"ord_019\",\"pickup\":{\"lat\":-1.284,\"lng\":36.823},\"delivery\":{\"lat\":-1.324,\"lng\":36.826},\"distance_km\":4.46,\"estimated_time_min\":22},{\"order_id\":\"ord_023\",\"pickup\":{\"lat\":-1.284,\"lng\":36.823},\"delivery\":{\"lat\":-1.307,\"lng\":36.813},\"distance_km\":2.79,\"estimated_time_min\":13}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_019\",\"location\":{\"lat\":-1.284,\"lng\":36.823}},{\"seq\":2,\"type\":\"pickup\",\"order_id\":\"ord_023\",\"location\":{\"lat\":-1.284,\"lng\":36.823}},{\"seq\":3,\"type\":\"delivery\",\"order_id\":\"ord_023\",\"location\":{\"lat\":-1.307,\"lng\":36.813}},{\"seq\":4,\"type\":\"delivery\",\"order_id\":\"ord_019\",\"location\":{\"lat\":-1.324,\"lng\":36.826}}],\"total_distance_km\":5.17,\"distance_saved_km\":2.08,\"estimated_earnings_kes\":369,\"route_optimization_score\":0.932,\"distance_to_first_pickup_km\":2.75,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"},{\"batch_id\":\"batch_01M5FAXJAP70KX136FAX\",\"orders\":[{\"order_id\":\"ord_024\",\"pickup\":{\"lat\":-1.284,\"lng\":36.823},\"delivery\":{\"lat\":-1.307,\"lng\":36.813},\"distance_km\":2.79,\"estimated_time_min\":13},{\"order_id\":\"ord_028\",\"pickup\":{\"lat\":-1.284,\"lng\":36.823},\"delivery\":{\"lat\":-1.324,\"lng\":36.826},\"distance_km\":4.46,\"estimated_time_min\":22}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_024\",\"location\":{\"lat\":-1.284,\"lng\":36.823}},{\"seq\":2,\"type\":\"pickup\",\"order_id\":\"ord_028\",\"location\":{\"lat\":-1.284,\"lng\":36.823}},{\"seq\":3,\"type\":\"delivery\",\"order_id\":\"ord_024\",\"location\":{\"lat\":-1.307,\"lng\":36.813}},{\"seq\":4,\"type\":\"delivery\",\"order_id\":\"ord_028\",\"location\":{\"lat\":-1.324,\"lng\":36.826}}],\"total_distance_km\":5.17,\"distance_saved_km\":2.08,\"estimated_earnings_kes\":369,\"route_optimization_score\":0.932,\"distance_to_first_pickup_km\":2.75,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"},{\"batch_id\":\"batch_01M5FAXJAP8NAH1MA0Z4\",\"orders\":[{\"order_id\":\"ord_030\",\"pickup\":{\"lat\":-1.284,\"lng\":36.823},\"delivery\":{\"lat\":-1.324,\"lng\":36.826},\"distance_km\":4.46,\"estimated_time_min\":22},{\"order_id\":\"ord_031\",\"pickup\":{\"lat\":-1.284,\"lng\":36.823},\"delivery\":{\"lat\":-1.307,\"lng\":36.813},\"distance_km\":2.79,\"estimated_time_min\":13}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_030\",\"location\":{\"lat\":-1.284,\"lng\":36.823}},{\"seq\":2,\"type\":\"pickup\",\"order_id\":\"ord_031\",\"location\":{\"lat\":-1.284,\"lng\":36.823}},{\"seq\":3,\"type\":\"delivery\",\"order_id\":\"ord_031\",\"location\":{\"lat\":-1.307,\"lng\":36.813}},{\"seq\":4,\"type\":\"delivery\",\"order_id\":\"ord_030\",\"location\":{\"lat\":-1.324,\"lng\":36.826}}],\"total_distance_km\":5.17,\"distance_saved_km\":2.08,\"estimated_earnings_kes\":369,\"route_optimization_score\":0.932,\"distance_to_first_pickup_km\":2.75,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"},{\"batch_id\":\"batch_01M5FAXJAP3TRASDCV32\",\"orders\":[{\"order_id\":\"ord_033\",\"pickup\":{\"lat\":-1.284,\"lng\":36.823},\"delivery\":{\"lat\":-1.307,\"lng\":36.813},\"distance_km\":2.79,\"estimated_time_min\":13},{\"order_id\":\"ord_038\",\"pickup\":{\"lat\":-1.284,\"lng\":36.823},\"delivery\":{\"lat\":-1.307,\"lng\":36.813},\"distance_km\":2.79,\"estimated_time_min\":15}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_033\",\"location\":{\"lat\":-1.284,\"lng\":36.823}},{\"seq\":2,\"type\":\"pickup\",\"order_id\":\"ord_038\",\"location\":{\"lat\":-1.284,\"lng\":36.823}},{\"seq\":3,\"type\":\"delivery\",\"order_id\":\"ord_033\",\"location\":{\"lat\":-1.307,\"lng\":36.813}},{\"seq\":4,\"type\":\"delivery\",\"order_id\":\"ord_038\",\"location\":{\"lat\":-1.307,\"lng\":36.813}}],\"total_distance_km\":2.79,\"distance_saved_km\":2.79,\"estimated_earnings_kes\":324,\"route_optimization_score\":1,\"distance_to_first_pickup_km\":2.75,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"},{\"batch_id\":\"batch_01M5FAXJAPPMJG65PMD9\",\"orders\":[{\"order_id\":\"ord_004\",\"pickup\":{\"lat\":-1.2917,\"lng\":36.7878},\"delivery\":{\"lat\":-1.307,\"lng\":36.813},\"distance_km\":3.28,\"estimated_time_min\":14},{\"order_id\":\"ord_005\",\"pickup\":{\"lat\":-1.2917,\"lng\":36.7878},\"delivery\":{\"lat\":-1.324,\"lng\":36.826},\"distance_km\":5.56,\"estimated_time_min\":23}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_004\",\"location\":{\"lat\":-1.2917,\"lng\":36.7878}},{\"seq\":2,\"type\":\"pickup\",\"order_id\":\"ord_005\",\"location\":{\"lat\":-1.2917,\"lng\":36.7878}},{\"seq\":3,\"type\":\"delivery\",\"order_id\":\"ord_004\",\"location\":{\"lat\":-1.307,\"lng\":36.813}},{\"seq\":4,\"type\":\"delivery\",\"order_id\":\"ord_005\",\"location\":{\"lat\":-1.324,\"lng\":36.826}}],\"total_distance_km\":5.66,\"distance_saved_km\":3.18,\"estimated_earnings_kes\":423,\"route_optimization_score\":0.992,\"distance_to_first_pickup_km\":3.5,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"},{\"batch_id\":\"batch_01M5FAXJAPQ74GS05RMD\",\"orders\":[{\"order_id\":\"ord_010\",\"pickup\":{\"lat\":-1.2917,\"lng\":36.7878},\"delivery\":{\"lat\":-1.307,\"lng\":36.813},\"distance_km\":3.28,\"estimated_time_min\":14},{\"order_id\":\"ord_011\",\"pickup\":{\"lat\":-1.2917,\"lng\":36.7878},\"delivery\":{\"lat\":-1.324,\"lng\":36.826},\"distance_km\":5.56,\"estimated_time_min\":23}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_010\",\"location\":{\"lat\":-1.2917,\"lng\":36.7878}},{\"seq\":2,\"type\":\"pickup\",\"order_id\":\"ord_011\",\"location\":{\"lat\":-1.2917,\"lng\":36.7878}},{\"seq\":3,\"type\":\"delivery\",\"order_id\":\"ord_010\",\"location\":{\"lat\":-1.307,\"lng\":36.813}},{\"seq\":4,\"type\":\"delivery\",\"order_id\":\"ord_011\",\"location\":{\"lat\":-1.324,\"lng\":36.826}}],\"total_distance_km\":5.66,\"distance_saved_km\":3.18,\"estimated_earnings_kes\":423,\"route_optimization_score\":0.992,\"distance_to_first_pickup_km\":3.5,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"},{\"batch_id\":\"batch_01M5FAXJAPFJA9T2C6CW\",\"orders\":[{\"order_id\":\"ord_013\",\"pickup\":{\"lat\":-1.2917,\"lng\":36.7878},\"delivery\":{\"lat\":-1.307,\"lng\":36.813},\"distance_km\":3.28,\"estimated_time_min\":14},{\"order_id\":\"ord_018\",\"pickup\":{\"lat\":-1.2917,\"lng\":36.7878},\"delivery\":{\"lat\":-1.324,\"lng\":36.826},\"distance_km\":5.56,\"estimated_time_min\":23}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_013\",\"location\":{\"lat\":-1.2917,\"lng\":36.7878}},{\"seq\":2,\"type\":\"pickup\",\"order_id\":\"ord_018\",\"location\":{\"lat\":-1.2917,\"lng\":36.7878}},{\"seq\":3,\"type\":\"delivery\",\"order_id\":\"ord_013\",\"location\":{\"lat\":-1.307,\"lng\":36.813}},{\"seq\":4,\"type\":\"delivery\",\"order_id\":\"ord_018\",\"location\":{\"lat\":-1.324,\"lng\":36.826}}],\"total_distance_km\":5.66,\"distance_saved_km\":3.18,\"estimated_earnings_kes\":423,\"route_optimization_score\":0.992,\"distance_to_first_pickup_km\":3.5,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"},{\"batch_id\":\"batch_01M5FAXJAPK243FH4RC9\",\"orders\":[{\"order_id\":\"ord_001\",\"pickup\":{\"lat\":-1.2975,\"lng\":36.786},\"delivery\":{\"lat\":-1.29,\"lng\":36.792},\"distance_km\":1.07,\"estimated_time_min\":8},{\"order_id\":\"ord_014\",\"pickup\":{\"lat\":-1.2975,\"lng\":36.786},\"delivery\":{\"lat\":-1.222,\"lng\":36.896},\"distance_km\":14.83,\"estimated_time_min\":51}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_001\",\"location\":{\"lat\":-1.2975,\"lng\":36.786}},{\"seq\":2,\"type\":\"pickup\",\"order_id\":\"ord_014\",\"location\":{\"lat\":-1.2975,\"lng\":36.786}},{\"seq\":3,\"type\":\"delivery\",\"order_id\":\"ord_001\",\"location\":{\"lat\":-1.29,\"lng\":36.792}},{\"seq\":4,\"type\":\"delivery\",\"order_id\":\"ord_014\",\"location\":{\"lat\":-1.222,\"lng\":36.896}}],\"total_distance_km\":14.88,\"distance_saved_km\":1.02,\"estimated_earnings_kes\":603,\"route_optimization_score\":0.998,\"distance_to_first_pickup_km\":4.15,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"},{\"batch_id\":\"batch_01M5FAXJAP9BJVJN8R3Y\",\"orders\":[{\"order_id\":\"ord_022\",\"pickup\":{\"lat\":-1.2975,\"lng\":36.786},\"delivery\":{\"lat\":-1.29,\"lng\":36.792},\"distance_km\":1.07,\"estimated_time_min\":8},{\"order_id\":\"ord_025\",\"pickup\":{\"lat\":-1.2975,\"lng\":36.786},\"delivery\":{\"lat\":-1.222,\"lng\":36.896},\"distance_km\":14.83,\"estimated_time_min\":51}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_022\",\"location\":{\"lat\":-1.2975,\"lng\":36.786}},{\"seq\":2,\"type\":\"pickup\",\"order_id\":\"ord_025\",\"location\":{\"lat\":-1.2975,\"lng\":36.786}},{\"seq\":3,\"type\":\"delivery\",\"order_id\":\"ord_022\",\"location\":{\"lat\":-1.29,\"lng\":36.792}},{\"seq\":4,\"type\":\"delivery\",\"order_id\":\"ord_025\",\"location\":{\"lat\":-1.222,\"lng\":36.896}}],\"total_distance_km\":14.88,\"distance_saved_km\":1.02,\"estimated_earnings_kes\":603,\"route_optimization_score\":0.998,\"distance_to_first_pickup_km\":4.15,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"},{\"batch_id\":\"batch_01M5FAXJAPZ6XKZTZN7Y\",\"orders\":[{\"order_id\":\"ord_032\",\"pickup\":{\"lat\":-1.2975,\"lng\":36.786},\"delivery\":{\"lat\":-1.29,\"lng\":36.792},\"distance_km\":1.07,\"estimated_time_min\":6}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_032\",\"location\":{\"lat\":-1.2975,\"lng\":36.786}},{\"seq\":2,\"type\":\"delivery\",\"order_id\":\"ord_032\",\"location\":{\"lat\":-1.29,\"lng\":36.792}}],\"total_distance_km\":1.07,\"distance_saved_km\":0,\"estimated_earnings_kes\":117,\"route_optimization_score\":1,\"distance_to_first_pickup_km\":4.15,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"}]}\n"
+            },
+            {
+              "name": "422 Unprocessable Entity: max_orders out of range",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/orders/batch",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "orders",
+                    "batch"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"rider_id\": \"{{rider_a}}\",\n  \"rider_location\": {\n    \"latitude\": -1.266,\n    \"longitude\": 36.806\n  },\n  \"max_orders\": 9,\n  \"radius_km\": 2\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Unprocessable Entity",
+              "code": 422,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "5b10dfbcf4ea770a774ab5f0a725941f"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"error\":{\"max_orders\":\"must be between 1 and 5\"}}\n"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Batches",
+      "description": "Open batch offers. The first rider to accept gets the batch; everyone after gets 409.",
+      "item": [
+        {
+          "name": "List open batches",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Body is JSON\", () => pm.response.to.be.json);",
+                  "const body = pm.response.json();",
+                  "pm.test(\"The batch we were offered is listed\", () => pm.expect(body.batches.map(b => b.batch_id)).to.include(pm.collectionVariables.get(\"batch_id\")));",
+                  "pm.test(\"Pagination metadata\", () => {",
+                  "  pm.expect(body.metadata.current_page).to.eql(1);",
+                  "  pm.expect(body.metadata.total_records).to.be.at.least(1);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/batches?lat=-1.266&lng=36.806&radius_km=3&page=1&page_size=50",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "batches"
+              ],
+              "query": [
+                {
+                  "key": "lat",
+                  "value": "-1.266"
+                },
+                {
+                  "key": "lng",
+                  "value": "36.806"
+                },
+                {
+                  "key": "radius_km",
+                  "value": "3"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "page_size",
+                  "value": "50"
+                }
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK: success",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/batches?lat=-1.266&lng=36.806&radius_km=3&page=1&page_size=50",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "batches"
+                  ],
+                  "query": [
+                    {
+                      "key": "lat",
+                      "value": "-1.266"
+                    },
+                    {
+                      "key": "lng",
+                      "value": "36.806"
+                    },
+                    {
+                      "key": "radius_km",
+                      "value": "3"
+                    },
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "page_size",
+                      "value": "50"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "e031de1fe0863296c0df47d55f37151d"
+                },
+                {
+                  "key": "Transfer-Encoding",
+                  "value": "chunked"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"batches\":[{\"batch_id\":\"batch_01M5FAXJAP1V4N49SEV0\",\"orders\":[{\"order_id\":\"ord_016\",\"pickup\":{\"lat\":-1.266,\"lng\":36.8045},\"delivery\":{\"lat\":-1.315,\"lng\":36.8},\"distance_km\":5.47,\"estimated_time_min\":21},{\"order_id\":\"ord_021\",\"pickup\":{\"lat\":-1.266,\"lng\":36.8045},\"delivery\":{\"lat\":-1.315,\"lng\":36.8},\"distance_km\":5.47,\"estimated_time_min\":23}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_016\",\"location\":{\"lat\":-1.266,\"lng\":36.8045}},{\"seq\":2,\"type\":\"pickup\",\"order_id\":\"ord_021\",\"location\":{\"lat\":-1.266,\"lng\":36.8045}},{\"seq\":3,\"type\":\"delivery\",\"order_id\":\"ord_016\",\"location\":{\"lat\":-1.315,\"lng\":36.8}},{\"seq\":4,\"type\":\"delivery\",\"order_id\":\"ord_021\",\"location\":{\"lat\":-1.315,\"lng\":36.8}}],\"total_distance_km\":5.47,\"distance_saved_km\":5.47,\"estimated_earnings_kes\":468,\"route_optimization_score\":1,\"distance_to_first_pickup_km\":0.17,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"},{\"batch_id\":\"batch_01M5FAXJAP654RYKZVES\",\"orders\":[{\"order_id\":\"ord_040\",\"pickup\":{\"lat\":-1.266,\"lng\":36.8045},\"delivery\":{\"lat\":-1.315,\"lng\":36.8},\"distance_km\":5.47,\"estimated_time_min\":19}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_040\",\"location\":{\"lat\":-1.266,\"lng\":36.8045}},{\"seq\":2,\"type\":\"delivery\",\"order_id\":\"ord_040\",\"location\":{\"lat\":-1.315,\"lng\":36.8}}],\"total_distance_km\":5.47,\"distance_saved_km\":0,\"estimated_earnings_kes\":234,\"route_optimization_score\":1,\"distance_to_first_pickup_km\":0.17,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"},{\"batch_id\":\"batch_01M5FAXJAPB1BP3FV80P\",\"orders\":[{\"order_id\":\"ord_002\",\"pickup\":{\"lat\":-1.2635,\"lng\":36.803},\"delivery\":{\"lat\":-1.222,\"lng\":36.896},\"distance_km\":11.32,\"estimated_time_min\":46},{\"order_id\":\"ord_003\",\"pickup\":{\"lat\":-1.266,\"lng\":36.8045},\"delivery\":{\"lat\":-1.275,\"lng\":36.846},\"distance_km\":4.72,\"estimated_time_min\":20}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_002\",\"location\":{\"lat\":-1.2635,\"lng\":36.803}},{\"seq\":2,\"type\":\"pickup\",\"order_id\":\"ord_003\",\"location\":{\"lat\":-1.266,\"lng\":36.8045}},{\"seq\":3,\"type\":\"delivery\",\"order_id\":\"ord_003\",\"location\":{\"lat\":-1.275,\"lng\":36.846}},{\"seq\":4,\"type\":\"delivery\",\"order_id\":\"ord_002\",\"location\":{\"lat\":-1.222,\"lng\":36.896}}],\"total_distance_km\":13.15,\"distance_saved_km\":2.9,\"estimated_earnings_kes\":612,\"route_optimization_score\":0.931,\"distance_to_first_pickup_km\":0.43,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"},{\"batch_id\":\"batch_01M5FAXJAPEFCD6RKFEP\",\"orders\":[{\"order_id\":\"ord_006\",\"pickup\":{\"lat\":-1.2635,\"lng\":36.803},\"delivery\":{\"lat\":-1.29,\"lng\":36.792},\"distance_km\":3.19,\"estimated_time_min\":14},{\"order_id\":\"ord_015\",\"pickup\":{\"lat\":-1.2635,\"lng\":36.803},\"delivery\":{\"lat\":-1.29,\"lng\":36.792},\"distance_km\":3.19,\"estimated_time_min\":16}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_006\",\"location\":{\"lat\":-1.2635,\"lng\":36.803}},{\"seq\":2,\"type\":\"pickup\",\"order_id\":\"ord_015\",\"location\":{\"lat\":-1.2635,\"lng\":36.803}},{\"seq\":3,\"type\":\"delivery\",\"order_id\":\"ord_006\",\"location\":{\"lat\":-1.29,\"lng\":36.792}},{\"seq\":4,\"type\":\"delivery\",\"order_id\":\"ord_015\",\"location\":{\"lat\":-1.29,\"lng\":36.792}}],\"total_distance_km\":3.19,\"distance_saved_km\":3.19,\"estimated_earnings_kes\":360,\"route_optimization_score\":1,\"distance_to_first_pickup_km\":0.43,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"},{\"batch_id\":\"batch_01M5FAXJAPT7AM97P022\",\"orders\":[{\"order_id\":\"ord_009\",\"pickup\":{\"lat\":-1.2635,\"lng\":36.803},\"delivery\":{\"lat\":-1.222,\"lng\":36.896},\"distance_km\":11.32,\"estimated_time_min\":46},{\"order_id\":\"ord_020\",\"pickup\":{\"lat\":-1.266,\"lng\":36.8045},\"delivery\":{\"lat\":-1.275,\"lng\":36.846},\"distance_km\":4.72,\"estimated_time_min\":20}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_009\",\"location\":{\"lat\":-1.2635,\"lng\":36.803}},{\"seq\":2,\"type\":\"pickup\",\"order_id\":\"ord_020\",\"location\":{\"lat\":-1.266,\"lng\":36.8045}},{\"seq\":3,\"type\":\"delivery\",\"order_id\":\"ord_020\",\"location\":{\"lat\":-1.275,\"lng\":36.846}},{\"seq\":4,\"type\":\"delivery\",\"order_id\":\"ord_009\",\"location\":{\"lat\":-1.222,\"lng\":36.896}}],\"total_distance_km\":13.15,\"distance_saved_km\":2.9,\"estimated_earnings_kes\":612,\"route_optimization_score\":0.931,\"distance_to_first_pickup_km\":0.43,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"},{\"batch_id\":\"batch_01M5FAXJAP9V0YZD46HG\",\"orders\":[{\"order_id\":\"ord_027\",\"pickup\":{\"lat\":-1.2635,\"lng\":36.803},\"delivery\":{\"lat\":-1.29,\"lng\":36.792},\"distance_km\":3.19,\"estimated_time_min\":14},{\"order_id\":\"ord_036\",\"pickup\":{\"lat\":-1.266,\"lng\":36.8045},\"delivery\":{\"lat\":-1.315,\"lng\":36.8},\"distance_km\":5.47,\"estimated_time_min\":25}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_027\",\"location\":{\"lat\":-1.2635,\"lng\":36.803}},{\"seq\":2,\"type\":\"pickup\",\"order_id\":\"ord_036\",\"location\":{\"lat\":-1.266,\"lng\":36.8045}},{\"seq\":3,\"type\":\"delivery\",\"order_id\":\"ord_027\",\"location\":{\"lat\":-1.29,\"lng\":36.792}},{\"seq\":4,\"type\":\"delivery\",\"order_id\":\"ord_036\",\"location\":{\"lat\":-1.315,\"lng\":36.8}}],\"total_distance_km\":6.25,\"distance_saved_km\":2.41,\"estimated_earnings_kes\":414,\"route_optimization_score\":0.94,\"distance_to_first_pickup_km\":0.43,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"},{\"batch_id\":\"batch_01M5FAXJAP161R6P3MQD\",\"orders\":[{\"order_id\":\"ord_029\",\"pickup\":{\"lat\":-1.2635,\"lng\":36.803},\"delivery\":{\"lat\":-1.222,\"lng\":36.896},\"distance_km\":11.32,\"estimated_time_min\":46},{\"order_id\":\"ord_034\",\"pickup\":{\"lat\":-1.266,\"lng\":36.8045},\"delivery\":{\"lat\":-1.275,\"lng\":36.846},\"distance_km\":4.72,\"estimated_time_min\":20}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_029\",\"location\":{\"lat\":-1.2635,\"lng\":36.803}},{\"seq\":2,\"type\":\"pickup\",\"order_id\":\"ord_034\",\"location\":{\"lat\":-1.266,\"lng\":36.8045}},{\"seq\":3,\"type\":\"delivery\",\"order_id\":\"ord_034\",\"location\":{\"lat\":-1.275,\"lng\":36.846}},{\"seq\":4,\"type\":\"delivery\",\"order_id\":\"ord_029\",\"location\":{\"lat\":-1.222,\"lng\":36.896}}],\"total_distance_km\":13.15,\"distance_saved_km\":2.9,\"estimated_earnings_kes\":612,\"route_optimization_score\":0.931,\"distance_to_first_pickup_km\":0.43,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"},{\"batch_id\":\"batch_01M5FAXJAP85G30CMNGT\",\"orders\":[{\"order_id\":\"ord_035\",\"pickup\":{\"lat\":-1.2635,\"lng\":36.803},\"delivery\":{\"lat\":-1.222,\"lng\":36.896},\"distance_km\":11.32,\"estimated_time_min\":40},{\"order_id\":\"ord_01M5FAX9DM964XTHCZ9F\",\"pickup\":{\"lat\":-1.2635,\"lng\":36.803},\"delivery\":{\"lat\":-1.25,\"lng\":36.83},\"distance_km\":3.36,\"estimated_time_min\":15}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_035\",\"location\":{\"lat\":-1.2635,\"lng\":36.803}},{\"seq\":2,\"type\":\"pickup\",\"order_id\":\"ord_01M5FAX9DM964XTHCZ9F\",\"location\":{\"lat\":-1.2635,\"lng\":36.803}},{\"seq\":3,\"type\":\"delivery\",\"order_id\":\"ord_01M5FAX9DM964XTHCZ9F\",\"location\":{\"lat\":-1.25,\"lng\":36.83}},{\"seq\":4,\"type\":\"delivery\",\"order_id\":\"ord_035\",\"location\":{\"lat\":-1.222,\"lng\":36.896}}],\"total_distance_km\":11.33,\"distance_saved_km\":3.35,\"estimated_earnings_kes\":621,\"route_optimization_score\":1,\"distance_to_first_pickup_km\":0.43,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"},{\"batch_id\":\"batch_01M5FAXJAPCNPY6234AZ\",\"orders\":[{\"order_id\":\"ord_007\",\"pickup\":{\"lat\":-1.284,\"lng\":36.823},\"delivery\":{\"lat\":-1.324,\"lng\":36.826},\"distance_km\":4.46,\"estimated_time_min\":18},{\"order_id\":\"ord_012\",\"pickup\":{\"lat\":-1.284,\"lng\":36.823},\"delivery\":{\"lat\":-1.324,\"lng\":36.826},\"distance_km\":4.46,\"estimated_time_min\":20}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_007\",\"location\":{\"lat\":-1.284,\"lng\":36.823}},{\"seq\":2,\"type\":\"pickup\",\"order_id\":\"ord_012\",\"location\":{\"lat\":-1.284,\"lng\":36.823}},{\"seq\":3,\"type\":\"delivery\",\"order_id\":\"ord_007\",\"location\":{\"lat\":-1.324,\"lng\":36.826}},{\"seq\":4,\"type\":\"delivery\",\"order_id\":\"ord_012\",\"location\":{\"lat\":-1.324,\"lng\":36.826}}],\"total_distance_km\":4.46,\"distance_saved_km\":4.46,\"estimated_earnings_kes\":414,\"route_optimization_score\":1,\"distance_to_first_pickup_km\":2.75,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"},{\"batch_id\":\"batch_01M5FAXJAPQK38GNAFR1\",\"orders\":[{\"order_id\":\"ord_019\",\"pickup\":{\"lat\":-1.284,\"lng\":36.823},\"delivery\":{\"lat\":-1.324,\"lng\":36.826},\"distance_km\":4.46,\"estimated_time_min\":22},{\"order_id\":\"ord_023\",\"pickup\":{\"lat\":-1.284,\"lng\":36.823},\"delivery\":{\"lat\":-1.307,\"lng\":36.813},\"distance_km\":2.79,\"estimated_time_min\":13}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_019\",\"location\":{\"lat\":-1.284,\"lng\":36.823}},{\"seq\":2,\"type\":\"pickup\",\"order_id\":\"ord_023\",\"location\":{\"lat\":-1.284,\"lng\":36.823}},{\"seq\":3,\"type\":\"delivery\",\"order_id\":\"ord_023\",\"location\":{\"lat\":-1.307,\"lng\":36.813}},{\"seq\":4,\"type\":\"delivery\",\"order_id\":\"ord_019\",\"location\":{\"lat\":-1.324,\"lng\":36.826}}],\"total_distance_km\":5.17,\"distance_saved_km\":2.08,\"estimated_earnings_kes\":369,\"route_optimization_score\":0.932,\"distance_to_first_pickup_km\":2.75,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"},{\"batch_id\":\"batch_01M5FAXJAP70KX136FAX\",\"orders\":[{\"order_id\":\"ord_024\",\"pickup\":{\"lat\":-1.284,\"lng\":36.823},\"delivery\":{\"lat\":-1.307,\"lng\":36.813},\"distance_km\":2.79,\"estimated_time_min\":13},{\"order_id\":\"ord_028\",\"pickup\":{\"lat\":-1.284,\"lng\":36.823},\"delivery\":{\"lat\":-1.324,\"lng\":36.826},\"distance_km\":4.46,\"estimated_time_min\":22}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_024\",\"location\":{\"lat\":-1.284,\"lng\":36.823}},{\"seq\":2,\"type\":\"pickup\",\"order_id\":\"ord_028\",\"location\":{\"lat\":-1.284,\"lng\":36.823}},{\"seq\":3,\"type\":\"delivery\",\"order_id\":\"ord_024\",\"location\":{\"lat\":-1.307,\"lng\":36.813}},{\"seq\":4,\"type\":\"delivery\",\"order_id\":\"ord_028\",\"location\":{\"lat\":-1.324,\"lng\":36.826}}],\"total_distance_km\":5.17,\"distance_saved_km\":2.08,\"estimated_earnings_kes\":369,\"route_optimization_score\":0.932,\"distance_to_first_pickup_km\":2.75,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"},{\"batch_id\":\"batch_01M5FAXJAP8NAH1MA0Z4\",\"orders\":[{\"order_id\":\"ord_030\",\"pickup\":{\"lat\":-1.284,\"lng\":36.823},\"delivery\":{\"lat\":-1.324,\"lng\":36.826},\"distance_km\":4.46,\"estimated_time_min\":22},{\"order_id\":\"ord_031\",\"pickup\":{\"lat\":-1.284,\"lng\":36.823},\"delivery\":{\"lat\":-1.307,\"lng\":36.813},\"distance_km\":2.79,\"estimated_time_min\":13}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_030\",\"location\":{\"lat\":-1.284,\"lng\":36.823}},{\"seq\":2,\"type\":\"pickup\",\"order_id\":\"ord_031\",\"location\":{\"lat\":-1.284,\"lng\":36.823}},{\"seq\":3,\"type\":\"delivery\",\"order_id\":\"ord_031\",\"location\":{\"lat\":-1.307,\"lng\":36.813}},{\"seq\":4,\"type\":\"delivery\",\"order_id\":\"ord_030\",\"location\":{\"lat\":-1.324,\"lng\":36.826}}],\"total_distance_km\":5.17,\"distance_saved_km\":2.08,\"estimated_earnings_kes\":369,\"route_optimization_score\":0.932,\"distance_to_first_pickup_km\":2.75,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"},{\"batch_id\":\"batch_01M5FAXJAP3TRASDCV32\",\"orders\":[{\"order_id\":\"ord_033\",\"pickup\":{\"lat\":-1.284,\"lng\":36.823},\"delivery\":{\"lat\":-1.307,\"lng\":36.813},\"distance_km\":2.79,\"estimated_time_min\":13},{\"order_id\":\"ord_038\",\"pickup\":{\"lat\":-1.284,\"lng\":36.823},\"delivery\":{\"lat\":-1.307,\"lng\":36.813},\"distance_km\":2.79,\"estimated_time_min\":15}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_033\",\"location\":{\"lat\":-1.284,\"lng\":36.823}},{\"seq\":2,\"type\":\"pickup\",\"order_id\":\"ord_038\",\"location\":{\"lat\":-1.284,\"lng\":36.823}},{\"seq\":3,\"type\":\"delivery\",\"order_id\":\"ord_033\",\"location\":{\"lat\":-1.307,\"lng\":36.813}},{\"seq\":4,\"type\":\"delivery\",\"order_id\":\"ord_038\",\"location\":{\"lat\":-1.307,\"lng\":36.813}}],\"total_distance_km\":2.79,\"distance_saved_km\":2.79,\"estimated_earnings_kes\":324,\"route_optimization_score\":1,\"distance_to_first_pickup_km\":2.75,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"}],\"metadata\":{\"current_page\":1,\"page_size\":50,\"first_page\":1,\"last_page\":1,\"total_records\":13}}\n"
+            },
+            {
+              "name": "422 Unprocessable Entity: missing coordinates",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/batches?lat=abc",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "batches"
+                  ],
+                  "query": [
+                    {
+                      "key": "lat",
+                      "value": "abc"
+                    }
+                  ]
+                }
+              },
+              "status": "Unprocessable Entity",
+              "code": 422,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "f68bf9b6f5b6e5dd38037b12c7872055"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"error\":{\"lat\":\"must be a number\",\"lng\":\"must be provided\"}}\n"
+            }
+          ]
+        },
+        {
+          "name": "Accept batch: rider A wins",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Body is JSON\", () => pm.response.to.be.json);",
+                  "const batch = pm.response.json().batch;",
+                  "pm.test(\"The batch is now rider A's\", () => {",
+                  "  pm.expect(batch.batch_id).to.eql(pm.collectionVariables.get(\"batch_id\"));",
+                  "  pm.expect(batch.status).to.eql(\"accepted\");",
+                  "  pm.expect(batch.rider_id).to.eql(pm.collectionVariables.get(\"rider_a\"));",
+                  "  pm.expect(batch.accepted_at).to.be.a(\"string\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/batches/{{batch_id}}/accept",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "batches",
+                "{{batch_id}}",
+                "accept"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rider_id\": \"{{rider_a}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Step 1 of the race. Rider A claims the batch exclusively."
+          },
+          "response": [
+            {
+              "name": "200 OK: success",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/batches/{{batch_id}}/accept",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "batches",
+                    "{{batch_id}}",
+                    "accept"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"rider_id\": \"{{rider_a}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "52b1c982b7065fd8e777ca60a5c193dc"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"batch\":{\"batch_id\":\"batch_01M5FAXJAP1V4N49SEV0\",\"status\":\"accepted\",\"rider_id\":\"rider_001\",\"accepted_at\":\"2026-10-21T13:37:57.933927Z\",\"orders\":[{\"order_id\":\"ord_016\",\"pickup\":{\"lat\":-1.266,\"lng\":36.8045},\"delivery\":{\"lat\":-1.315,\"lng\":36.8},\"distance_km\":5.47,\"estimated_time_min\":21},{\"order_id\":\"ord_021\",\"pickup\":{\"lat\":-1.266,\"lng\":36.8045},\"delivery\":{\"lat\":-1.315,\"lng\":36.8},\"distance_km\":5.47,\"estimated_time_min\":23}],\"sequence\":[{\"seq\":1,\"type\":\"pickup\",\"order_id\":\"ord_016\",\"location\":{\"lat\":-1.266,\"lng\":36.8045}},{\"seq\":2,\"type\":\"pickup\",\"order_id\":\"ord_021\",\"location\":{\"lat\":-1.266,\"lng\":36.8045}},{\"seq\":3,\"type\":\"delivery\",\"order_id\":\"ord_016\",\"location\":{\"lat\":-1.315,\"lng\":36.8}},{\"seq\":4,\"type\":\"delivery\",\"order_id\":\"ord_021\",\"location\":{\"lat\":-1.315,\"lng\":36.8}}],\"total_distance_km\":5.47,\"distance_saved_km\":5.47,\"estimated_earnings_kes\":468,\"route_optimization_score\":1,\"expires_at\":\"2026-10-21T13:47:55.542169Z\"}}\n"
+            },
+            {
+              "name": "404 Not Found: unknown batch",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/batches/batch_unknown/accept",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "batches",
+                    "batch_unknown",
+                    "accept"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"rider_id\": \"{{rider_a}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "ea4fba42456f7caaa0cfb2811564bc8f"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"error\":\"the requested resource could not be found\"}\n"
+            },
+            {
+              "name": "422 Unprocessable Entity: no rider id",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/batches/{{batch_id}}/accept",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "batches",
+                    "{{batch_id}}",
+                    "accept"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Unprocessable Entity",
+              "code": 422,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "5e519f9970efabaf09c5c30ea2e84429"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"error\":{\"rider_id\":\"must be provided\"}}\n"
+            }
+          ]
+        },
+        {
+          "name": "Accept batch: rider B loses (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 409\", () => pm.response.to.have.status(409));",
+                  "pm.test(\"Body is JSON\", () => pm.response.to.be.json);",
+                  "pm.test(\"Told the batch is gone\", () => pm.expect(pm.response.json()).to.eql({ error: \"batch is no longer available\" }));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/batches/{{batch_id}}/accept",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "batches",
+                "{{batch_id}}",
+                "accept"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rider_id\": \"{{rider_b}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Step 2 of the race: rider B asks for the batch rider A already holds and gets `409`. The same batch id is passed along through the `batch_id` collection variable."
+          },
+          "response": [
+            {
+              "name": "409 Conflict",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/batches/{{batch_id}}/accept",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "batches",
+                    "{{batch_id}}",
+                    "accept"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"rider_id\": \"{{rider_b}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "6b9ed533c304259b11a333b1c0d7374b"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"error\":\"batch is no longer available\"}\n"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Proximity Matching",
+      "description": "Pending pickups ahead of a moving rider: within 1 km and a 60 degree cone (POST /riders/match-orders).",
+      "item": [
+        {
+          "name": "0. Setup: report rider A's location",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "const rider = pm.response.json().rider;",
+                  "pm.test(\"A fresh position was stored\", () => {",
+                  "  pm.expect(rider.current_location).to.not.eql(null);",
+                  "  pm.expect(new Date(rider.location_updated_at).getTime()).to.be.above(Date.now() - 60000);",
+                  "});",
+                  "pm.collectionVariables.set(\"rider_a_version\", rider.version);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/riders/{{rider_a}}/location",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "riders",
+                "{{rider_a}}",
+                "location"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"latitude\": -1.266,\n  \"longitude\": 36.806,\n  \"bearing_degrees\": 320,\n  \"speed_kmh\": 22\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Reports a fresh position (seeded ones go stale)."
+          },
+          "response": [
+            {
+              "name": "200 OK: success",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/riders/{{rider_a}}/location",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "riders",
+                    "{{rider_a}}",
+                    "location"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"latitude\": -1.266,\n  \"longitude\": 36.806,\n  \"bearing_degrees\": 320,\n  \"speed_kmh\": 22\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "793dd5e3d4dec52aca4063c606317f2e"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"rider\":{\"id\":\"rider_001\",\"full_name\":\"Brian Otieno\",\"phone\":\"+254722000001\",\"is_available\":true,\"max_capacity\":5,\"current_orders_count\":2,\"max_additional_orders\":3,\"current_location\":{\"lat\":-1.266,\"lng\":36.806},\"bearing_degrees\":320,\"speed_kmh\":22,\"location_updated_at\":\"2026-10-21T13:37:59.395459Z\",\"offline_flagged_at\":null,\"acceptance_rate\":0.542,\"preferences\":{\"min_order_value_kes\":0,\"preferred_categories\":[\"documents\",\"electronics\"],\"preferred_areas\":[\"area_002\",\"area_007\"]},\"version\":2}}\n"
+            }
+          ]
+        },
+        {
+          "name": "0b. Setup: a new pending order near the rider",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"near_order_id\", pm.response.json().order.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"vendor_id\": \"ven_001\",\n  \"category\": \"electronics\",\n  \"delivery_location\": {\n    \"lat\": -1.25,\n    \"lng\": 36.83\n  },\n  \"value_kes\": 3000,\n  \"delivery_fee_kes\": 200\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Batching offered the seeded orders above, so this creates a fresh `pending` order at the Sarit Centre vendor, about 330 m ahead of the rider."
+          },
+          "response": [
+            {
+              "name": "201 Created: success",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/orders",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "orders"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"vendor_id\": \"ven_001\",\n  \"category\": \"electronics\",\n  \"delivery_location\": {\n    \"lat\": -1.25,\n    \"lng\": 36.83\n  },\n  \"value_kes\": 3000,\n  \"delivery_fee_kes\": 200\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Location",
+                  "value": "/api/v2/orders/ord_01M5FAXP9VQZCM739VDB"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "dfa1077be8267bc0ec6d9e32b518ab03"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"order\":{\"id\":\"ord_01M5FAXP9VQZCM739VDB\",\"vendor_id\":\"ven_001\",\"category\":\"electronics\",\"status\":\"pending\",\"pickup_location\":{\"lat\":-1.2635,\"lng\":36.803},\"delivery_location\":{\"lat\":-1.25,\"lng\":36.83},\"trip_distance_km\":3.356,\"trip_bearing_degrees\":63.4,\"value_kes\":3000,\"delivery_fee_kes\":200,\"rider_payout_percent\":90,\"estimated_earnings_kes\":180,\"platform_fee_kes\":20,\"delivery_attempts\":0,\"cancelled_at\":null,\"cancel_reason\":null,\"rider_compensation_kes\":0,\"batch_id\":null,\"rider_id\":null,\"created_at\":\"2026-10-21T13:37:59.611286Z\",\"version\":1}}\n"
+            }
+          ]
+        },
+        {
+          "name": "Match orders: cone",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Body is JSON\", () => pm.response.to.be.json);",
+                  "const body = pm.response.json();",
+                  "pm.test(\"The brief's response shape\", () => pm.expect(body).to.have.all.keys(\"matching_orders\", \"can_accept_more_orders\", \"max_additional_orders\", \"direction_filter_applied\"));",
+                  "pm.test(\"The cone was applied and the new order is in it\", () => {",
+                  "  pm.expect(body.direction_filter_applied).to.eql(true);",
+                  "  pm.expect(body.matching_orders.map(o => o.order_id)).to.include(pm.collectionVariables.get(\"near_order_id\"));",
+                  "});",
+                  "pm.test(\"Every match is within 1 km and within 30 degrees\", () => body.matching_orders.forEach(o => {",
+                  "  pm.expect(o.distance_from_rider_km).to.be.at.most(1);",
+                  "  pm.expect(Math.abs(o.angle_from_rider_degrees)).to.be.at.most(30);",
+                  "}));",
+                  "pm.test(\"Sorted by distance\", () => {",
+                  "  const d = body.matching_orders.map(o => o.distance_from_rider_km);",
+                  "  pm.expect(d).to.eql([...d].sort((a, b) => a - b));",
+                  "});",
+                  "pm.test(\"Capacity comes from the database\", () => pm.expect(body.max_additional_orders).to.be.at.most(5));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/riders/match-orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "riders",
+                "match-orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rider_id\": \"{{rider_a}}\",\n  \"current_location\": {\n    \"latitude\": -1.266,\n    \"longitude\": 36.806\n  },\n  \"bearing_degrees\": 320,\n  \"speed_kmh\": 22,\n  \"current_orders_count\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK: success",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/riders/match-orders",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "riders",
+                    "match-orders"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"rider_id\": \"{{rider_a}}\",\n  \"current_location\": {\n    \"latitude\": -1.266,\n    \"longitude\": 36.806\n  },\n  \"bearing_degrees\": 320,\n  \"speed_kmh\": 22,\n  \"current_orders_count\": 0\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "3fe659f7a86b16c20ab4f727d4d398f1"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"matching_orders\":[{\"order_id\":\"ord_01M5FAXP9VQZCM739VDB\",\"pickup_location\":{\"lat\":-1.2635,\"lng\":36.803},\"distance_from_rider_km\":0.43,\"angle_from_rider_degrees\":10.2,\"order_age_minutes\":0,\"estimated_earnings_kes\":180}],\"can_accept_more_orders\":true,\"max_additional_orders\":3,\"direction_filter_applied\":true}\n"
+            },
+            {
+              "name": "200 OK: no bearing, so the full circle is searched",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/riders/match-orders",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "riders",
+                    "match-orders"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"rider_id\": \"{{rider_a}}\",\n  \"current_location\": {\n    \"latitude\": -1.266,\n    \"longitude\": 36.806\n  },\n  \"current_orders_count\": 0\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "855638cc4c53d1b353f58c3bc79e2c5b"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"matching_orders\":[{\"order_id\":\"ord_01M5FAXP9VQZCM739VDB\",\"pickup_location\":{\"lat\":-1.2635,\"lng\":36.803},\"distance_from_rider_km\":0.43,\"angle_from_rider_degrees\":null,\"order_age_minutes\":0,\"estimated_earnings_kes\":180}],\"can_accept_more_orders\":true,\"max_additional_orders\":3,\"direction_filter_applied\":false}\n"
+            },
+            {
+              "name": "404 Not Found: unknown rider",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/riders/match-orders",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "riders",
+                    "match-orders"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"rider_id\": \"rider_unknown\",\n  \"current_location\": {\n    \"latitude\": -1.266,\n    \"longitude\": 36.806\n  },\n  \"bearing_degrees\": 320,\n  \"speed_kmh\": 22,\n  \"current_orders_count\": 0\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "2aeb836bb7b2cb243e1d95e8b0f0b0ac"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"error\":\"the requested resource could not be found\"}\n"
+            },
+            {
+              "name": "422 Unprocessable Entity: missing location",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/riders/match-orders",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "riders",
+                    "match-orders"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"rider_id\": \"{{rider_a}}\",\n  \"current_orders_count\": 0\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Unprocessable Entity",
+              "code": 422,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "872d667403af7027ef4d2e71ded571bb"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"error\":{\"current_location\":\"must be provided\"}}\n"
+            }
+          ]
+        },
+        {
+          "name": "Match orders: slow rider uses the full circle",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"A standing rider has no reliable heading: the cone is skipped\", () => {",
+                  "  pm.expect(body.direction_filter_applied).to.eql(false);",
+                  "  body.matching_orders.forEach(o => pm.expect(o.angle_from_rider_degrees).to.eql(null));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/riders/match-orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "riders",
+                "match-orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rider_id\": \"{{rider_a}}\",\n  \"current_location\": {\n    \"latitude\": -1.266,\n    \"longitude\": 36.806\n  },\n  \"bearing_degrees\": 320,\n  \"speed_kmh\": 0,\n  \"current_orders_count\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK: success",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/riders/match-orders",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "riders",
+                    "match-orders"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"rider_id\": \"{{rider_a}}\",\n  \"current_location\": {\n    \"latitude\": -1.266,\n    \"longitude\": 36.806\n  },\n  \"bearing_degrees\": 320,\n  \"speed_kmh\": 0,\n  \"current_orders_count\": 0\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "81e4184e29c5fca56c2b63fedf8b5a86"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"matching_orders\":[{\"order_id\":\"ord_01M5FAXP9VQZCM739VDB\",\"pickup_location\":{\"lat\":-1.2635,\"lng\":36.803},\"distance_from_rider_km\":0.43,\"angle_from_rider_degrees\":null,\"order_age_minutes\":0,\"estimated_earnings_kes\":180}],\"can_accept_more_orders\":true,\"max_additional_orders\":3,\"direction_filter_applied\":false}\n"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Rider Matching",
+      "description": "Rank riders for an order by category, area, minimum order value, distance and acceptance rate (POST /orders/match-riders).",
+      "item": [
+        {
+          "name": "0. Setup: report rider A's location",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "const rider = pm.response.json().rider;",
+                  "pm.test(\"A fresh position was stored\", () => {",
+                  "  pm.expect(rider.current_location).to.not.eql(null);",
+                  "  pm.expect(new Date(rider.location_updated_at).getTime()).to.be.above(Date.now() - 60000);",
+                  "});",
+                  "pm.collectionVariables.set(\"rider_a_version\", rider.version);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/riders/{{rider_a}}/location",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "riders",
+                "{{rider_a}}",
+                "location"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"latitude\": -1.266,\n  \"longitude\": 36.806,\n  \"bearing_degrees\": 320,\n  \"speed_kmh\": 22\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Reports a fresh position, so the distance and proximity score are known."
+          },
+          "response": [
+            {
+              "name": "200 OK: success",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/riders/{{rider_a}}/location",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "riders",
+                    "{{rider_a}}",
+                    "location"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"latitude\": -1.266,\n  \"longitude\": 36.806,\n  \"bearing_degrees\": 320,\n  \"speed_kmh\": 22\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "26bc634b4b9e21254c109091f7128860"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"rider\":{\"id\":\"rider_001\",\"full_name\":\"Brian Otieno\",\"phone\":\"+254722000001\",\"is_available\":true,\"max_capacity\":5,\"current_orders_count\":2,\"max_additional_orders\":3,\"current_location\":{\"lat\":-1.266,\"lng\":36.806},\"bearing_degrees\":320,\"speed_kmh\":22,\"location_updated_at\":\"2026-10-21T13:38:00.792965Z\",\"offline_flagged_at\":null,\"acceptance_rate\":0.542,\"preferences\":{\"min_order_value_kes\":0,\"preferred_categories\":[\"documents\",\"electronics\"],\"preferred_areas\":[\"area_002\",\"area_007\"]},\"version\":2}}\n"
+            }
+          ]
+        },
+        {
+          "name": "0b. Setup: report rider B's location",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "const rider = pm.response.json().rider;",
+                  "pm.test(\"A fresh position was stored\", () => {",
+                  "  pm.expect(rider.current_location).to.not.eql(null);",
+                  "  pm.expect(new Date(rider.location_updated_at).getTime()).to.be.above(Date.now() - 60000);",
+                  "});",
+                  "pm.collectionVariables.set(\"rider_b_version\", rider.version);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/riders/{{rider_b}}/location",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "riders",
+                "{{rider_b}}",
+                "location"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"latitude\": -1.264,\n  \"longitude\": 36.805,\n  \"bearing_degrees\": 90,\n  \"speed_kmh\": 18\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Rider B's seeded position is stale too."
+          },
+          "response": [
+            {
+              "name": "200 OK: success",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/riders/{{rider_b}}/location",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "riders",
+                    "{{rider_b}}",
+                    "location"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"latitude\": -1.264,\n  \"longitude\": 36.805,\n  \"bearing_degrees\": 90,\n  \"speed_kmh\": 18\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "811f08badbd230b44965ece13f9addde"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"rider\":{\"id\":\"rider_004\",\"full_name\":\"Faith Achieng\",\"phone\":\"+254722000004\",\"is_available\":true,\"max_capacity\":5,\"current_orders_count\":0,\"max_additional_orders\":5,\"current_location\":{\"lat\":-1.264,\"lng\":36.805},\"bearing_degrees\":90,\"speed_kmh\":18,\"location_updated_at\":\"2026-10-21T13:38:00.950418Z\",\"offline_flagged_at\":null,\"acceptance_rate\":0.917,\"preferences\":{\"min_order_value_kes\":0,\"preferred_categories\":[],\"preferred_areas\":[]},\"version\":1}}\n"
+            }
+          ]
+        },
+        {
+          "name": "Match riders: by order_id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Body is JSON\", () => pm.response.to.be.json);",
+                  "const riders = pm.response.json().matching_riders;",
+                  "pm.test(\"Riders are ranked\", () => {",
+                  "  pm.expect(riders).to.be.an(\"array\").that.is.not.empty;",
+                  "  const scores = riders.map(r => r.match_score);",
+                  "  pm.expect(scores).to.eql([...scores].sort((a, b) => b - a));",
+                  "});",
+                  "pm.test(\"The brief's fields\", () => riders.forEach(r => pm.expect(r).to.have.all.keys(\"rider_id\", \"match_score\", \"matching_preferences\", \"current_orders_count\", \"distance_to_pickup_km\", \"acceptance_rate\")));",
+                  "pm.test(\"Rider A is among them\", () => pm.expect(riders.map(r => r.rider_id)).to.include(pm.collectionVariables.get(\"rider_a\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/orders/match-riders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "orders",
+                "match-riders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"order_id\": \"{{order_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK: success",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/orders/match-riders",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "orders",
+                    "match-riders"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"order_id\": \"{{order_id}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "8b16c58ec6acb154f460f8d17e0d3b7e"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"matching_riders\":[{\"rider_id\":\"rider_001\",\"match_score\":0.89,\"matching_preferences\":[\"electronics\",\"Parklands\",\"Westlands\"],\"current_orders_count\":2,\"distance_to_pickup_km\":0.43,\"acceptance_rate\":0.542},{\"rider_id\":\"rider_004\",\"match_score\":0.74,\"matching_preferences\":[],\"current_orders_count\":0,\"distance_to_pickup_km\":0.23,\"acceptance_rate\":0.917},{\"rider_id\":\"rider_009\",\"match_score\":0.69,\"matching_preferences\":[],\"current_orders_count\":0,\"distance_to_pickup_km\":1.34,\"acceptance_rate\":0.8},{\"rider_id\":\"rider_010\",\"match_score\":0.61,\"matching_preferences\":[],\"current_orders_count\":0,\"distance_to_pickup_km\":3.79,\"acceptance_rate\":0.857},{\"rider_id\":\"rider_008\",\"match_score\":0.33,\"matching_preferences\":[],\"current_orders_count\":0,\"distance_to_pickup_km\":null,\"acceptance_rate\":0}]}\n"
+            },
+            {
+              "name": "404 Not Found: unknown order",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/orders/match-riders",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "orders",
+                    "match-riders"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"order_id\": \"ord_unknown\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "2eb36bc0058a725a4ff754d41bbde1c3"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"error\":\"the requested resource could not be found\"}\n"
+            },
+            {
+              "name": "422 Unprocessable Entity: neither order_id nor order_details",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/orders/match-riders",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "orders",
+                    "match-riders"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Unprocessable Entity",
+              "code": 422,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "648ae4df579d4a44a535395fdd452309"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"error\":{\"order_id\":\"must be provided when order_details is not\"}}\n"
+            }
+          ]
+        },
+        {
+          "name": "Match riders: by order details",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "const riders = pm.response.json().matching_riders;",
+                  "pm.test(\"Ranked riders for an order that is not saved\", () => pm.expect(riders).to.be.an(\"array\").that.is.not.empty);",
+                  "pm.test(\"Riders with a stale or unknown location have a null distance\", () => riders.forEach(r => pm.expect(r.distance_to_pickup_km === null || r.distance_to_pickup_km >= 0).to.eql(true)));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/orders/match-riders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "orders",
+                "match-riders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"order_details\": {\n    \"category\": \"electronics\",\n    \"pickup_location\": {\n      \"lat\": -1.2635,\n      \"lng\": 36.803\n    },\n    \"delivery_location\": {\n      \"lat\": -1.25,\n      \"lng\": 36.83\n    },\n    \"value_kes\": 4500\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK: success",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/orders/match-riders",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "orders",
+                    "match-riders"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"order_details\": {\n    \"category\": \"electronics\",\n    \"pickup_location\": {\n      \"lat\": -1.2635,\n      \"lng\": 36.803\n    },\n    \"delivery_location\": {\n      \"lat\": -1.25,\n      \"lng\": 36.83\n    },\n    \"value_kes\": 4500\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "79102ae34c35c940d7f3616344fea03f"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"matching_riders\":[{\"rider_id\":\"rider_001\",\"match_score\":0.89,\"matching_preferences\":[\"electronics\",\"Parklands\",\"Westlands\"],\"current_orders_count\":2,\"distance_to_pickup_km\":0.43,\"acceptance_rate\":0.542},{\"rider_id\":\"rider_004\",\"match_score\":0.74,\"matching_preferences\":[],\"current_orders_count\":0,\"distance_to_pickup_km\":0.23,\"acceptance_rate\":0.917},{\"rider_id\":\"rider_009\",\"match_score\":0.69,\"matching_preferences\":[],\"current_orders_count\":0,\"distance_to_pickup_km\":1.34,\"acceptance_rate\":0.8},{\"rider_id\":\"rider_010\",\"match_score\":0.61,\"matching_preferences\":[],\"current_orders_count\":0,\"distance_to_pickup_km\":3.79,\"acceptance_rate\":0.857},{\"rider_id\":\"rider_008\",\"match_score\":0.33,\"matching_preferences\":[],\"current_orders_count\":0,\"distance_to_pickup_km\":null,\"acceptance_rate\":0}]}\n"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Rider Preferences",
+      "description": "Read a rider and change their preferences, position and availability. Updates use optimistic locking.",
+      "item": [
+        {
+          "name": "Get rider",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Body is JSON\", () => pm.response.to.be.json);",
+                  "const rider = pm.response.json().rider;",
+                  "pm.test(\"Rider A with their capacity\", () => {",
+                  "  pm.expect(rider.id).to.eql(pm.collectionVariables.get(\"rider_a\"));",
+                  "  pm.expect(rider.max_additional_orders).to.eql(rider.max_capacity - rider.current_orders_count);",
+                  "  pm.expect(rider.preferences).to.have.all.keys(\"min_order_value_kes\", \"preferred_categories\", \"preferred_areas\");",
+                  "});",
+                  "pm.test(\"Holds the batch they accepted\", () => pm.expect(rider.current_orders_count).to.be.at.least(1));",
+                  "pm.collectionVariables.set(\"rider_a_version\", rider.version);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/riders/{{rider_a}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "riders",
+                "{{rider_a}}"
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK: success",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/riders/{{rider_a}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "riders",
+                    "{{rider_a}}"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "0a207948b2cbebd51884130809e143a1"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"rider\":{\"id\":\"rider_001\",\"full_name\":\"Brian Otieno\",\"phone\":\"+254722000001\",\"is_available\":true,\"max_capacity\":5,\"current_orders_count\":2,\"max_additional_orders\":3,\"current_location\":{\"lat\":-1.266,\"lng\":36.806},\"bearing_degrees\":320,\"speed_kmh\":22,\"location_updated_at\":\"2026-10-21T13:38:00.792965Z\",\"offline_flagged_at\":null,\"acceptance_rate\":0.542,\"preferences\":{\"min_order_value_kes\":0,\"preferred_categories\":[\"documents\",\"electronics\"],\"preferred_areas\":[\"area_002\",\"area_007\"]},\"version\":2}}\n"
+            },
+            {
+              "name": "404 Not Found: unknown rider",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/riders/rider_unknown",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "riders",
+                    "rider_unknown"
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "7d100c1439194ee7839f064d4658baf0"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"error\":\"the requested resource could not be found\"}\n"
+            }
+          ]
+        },
+        {
+          "name": "Update preferences",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "const rider = pm.response.json().rider;",
+                  "pm.test(\"Preferences replaced\", () => {",
+                  "  pm.expect(rider.preferences.min_order_value_kes).to.eql(1000);",
+                  "  pm.expect(rider.preferences.preferred_categories).to.have.members([\"electronics\", \"documents\"]);",
+                  "});",
+                  "pm.test(\"The version moved on\", () => pm.expect(rider.version).to.be.above(Number(pm.collectionVariables.get(\"rider_a_version\"))));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "X-Expected-Version",
+                "value": "{{rider_a_version}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v2/riders/{{rider_a}}/preferences",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "riders",
+                "{{rider_a}}",
+                "preferences"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"min_order_value_kes\": 1000,\n  \"preferred_categories\": [\n    \"electronics\",\n    \"documents\"\n  ],\n  \"preferred_areas\": [\n    \"area_002\",\n    \"area_007\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "`X-Expected-Version` carries the rider `version` from the previous request; a stale one is `409`."
+          },
+          "response": [
+            {
+              "name": "200 OK: success",
+              "originalRequest": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "X-Expected-Version",
+                    "value": "{{rider_a_version}}",
+                    "type": "text"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/riders/{{rider_a}}/preferences",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "riders",
+                    "{{rider_a}}",
+                    "preferences"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"min_order_value_kes\": 1000,\n  \"preferred_categories\": [\n    \"electronics\",\n    \"documents\"\n  ],\n  \"preferred_areas\": [\n    \"area_002\",\n    \"area_007\"\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "5d22128a22ecac723362d4982a88e682"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"rider\":{\"id\":\"rider_001\",\"full_name\":\"Brian Otieno\",\"phone\":\"+254722000001\",\"is_available\":true,\"max_capacity\":5,\"current_orders_count\":2,\"max_additional_orders\":3,\"current_location\":{\"lat\":-1.266,\"lng\":36.806},\"bearing_degrees\":320,\"speed_kmh\":22,\"location_updated_at\":\"2026-10-21T13:38:00.792965Z\",\"offline_flagged_at\":null,\"acceptance_rate\":0.542,\"preferences\":{\"min_order_value_kes\":1000,\"preferred_categories\":[\"documents\",\"electronics\"],\"preferred_areas\":[\"area_002\",\"area_007\"]},\"version\":3}}\n"
+            },
+            {
+              "name": "409 Conflict: stale X-Expected-Version",
+              "originalRequest": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "X-Expected-Version",
+                    "value": "1",
+                    "type": "text"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/riders/{{rider_a}}/preferences",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "riders",
+                    "{{rider_a}}",
+                    "preferences"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"min_order_value_kes\": 1000,\n  \"preferred_categories\": [\n    \"electronics\",\n    \"documents\"\n  ],\n  \"preferred_areas\": [\n    \"area_002\",\n    \"area_007\"\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "fdf1ff70260a500991195e3caa9e0d9d"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"error\":\"unable to update the record due to an edit conflict, please try again\"}\n"
+            },
+            {
+              "name": "422 Unprocessable Entity: invalid category",
+              "originalRequest": {
+                "method": "PUT",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/riders/{{rider_a}}/preferences",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "riders",
+                    "{{rider_a}}",
+                    "preferences"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"preferred_categories\": [\n    \"Not A Category\"\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Unprocessable Entity",
+              "code": 422,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "0a8b27aedb6971a8ee073478abf5b5a3"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"error\":{\"preferred_categories\":\"every value must be a valid code, expected something like electronics\"}}\n"
+            }
+          ]
+        },
+        {
+          "name": "Update location",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Position stored\", () => pm.expect(pm.response.json().rider.current_location).to.eql({ lat: -1.265, lng: 36.8038 }));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/riders/{{rider_a}}/location",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "riders",
+                "{{rider_a}}",
+                "location"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"latitude\": -1.265,\n  \"longitude\": 36.8038,\n  \"bearing_degrees\": 95,\n  \"speed_kmh\": 22\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK: success",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/riders/{{rider_a}}/location",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "riders",
+                    "{{rider_a}}",
+                    "location"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"latitude\": -1.265,\n  \"longitude\": 36.8038,\n  \"bearing_degrees\": 95,\n  \"speed_kmh\": 22\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "aaf2e5eb71b2a54da8e38c86be53837d"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"rider\":{\"id\":\"rider_001\",\"full_name\":\"Brian Otieno\",\"phone\":\"+254722000001\",\"is_available\":true,\"max_capacity\":5,\"current_orders_count\":2,\"max_additional_orders\":3,\"current_location\":{\"lat\":-1.265,\"lng\":36.8038},\"bearing_degrees\":95,\"speed_kmh\":22,\"location_updated_at\":\"2026-10-21T13:38:02.806485Z\",\"offline_flagged_at\":null,\"acceptance_rate\":0.542,\"preferences\":{\"min_order_value_kes\":1000,\"preferred_categories\":[\"documents\",\"electronics\"],\"preferred_areas\":[\"area_002\",\"area_007\"]},\"version\":3}}\n"
+            },
+            {
+              "name": "422 Unprocessable Entity: bearing out of range",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/riders/{{rider_a}}/location",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "riders",
+                    "{{rider_a}}",
+                    "location"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"latitude\": -1.265,\n  \"longitude\": 36.8038,\n  \"bearing_degrees\": 400\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Unprocessable Entity",
+              "code": 422,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "3579c860a641ef518dab07fed10c2f2a"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"error\":{\"bearing_degrees\":\"must be at least 0 and less than 360\"}}\n"
+            }
+          ]
+        },
+        {
+          "name": "Update availability",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"On shift\", () => pm.expect(pm.response.json().rider.is_available).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/riders/{{rider_a}}/availability",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "riders",
+                "{{rider_a}}",
+                "availability"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"is_available\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK: success",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/riders/{{rider_a}}/availability",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "riders",
+                    "{{rider_a}}",
+                    "availability"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"is_available\": true\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "9ad82e873c6fd0f8b93c95e73041e89c"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"rider\":{\"id\":\"rider_001\",\"full_name\":\"Brian Otieno\",\"phone\":\"+254722000001\",\"is_available\":true,\"max_capacity\":5,\"current_orders_count\":2,\"max_additional_orders\":3,\"current_location\":{\"lat\":-1.265,\"lng\":36.8038},\"bearing_degrees\":95,\"speed_kmh\":22,\"location_updated_at\":\"2026-10-21T13:38:02.806485Z\",\"offline_flagged_at\":null,\"acceptance_rate\":0.542,\"preferences\":{\"min_order_value_kes\":1000,\"preferred_categories\":[\"documents\",\"electronics\"],\"preferred_areas\":[\"area_002\",\"area_007\"]},\"version\":4}}\n"
+            },
+            {
+              "name": "422 Unprocessable Entity: is_available missing",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/v2/riders/{{rider_a}}/availability",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v2",
+                    "riders",
+                    "{{rider_a}}",
+                    "availability"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Unprocessable Entity",
+              "code": 422,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "d4ea0167efa26da23a116baf51f65b72"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"error\":{\"is_available\":\"must be provided\"}}\n"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Metrics",
+      "description": "expvar metrics. Needs the API key; on in development and staging, off in production.",
+      "item": [
+        {
+          "name": "Debug vars",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Body is JSON\", () => pm.response.to.be.json);",
+                  "const v = pm.response.json();",
+                  "pm.test(\"Process and pool values\", () => pm.expect(v).to.include.all.keys(\"version\", \"goroutines\", \"timestamp\", \"database\", \"total_requests_received\", \"total_responses_sent\", \"total_processing_time_μs\", \"total_responses_sent_by_status\"));",
+                  "pm.test(\"Pool statistics\", () => pm.expect(v.database).to.include.all.keys(\"total_conns\", \"idle_conns\", \"acquired_conns\", \"acquire_count\", \"empty_acquire_count\", \"canceled_acquire_count\", \"acquire_duration_ms\"));",
+                  "pm.test(\"The business counters moved during this run\", () => {",
+                  "  pm.expect(v.orders_created).to.be.at.least(2);",
+                  "  pm.expect(v.batches_formed).to.be.at.least(1);",
+                  "  pm.expect(v.batches_accepted).to.be.at.least(1);",
+                  "  pm.expect(v.batch_accept_conflicts).to.be.at.least(1);",
+                  "  pm.expect(v.idempotent_replays).to.be.at.least(1);",
+                  "  pm.expect(v.cone_matches_served).to.be.at.least(1);",
+                  "  pm.expect(v.rider_matches_served).to.be.at.least(1);",
+                  "});",
+                  "pm.test(\"The status map counted the 200s, the 409 and the 401s\", () => {",
+                  "  const s = v.total_responses_sent_by_status;",
+                  "  pm.expect(s[\"200\"]).to.be.above(0);",
+                  "  pm.expect(s[\"409\"]).to.be.at.least(1);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/debug/vars",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "debug",
+                "vars"
+              ]
+            },
+            "description": "`batch_accept_conflicts` rising means riders are racing for the same batches; `database.canceled_acquire_count` growing means the connection pool is starved."
+          },
+          "response": [
+            {
+              "name": "200 OK: success",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/debug/vars",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "debug",
+                    "vars"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "f26afbeeea9489817321040147646ebf"
+                },
+                {
+                  "key": "Transfer-Encoding",
+                  "value": "chunked"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"batch_accept_conflicts\": 1, \"batch_capacity_rejections\": 0, \"batches_accepted\": 1, \"batches_expired\": 0, \"batches_formed\": 19, \"cone_matches_served\": 3, \"database\": {\"acquire_count\":120,\"acquire_duration_ms\":207,\"acquired_conns\":0,\"canceled_acquire_count\":0,\"empty_acquire_count\":1,\"idle_conns\":3,\"total_conns\":3}, \"goroutines\": 8, \"idempotent_replays\": 1, \"memstats\": {\"Alloc\":2557680,\"TotalAlloc\":4450776,\"Sys\":18209032,\"Lookups\":0,\"Mallocs\":34721,\"Frees\":18671,\"HeapAlloc\":2557680,\"HeapSys\":11862016,\"HeapIdle\":7577600,\"HeapInuse\":4284416,\"HeapReleased\":6496256,\"HeapObjects\":16050,\"StackInuse\":720896,\"StackSys\":720896,\"MSpanInuse\":96160,\"MSpanSys\":97920,\"MCacheInuse\":9184,\"MCacheSys\":16072,\"BuckHashSys\":1445416,\"GCSys\":3222768,\"OtherSys\":843944,\"NextGC\":4194304,\"LastGC\":1792589876998497982,\"PauseTotalNs\":31390330,\"PauseNs\":[8807424,22582906,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],\"PauseEnd\":[1792589832148545579,1792589876998497982,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],\"NumGC\":2,\"NumForcedGC\":0,\"GCCPUFraction\":0.0020634606117679206,\"EnableGC\":true,\"DebugGC\":false,\"BySize\":[{\"Size\":0,\"Mallocs\":0,\"Frees\":0},{\"Size\":8,\"Mallocs\":1028,\"Frees\":366},{\"Size\":16,\"Mallocs\":11089,\"Frees\":5873},{\"Size\":24,\"Mallocs\":1841,\"Frees\":601},{\"Size\":32,\"Mallocs\":3198,\"Frees\":1584},{\"Size\":48,\"Mallocs\":3360,\"Frees\":1244},{\"Size\":64,\"Mallocs\":1226,\"Frees\":426},{\"Size\":80,\"Mallocs\":921,\"Frees\":486},{\"Size\":96,\"Mallocs\":632,\"Frees\":148},{\"Size\":112,\"Mallocs\":3681,\"Frees\":2721},{\"Size\":128,\"Mallocs\":445,\"Frees\":249},{\"Size\":144,\"Mallocs\":395,\"Frees\":201},{\"Size\":160,\"Mallocs\":428,\"Frees\":128},{\"Size\":176,\"Mallocs\":144,\"Frees\":60},{\"Size\":192,\"Mallocs\":192,\"Frees\":95},{\"Size\":208,\"Mallocs\":608,\"Frees\":339},{\"Size\":224,\"Mallocs\":96,\"Frees\":37},{\"Size\":240,\"Mallocs\":94,\"Frees\":50},{\"Size\":256,\"Mallocs\":91,\"Frees\":23},{\"Size\":288,\"Mallocs\":571,\"Frees\":271},{\"Size\":320,\"Mallocs\":322,\"Frees\":169},{\"Size\":352,\"Mallocs\":293,\"Frees\":153},{\"Size\":384,\"Mallocs\":30,\"Frees\":17},{\"Size\":416,\"Mallocs\":72,\"Frees\":25},{\"Size\":448,\"Mallocs\":14,\"Frees\":3},{\"Size\":480,\"Mallocs\":176,\"Frees\":75},{\"Size\":512,\"Mallocs\":69,\"Frees\":22},{\"Size\":576,\"Mallocs\":137,\"Frees\":111},{\"Size\":640,\"Mallocs\":8,\"Frees\":2},{\"Size\":704,\"Mallocs\":53,\"Frees\":28},{\"Size\":768,\"Mallocs\":65,\"Frees\":24},{\"Size\":896,\"Mallocs\":53,\"Frees\":23},{\"Size\":1024,\"Mallocs\":22,\"Frees\":4},{\"Size\":1152,\"Mallocs\":61,\"Frees\":18},{\"Size\":1280,\"Mallocs\":54,\"Frees\":40},{\"Size\":1408,\"Mallocs\":34,\"Frees\":15},{\"Size\":1536,\"Mallocs\":3,\"Frees\":1},{\"Size\":1792,\"Mallocs\":26,\"Frees\":12},{\"Size\":2048,\"Mallocs\":44,\"Frees\":5},{\"Size\":2304,\"Mallocs\":22,\"Frees\":12},{\"Size\":2688,\"Mallocs\":7,\"Frees\":0},{\"Size\":3072,\"Mallocs\":21,\"Frees\":11},{\"Size\":3200,\"Mallocs\":3,\"Frees\":2},{\"Size\":3456,\"Mallocs\":7,\"Frees\":4},{\"Size\":4096,\"Mallocs\":17,\"Frees\":5},{\"Size\":4864,\"Mallocs\":19,\"Frees\":9},{\"Size\":5376,\"Mallocs\":6,\"Frees\":0},{\"Size\":6144,\"Mallocs\":17,\"Frees\":1},{\"Size\":6528,\"Mallocs\":6,\"Frees\":1},{\"Size\":6784,\"Mallocs\":0,\"Frees\":0},{\"Size\":6912,\"Mallocs\":2,\"Frees\":0},{\"Size\":8192,\"Mallocs\":6,\"Frees\":1},{\"Size\":9472,\"Mallocs\":8,\"Frees\":2},{\"Size\":9728,\"Mallocs\":1,\"Frees\":1},{\"Size\":10240,\"Mallocs\":0,\"Frees\":0},{\"Size\":10880,\"Mallocs\":0,\"Frees\":0},{\"Size\":12288,\"Mallocs\":4,\"Frees\":1},{\"Size\":13568,\"Mallocs\":3,\"Frees\":1},{\"Size\":14336,\"Mallocs\":0,\"Frees\":0},{\"Size\":16384,\"Mallocs\":6,\"Frees\":0},{\"Size\":18432,\"Mallocs\":3,\"Frees\":2}]}, \"orders_created\": 2, \"rider_matches_served\": 2, \"timestamp\": 1792589883, \"total_processing_time_μs\": 4647392, \"total_requests_received\": 76, \"total_responses_sent\": 75, \"total_responses_sent_by_status\": {\"200\": 22, \"201\": 3, \"400\": 1, \"401\": 1, \"404\": 33, \"409\": 2, \"422\": 9, \"429\": 4}, \"version\": \"docker\"}\n"
+            },
+            {
+              "name": "401 Unauthorized: no API key",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/debug/vars",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "debug",
+                    "vars"
+                  ]
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Cache-Control",
+                  "value": "no-store"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Origin"
+                },
+                {
+                  "key": "Www-Authenticate",
+                  "value": "ApiKey realm=\"zemi-fleet\""
+                },
+                {
+                  "key": "X-Content-Type-Options",
+                  "value": "nosniff"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "459a0e4b3160a307ee1eb76601560cb8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"error\":\"invalid or missing API key\"}\n"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

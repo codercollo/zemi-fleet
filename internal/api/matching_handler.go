@@ -57,6 +57,9 @@ func (s *Server) matchOrdersHandler(c *gin.Context) {
 			v.Check(validator.Between(*lng, -maxLongitude, maxLongitude), "current_location.longitude", "must be between -180 and 180")
 			position.Lng = *lng
 		}
+		if req.CurrentLocation.Latitude != nil && req.CurrentLocation.Longitude != nil {
+			s.checkServiceArea(v, "current_location", position)
+		}
 	}
 	if b := req.BearingDegrees; b != nil {
 		v.Check(*b >= 0 && *b < maxBearingDegrees, "bearing_degrees", "must be at least 0 and less than 360")
@@ -77,6 +80,7 @@ func (s *Server) matchOrdersHandler(c *gin.Context) {
 		return
 	}
 
+	started := s.clock.Now()
 	result, err := s.matching.MatchOrders(c.Request.Context(), service.MatchOrdersInput{
 		RiderID:             req.RiderID,
 		Position:            position,
@@ -84,6 +88,7 @@ func (s *Server) matchOrdersHandler(c *gin.Context) {
 		SpeedKMH:            req.SpeedKMH,
 		ReportedOrdersCount: reported,
 	})
+	s.prom.observeAlgorithm("match_orders", s.clock.Now().Sub(started))
 	if err != nil {
 		s.handleServiceError(c, err)
 		return

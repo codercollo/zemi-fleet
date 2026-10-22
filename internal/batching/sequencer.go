@@ -35,6 +35,20 @@ type Stop struct {
 // Nearest neighbour is a fast heuristic, not an optimal tour; see "Limitations" in docs/DOCUMENTATION.md.
 // orders must be in FIFO order with the seed first, as Form provides.
 func Sequence(orders []Order) []Stop {
+	return sequence(orders, nil)
+}
+
+// SequenceWithDistance uses the supplied distance function and optionally applies
+// a precedence-safe two-opt improvement.
+func SequenceWithDistance(orders []Order, distance func(domain.Location, domain.Location) float64, improve bool) []Stop {
+	stops := sequence(orders, distance)
+	if improve {
+		return twoOpt(stops, distance)
+	}
+	return stops
+}
+
+func sequence(orders []Order, distance func(domain.Location, domain.Location) float64) []Stop {
 	if len(orders) == 0 {
 		return []Stop{}
 	}
@@ -61,7 +75,7 @@ func Sequence(orders []Order) []Stop {
 		var best candidate
 		bestDist, found := 0.0, false
 		consider := func(c candidate) {
-			d := geo.Haversine(current, c.at)
+			d := routeDistance(distance, current, c.at)
 			if !found || d < bestDist || (d == bestDist && tieBreak(c.kind, c.idx, best.kind, best.idx)) {
 				best, bestDist, found = c, d, true
 			}
@@ -84,6 +98,67 @@ func Sequence(orders []Order) []Stop {
 		}
 	}
 	return stops
+}
+
+func routeDistance(distance func(domain.Location, domain.Location) float64, a, b domain.Location) float64 {
+	if distance != nil {
+		return distance(a, b)
+	}
+	return geo.Haversine(a, b)
+}
+
+func twoOpt(stops []Stop, distance func(domain.Location, domain.Location) float64) []Stop {
+	if len(stops) < 4 {
+		return stops
+	}
+	length := func(route []Stop) float64 {
+		var n float64
+		for i := 1; i < len(route); i++ {
+			n += routeDistance(distance, route[i-1].Location, route[i].Location)
+		}
+		return n
+	}
+	best := length(stops)
+	for improved := true; improved; {
+		improved = false
+		for i := 1; i < len(stops)-2 && !improved; i++ {
+			for j := i + 1; j < len(stops)-1; j++ {
+				candidate := append([]Stop(nil), stops...)
+				for a, b := i, j; a < b; a, b = a+1, b-1 {
+					candidate[a], candidate[b] = candidate[b], candidate[a]
+				}
+				if !validOrder(candidate) {
+					continue
+				}
+				n := length(candidate)
+				if n+1e-9 < best {
+					stops, best, improved = candidate, n, true
+					break
+				}
+			}
+		}
+	}
+	for i := range stops {
+		stops[i].Seq = i + 1
+		stops[i].LegDistanceM = 0
+		if i > 0 {
+			stops[i].LegDistanceM = routeDistance(distance, stops[i-1].Location, stops[i].Location)
+		}
+	}
+	return stops
+}
+
+func validOrder(stops []Stop) bool {
+	seen := map[string]bool{}
+	for _, s := range stops {
+		if s.Type == StopDelivery && !seen[s.OrderID] {
+			return false
+		}
+		if s.Type == StopPickup {
+			seen[s.OrderID] = true
+		}
+	}
+	return true
 }
 
 // tieBreak reports whether (kind, idx) beats (otherKind, otherIdx) at equal distance:

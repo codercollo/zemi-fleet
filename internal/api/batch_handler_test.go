@@ -45,10 +45,10 @@ func TestCreateBatches_200(t *testing.T) {
 		h, store := newStoreHandler(t)
 		store.EXPECT().GetRider(gomock.Any(), "rider_001").Return(matchRiderRow(1, 5, true), nil)
 		store.EXPECT().CreateBatchesTx(gomock.Any(), gomock.Any()).DoAndReturn(
-			func(_ context.Context, p repository.CreateBatchesParams) ([]domain.Batch, error) {
+			func(_ context.Context, p repository.CreateBatchesParams) ([]domain.Batch, int, error) {
 				assert.Equal(t, 4, p.Batching.MaxOrders, "min(5 asked, 5-1 spare)")
 				assert.Equal(t, 2000.0, p.Batching.PickupRadiusM)
-				return []domain.Batch{twoOrderBatch()}, nil
+				return []domain.Batch{twoOrderBatch()}, 1, nil
 			})
 
 		rec := send(t, h, http.MethodPost, batchPath, validBatchBody)
@@ -91,7 +91,7 @@ func TestCreateBatches_200(t *testing.T) {
 	t.Run("keys appear in the brief's order", func(t *testing.T) {
 		h, store := newStoreHandler(t)
 		store.EXPECT().GetRider(gomock.Any(), gomock.Any()).Return(matchRiderRow(0, 5, true), nil)
-		store.EXPECT().CreateBatchesTx(gomock.Any(), gomock.Any()).Return([]domain.Batch{twoOrderBatch()}, nil)
+		store.EXPECT().CreateBatchesTx(gomock.Any(), gomock.Any()).Return([]domain.Batch{twoOrderBatch()}, 0, nil)
 
 		rec := send(t, h, http.MethodPost, batchPath, validBatchBody)
 
@@ -103,7 +103,7 @@ func TestCreateBatches_200(t *testing.T) {
 	t.Run("no batches is an empty array", func(t *testing.T) {
 		h, store := newStoreHandler(t)
 		store.EXPECT().GetRider(gomock.Any(), gomock.Any()).Return(matchRiderRow(0, 5, true), nil)
-		store.EXPECT().CreateBatchesTx(gomock.Any(), gomock.Any()).Return(nil, nil)
+		store.EXPECT().CreateBatchesTx(gomock.Any(), gomock.Any()).Return(nil, 0, nil)
 
 		rec := send(t, h, http.MethodPost, batchPath, validBatchBody)
 
@@ -203,7 +203,7 @@ func TestCreateBatches_422(t *testing.T) {
 func TestCreateBatches_500HidesInternals(t *testing.T) {
 	h, store := newStoreHandler(t)
 	store.EXPECT().GetRider(gomock.Any(), gomock.Any()).Return(matchRiderRow(0, 5, true), nil)
-	store.EXPECT().CreateBatchesTx(gomock.Any(), gomock.Any()).Return(nil, errors.New("deadlock detected on 10.0.0.5"))
+	store.EXPECT().CreateBatchesTx(gomock.Any(), gomock.Any()).Return(nil, 0, errors.New("deadlock detected on 10.0.0.5"))
 
 	rec := send(t, h, http.MethodPost, batchPath, validBatchBody)
 

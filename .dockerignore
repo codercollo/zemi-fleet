@@ -1,4 +1,9 @@
 .git
+.gocache-*
+bin
+coverage.out
+coverage.html
+db/seed/load.sql
 .github
 app.env
 .env

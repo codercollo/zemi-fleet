@@ -1,0 +1,33 @@
+groups:
+  - name: zemi-fleet
+    rules:
+      - alert: ZemiHigh5xxRatio
+        expr: sum(rate(zemi_http_request_duration_seconds_count{status=~"5.."}[5m])) / clamp_min(sum(rate(zemi_http_request_duration_seconds_count[5m])), 1) > 0.05
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "Zemi Fleet 5xx ratio is above 5%"}
+      - alert: ZemiHighP99Latency
+        expr: histogram_quantile(0.99, sum by (le) (rate(zemi_http_request_duration_seconds_bucket[5m]))) > 0.2
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "Zemi Fleet HTTP p99 latency is above 200ms"}
+      - alert: ZemiCanceledPoolAcquires
+        expr: increase(zemi_database_pool_canceled_acquire_count[10m]) > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "Zemi Fleet database pool acquisitions are being canceled"}
+      - alert: ZemiRoutingBreakerOpen
+        expr: zemi_routing_breaker_state_current == 1
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "Zemi Fleet routing circuit breaker is open"}
+      - alert: ZemiFailedWebhooks
+        expr: zemi_webhook_failed_current > 0
+        for: 5m
+        labels: {severity: critical}
+        annotations: {summary: "Zemi Fleet has failed webhook deliveries"}
+      - alert: ZemiSweepStalled
+        expr: (zemi_batch_expiry_sweep_last_timestamp_seconds > 0 and time() - zemi_batch_expiry_sweep_last_timestamp_seconds > 900) or (zemi_offline_sweep_last_timestamp_seconds > 0 and time() - zemi_offline_sweep_last_timestamp_seconds > 900)
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "A Zemi Fleet background sweeper has stalled"}

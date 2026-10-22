@@ -9,8 +9,12 @@ coverage.out
 coverage.html
 *.test
 
+# Generated Phase 0 load data
+db/seed/load.sql
+
 # IDE / OS files
 .idea/
 .vscode/
 .DS_Store
 Thumbs.db
+.gocache-phase5/

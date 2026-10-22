@@ -32,6 +32,11 @@ type Config struct {
 	// (9000 = 90%). It is snapshotted on every order, so changing it never
 	// rewrites history.
 	RiderPayoutBPS int `mapstructure:"RIDER_PAYOUT_BPS"`
+	// CancelCompensationBPS is the rider compensation share of the delivery fee
+	// when an order is cancelled after pickup.
+	CancelCompensationBPS     int           `mapstructure:"CANCEL_COMPENSATION_BPS"`
+	RiderOfflineAfter         time.Duration `mapstructure:"RIDER_OFFLINE_AFTER"`
+	RiderOfflineSweepInterval time.Duration `mapstructure:"RIDER_OFFLINE_SWEEP_INTERVAL"`
 
 	// OrderMinTripM is the shortest allowed pickup-to-delivery distance in metres. A shorter trip has
 	// no meaningful direction and is not worth a rider; creating one is a 422.
@@ -60,12 +65,58 @@ type Config struct {
 	// development and staging and false in production, decided in Load. Disabled means the route is not registered (404).
 	MetricsEnabled bool `mapstructure:"-"`
 
+	// DocsEnabled turns on GET /docs (Swagger UI) and GET /openapi.yaml. When DOCS_ENABLED is not set it is true in
+	// development and staging and false in production. Disabled means the routes are not registered (404).
+	DocsEnabled bool `mapstructure:"-"`
+
 	// ShutdownTimeout is how long SIGINT/SIGTERM waits for in-flight requests to finish before the server gives up.
 	ShutdownTimeout time.Duration `mapstructure:"SHUTDOWN_TIMEOUT"`
 
-	Cone  ConeConfig  `mapstructure:",squash"`
-	Batch BatchConfig `mapstructure:",squash"`
-	Match MatchConfig `mapstructure:",squash"`
+	Cone     ConeConfig     `mapstructure:",squash"`
+	Batch    BatchConfig    `mapstructure:",squash"`
+	Match    MatchConfig    `mapstructure:",squash"`
+	Geo      GeoConfig      `mapstructure:",squash"`
+	Capacity CapacityConfig `mapstructure:",squash"`
+	Routing  RoutingConfig  `mapstructure:",squash"`
+	Auth     AuthConfig     `mapstructure:",squash"`
+	Webhooks WebhookConfig  `mapstructure:",squash"`
+}
+
+// CapacityConfig controls the shared rider-capacity policy.
+type CapacityConfig struct {
+	Mode     string `mapstructure:"CAPACITY_MODE"`
+	Timezone string `mapstructure:"-"`
+}
+
+type RoutingConfig struct {
+	Provider        string        `mapstructure:"ROUTING_PROVIDER"`
+	BaseURL         string        `mapstructure:"ROUTING_BASE_URL"`
+	Timeout         time.Duration `mapstructure:"ROUTING_TIMEOUT"`
+	Retries         int           `mapstructure:"ROUTING_RETRIES"`
+	BreakerFailures int           `mapstructure:"ROUTING_BREAKER_FAILURES"`
+	BreakerOpen     time.Duration `mapstructure:"ROUTING_BREAKER_OPEN"`
+	CacheTTL        time.Duration `mapstructure:"ROUTING_CACHE_TTL"`
+	Sequencer       string        `mapstructure:"BATCH_SEQUENCER"`
+	MinScore        float64       `mapstructure:"BATCH_MIN_SCORE"`
+}
+
+type AuthConfig struct {
+	Mode       string        `mapstructure:"AUTH_MODE"`
+	SigningKey string        `mapstructure:"AUTH_SIGNING_KEY"`
+	TokenTTL   time.Duration `mapstructure:"AUTH_TOKEN_TTL"`
+}
+
+type WebhookConfig struct {
+	Enabled bool `mapstructure:"WEBHOOKS_ENABLED"`
+}
+
+// GeoConfig controls optional service-area validation for geographic inputs.
+type GeoConfig struct {
+	BoundsEnabled bool    `mapstructure:"GEO_BOUNDS_ENABLED"`
+	MinLat        float64 `mapstructure:"GEO_MIN_LAT"`
+	MaxLat        float64 `mapstructure:"GEO_MAX_LAT"`
+	MinLng        float64 `mapstructure:"GEO_MIN_LNG"`
+	MaxLng        float64 `mapstructure:"GEO_MAX_LNG"`
 }
 
 // MatchConfig holds the rider preference matching tunables (POST /orders/match-riders).
@@ -93,6 +144,8 @@ const (
 
 // BatchConfig holds the order-batching tunables.
 type BatchConfig struct {
+	// SpatialQueryMode selects the legacy Go-filtered path or SQL-side exact filtering/paging.
+	SpatialQueryMode string `mapstructure:"SPATIAL_QUERY_MODE"`
 	// MaxOrders is the largest batch the algorithm will form (and the largest max_orders a request may ask for).
 	MaxOrders int `mapstructure:"BATCH_MAX_ORDERS"`
 	// PickupRadiusKM is the largest pairwise distance between pickups in one batch, and the largest radius_km a request may ask for.
@@ -105,9 +158,25 @@ type BatchConfig struct {
 	VisibilityRadiusKM float64 `mapstructure:"BATCH_VISIBILITY_RADIUS_KM"`
 	// TTL is how long an open batch stays on offer before it expires and its orders return to pending.
 	TTL time.Duration `mapstructure:"BATCH_TTL"`
+	// ExpiryInterval controls the background expiry sweep. Zero disables the worker and preserves lazy expiry.
+	ExpiryInterval time.Duration `mapstructure:"BATCH_EXPIRY_INTERVAL"`
 	// AvgSpeedKMH and StopDwellMin drive the delivery time estimates.
 	AvgSpeedKMH  float64 `mapstructure:"AVG_SPEED_KMH"`
 	StopDwellMin float64 `mapstructure:"STOP_DWELL_MIN"`
+	// Ordering selects FIFO or priority ordering for newly formed batches.
+	Ordering string `mapstructure:"BATCH_ORDERING"`
+	// RadiusMode selects the fixed requested radius or density-based narrowing.
+	RadiusMode            string  `mapstructure:"BATCH_RADIUS_MODE"`
+	WeightAge             float64 `mapstructure:"BATCH_WEIGHT_AGE"`
+	WeightValue           float64 `mapstructure:"BATCH_WEIGHT_VALUE"`
+	WeightRating          float64 `mapstructure:"BATCH_WEIGHT_RATING"`
+	WeightUrgency         float64 `mapstructure:"BATCH_WEIGHT_URGENCY"`
+	DensityRadiusKM       float64 `mapstructure:"BATCH_DENSITY_RADIUS_KM"`
+	DensityLowThreshold   int     `mapstructure:"BATCH_DENSITY_LOW_THRESHOLD"`
+	DensityHighThreshold  int     `mapstructure:"BATCH_DENSITY_HIGH_THRESHOLD"`
+	DensityLowRadiusKM    float64 `mapstructure:"BATCH_DENSITY_LOW_RADIUS_KM"`
+	DensityMediumRadiusKM float64 `mapstructure:"BATCH_DENSITY_MEDIUM_RADIUS_KM"`
+	DensityHighRadiusKM   float64 `mapstructure:"BATCH_DENSITY_HIGH_RADIUS_KM"`
 }
 
 // Limits for validating the batch settings. MaxBatchOrders mirrors the batches.orders_count CHECK.
@@ -177,26 +246,29 @@ type DBConfig struct {
 
 // Default settings .
 var defaults = map[string]any{
-	"APP_ENV":               EnvDevelopment,
-	"PORT":                  4000,
-	"APP_TIMEZONE":          "Africa/Nairobi",
-	"DATABASE_URL":          "",
-	"DB_MAX_CONNS":          25,
-	"DB_MIN_CONNS":          2,
-	"DB_MAX_CONN_IDLE_TIME": "15m",
-	"DB_QUERY_TIMEOUT":      "3s",
-	"RIDER_PAYOUT_BPS":      9000,
-	"LIMITER_ENABLED":       true,
-	"LIMITER_RPS":           10,
-	"LIMITER_BURST":         20,
-	"TRUSTED_PROXIES":       "",
-	"API_KEYS":              "",
-	"CORS_TRUSTED_ORIGINS":  "",
-	"SHUTDOWN_TIMEOUT":      "30s",
-	"CONE_RADIUS_KM":        1,
-	"CONE_HALF_ANGLE_DEG":   30,
-	"CONE_MIN_SPEED_KMH":    3,
-	"CONE_MAX_RESULTS":      20,
+	"APP_ENV":                      EnvDevelopment,
+	"PORT":                         4000,
+	"APP_TIMEZONE":                 "Africa/Nairobi",
+	"DATABASE_URL":                 "",
+	"DB_MAX_CONNS":                 25,
+	"DB_MIN_CONNS":                 2,
+	"DB_MAX_CONN_IDLE_TIME":        "15m",
+	"DB_QUERY_TIMEOUT":             "3s",
+	"RIDER_PAYOUT_BPS":             9000,
+	"CANCEL_COMPENSATION_BPS":      0,
+	"RIDER_OFFLINE_AFTER":          "0",
+	"RIDER_OFFLINE_SWEEP_INTERVAL": "0",
+	"LIMITER_ENABLED":              true,
+	"LIMITER_RPS":                  10,
+	"LIMITER_BURST":                20,
+	"TRUSTED_PROXIES":              "",
+	"API_KEYS":                     "",
+	"CORS_TRUSTED_ORIGINS":         "",
+	"SHUTDOWN_TIMEOUT":             "30s",
+	"CONE_RADIUS_KM":               1,
+	"CONE_HALF_ANGLE_DEG":          30,
+	"CONE_MIN_SPEED_KMH":           3,
+	"CONE_MAX_RESULTS":             20,
 
 	"MATCH_MAX_DISTANCE_KM":      10,
 	"RIDER_LOCATION_STALE_AFTER": "30m",
@@ -207,6 +279,7 @@ var defaults = map[string]any{
 	"MATCH_MAX_RESULTS":          10,
 
 	"BATCH_MAX_ORDERS":               5,
+	"SPATIAL_QUERY_MODE":             "legacy",
 	"BATCH_PICKUP_RADIUS_KM":         2,
 	"BATCH_DIRECTION_TOLERANCE_DEG":  45,
 	"BATCH_SEARCH_RADIUS_KM":         5,
@@ -217,8 +290,40 @@ var defaults = map[string]any{
 	"IDEMPOTENCY_TTL":                "24h",
 	"IDEMPOTENCY_PROCESSING_TIMEOUT": "2m",
 	"BATCH_TTL":                      "10m",
+	"BATCH_EXPIRY_INTERVAL":          "0",
 	"AVG_SPEED_KMH":                  20,
 	"STOP_DWELL_MIN":                 2,
+	"BATCH_ORDERING":                 "fifo",
+	"BATCH_RADIUS_MODE":              "fixed",
+	"BATCH_WEIGHT_AGE":               0.4,
+	"BATCH_WEIGHT_VALUE":             0.3,
+	"BATCH_WEIGHT_RATING":            0.2,
+	"BATCH_WEIGHT_URGENCY":           0.1,
+	"BATCH_DENSITY_RADIUS_KM":        1,
+	"BATCH_DENSITY_LOW_THRESHOLD":    5,
+	"BATCH_DENSITY_HIGH_THRESHOLD":   15,
+	"BATCH_DENSITY_LOW_RADIUS_KM":    2,
+	"BATCH_DENSITY_MEDIUM_RADIUS_KM": 1.5,
+	"BATCH_DENSITY_HIGH_RADIUS_KM":   1,
+	"GEO_BOUNDS_ENABLED":             false,
+	"GEO_MIN_LAT":                    -4.7,
+	"GEO_MAX_LAT":                    4.7,
+	"GEO_MIN_LNG":                    33.9,
+	"GEO_MAX_LNG":                    41.9,
+	"CAPACITY_MODE":                  "count",
+	"ROUTING_PROVIDER":               "haversine",
+	"ROUTING_BASE_URL":               "http://localhost:5000",
+	"ROUTING_TIMEOUT":                "500ms",
+	"ROUTING_RETRIES":                2,
+	"ROUTING_BREAKER_FAILURES":       3,
+	"ROUTING_BREAKER_OPEN":           "30s",
+	"ROUTING_CACHE_TTL":              "5m",
+	"BATCH_SEQUENCER":                "nearest",
+	"BATCH_MIN_SCORE":                0,
+	"AUTH_MODE":                      "apikey",
+	"AUTH_SIGNING_KEY":               "",
+	"AUTH_TOKEN_TTL":                 "15m",
+	"WEBHOOKS_ENABLED":               false,
 }
 
 // Load configuration
@@ -246,10 +351,9 @@ func Load(path string) (Config, error) {
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
 	}
-	cfg.MetricsEnabled = cfg.Env != EnvProduction
-	if v.IsSet("METRICS_ENABLED") {
-		cfg.MetricsEnabled = v.GetBool("METRICS_ENABLED")
-	}
+	cfg.Capacity.Timezone = cfg.Timezone
+	cfg.MetricsEnabled = onUnlessProduction(v, "METRICS_ENABLED", cfg.Env)
+	cfg.DocsEnabled = onUnlessProduction(v, "DOCS_ENABLED", cfg.Env)
 	cfg.APIKeys, _ = parseAPIKeys(cfg.APIKeysRaw, cfg.Env) // validate() has already reported any problem
 	cfg.APIKeysRaw = ""
 	return cfg, nil
@@ -291,6 +395,15 @@ func (c Config) validate() error {
 	if c.RiderPayoutBPS < 0 || c.RiderPayoutBPS > MaxPayoutBPS {
 		errs = append(errs, fmt.Errorf("RIDER_PAYOUT_BPS must be 0-%d (got %d)", MaxPayoutBPS, c.RiderPayoutBPS))
 	}
+	if c.CancelCompensationBPS < 0 || c.CancelCompensationBPS > c.RiderPayoutBPS {
+		errs = append(errs, fmt.Errorf("CANCEL_COMPENSATION_BPS must be 0-%d (got %d)", c.RiderPayoutBPS, c.CancelCompensationBPS))
+	}
+	if c.RiderOfflineAfter < 0 {
+		errs = append(errs, fmt.Errorf("RIDER_OFFLINE_AFTER must be zero or greater (got %s)", c.RiderOfflineAfter))
+	}
+	if c.RiderOfflineSweepInterval < 0 || (c.RiderOfflineAfter > 0 && c.RiderOfflineSweepInterval <= 0) {
+		errs = append(errs, fmt.Errorf("RIDER_OFFLINE_SWEEP_INTERVAL must be greater than zero when RIDER_OFFLINE_AFTER is enabled (got %s)", c.RiderOfflineSweepInterval))
+	}
 	if c.DB.QueryTimeout <= 0 {
 		errs = append(errs, fmt.Errorf("DB_QUERY_TIMEOUT must be greater than zero (got %s)", c.DB.QueryTimeout))
 	}
@@ -304,7 +417,67 @@ func (c Config) validate() error {
 	errs = append(errs, c.Cone.validate()...)
 	errs = append(errs, c.Batch.validate()...)
 	errs = append(errs, c.Match.validate()...)
+	errs = append(errs, c.Geo.validate()...)
+	if c.Capacity.Mode != "count" && c.Capacity.Mode != "dynamic" {
+		errs = append(errs, fmt.Errorf("CAPACITY_MODE must be count or dynamic (got %q)", c.Capacity.Mode))
+	}
+	if c.Routing.Provider != "haversine" && c.Routing.Provider != "osrm" {
+		errs = append(errs, fmt.Errorf("ROUTING_PROVIDER must be haversine or osrm (got %q)", c.Routing.Provider))
+	}
+	if c.Routing.Timeout <= 0 || c.Routing.Timeout > time.Minute {
+		errs = append(errs, fmt.Errorf("ROUTING_TIMEOUT must be between 0 and 1m (got %s)", c.Routing.Timeout))
+	}
+	if c.Routing.Retries < 0 || c.Routing.Retries > 2 {
+		errs = append(errs, fmt.Errorf("ROUTING_RETRIES must be between 0 and 2 (got %d)", c.Routing.Retries))
+	}
+	if c.Routing.BreakerFailures < 1 {
+		errs = append(errs, fmt.Errorf("ROUTING_BREAKER_FAILURES must be positive (got %d)", c.Routing.BreakerFailures))
+	}
+	if c.Routing.BreakerOpen <= 0 || c.Routing.CacheTTL < 0 {
+		errs = append(errs, fmt.Errorf("ROUTING_BREAKER_OPEN must be positive and ROUTING_CACHE_TTL non-negative"))
+	}
+	if c.Routing.Sequencer != "nearest" && c.Routing.Sequencer != "two_opt" {
+		errs = append(errs, fmt.Errorf("BATCH_SEQUENCER must be nearest or two_opt (got %q)", c.Routing.Sequencer))
+	}
+	if c.Routing.MinScore < 0 || c.Routing.MinScore > 1 {
+		errs = append(errs, fmt.Errorf("BATCH_MIN_SCORE must be between 0 and 1 (got %v)", c.Routing.MinScore))
+	}
+	if c.Auth.Mode != "apikey" && c.Auth.Mode != "token" && c.Auth.Mode != "both" {
+		errs = append(errs, fmt.Errorf("AUTH_MODE must be apikey, token or both (got %q)", c.Auth.Mode))
+	}
+	if c.Auth.TokenTTL <= 0 || c.Auth.TokenTTL > 24*time.Hour {
+		errs = append(errs, fmt.Errorf("AUTH_TOKEN_TTL must be positive and at most 24h (got %s)", c.Auth.TokenTTL))
+	}
+	if (c.Auth.Mode == "token" || c.Auth.Mode == "both") && len(c.Auth.SigningKey) < 32 {
+		errs = append(errs, errors.New("AUTH_SIGNING_KEY must be at least 32 characters when token authentication is enabled"))
+	}
 	return errors.Join(errs...)
+}
+
+func (g GeoConfig) validate() []error {
+	var errs []error
+	if g.MinLat >= g.MaxLat {
+		errs = append(errs, fmt.Errorf("GEO_MIN_LAT must be less than GEO_MAX_LAT (got %v and %v)", g.MinLat, g.MaxLat))
+	}
+	if g.MinLng >= g.MaxLng {
+		errs = append(errs, fmt.Errorf("GEO_MIN_LNG must be less than GEO_MAX_LNG (got %v and %v)", g.MinLng, g.MaxLng))
+	}
+	if g.MinLat < -90 || g.MaxLat > 90 {
+		errs = append(errs, fmt.Errorf("GEO latitude bounds must be between -90 and 90 (got %v and %v)", g.MinLat, g.MaxLat))
+	}
+	if g.MinLng < -180 || g.MaxLng > 180 {
+		errs = append(errs, fmt.Errorf("GEO longitude bounds must be between -180 and 180 (got %v and %v)", g.MinLng, g.MaxLng))
+	}
+	return errs
+}
+
+// onUnlessProduction reads a boolean switch whose default depends on the environment: on in development and staging,
+// off in production, unless the variable is set. It is not in defaults because a default cannot depend on APP_ENV.
+func onUnlessProduction(v *viper.Viper, key, env string) bool {
+	if v.IsSet(key) {
+		return v.GetBool(key)
+	}
+	return env != EnvProduction
 }
 
 // Location returns the business time zone. Load has already validated it, so the UTC
@@ -336,6 +509,9 @@ func (c ConeConfig) validate() []error {
 
 func (b BatchConfig) validate() []error {
 	var errs []error
+	if b.SpatialQueryMode != "legacy" && b.SpatialQueryMode != "sql" {
+		errs = append(errs, fmt.Errorf("SPATIAL_QUERY_MODE must be legacy or sql (got %q)", b.SpatialQueryMode))
+	}
 	if b.MaxOrders < 1 || b.MaxOrders > MaxBatchOrders {
 		errs = append(errs, fmt.Errorf("BATCH_MAX_ORDERS must be between 1 and %d (got %d)", MaxBatchOrders, b.MaxOrders))
 	}
@@ -354,11 +530,47 @@ func (b BatchConfig) validate() []error {
 	if b.TTL <= 0 {
 		errs = append(errs, fmt.Errorf("BATCH_TTL must be greater than zero (got %s)", b.TTL))
 	}
+	if b.ExpiryInterval < 0 {
+		errs = append(errs, fmt.Errorf("BATCH_EXPIRY_INTERVAL must be zero or greater (got %s)", b.ExpiryInterval))
+	}
 	if b.AvgSpeedKMH <= 0 || b.AvgSpeedKMH > maxBatchAvgSpeed {
 		errs = append(errs, fmt.Errorf("AVG_SPEED_KMH must be greater than 0 and at most %v (got %v)", maxBatchAvgSpeed, b.AvgSpeedKMH))
 	}
 	if b.StopDwellMin < 0 || b.StopDwellMin > maxBatchDwellMin {
 		errs = append(errs, fmt.Errorf("STOP_DWELL_MIN must be between 0 and %v (got %v)", maxBatchDwellMin, b.StopDwellMin))
+	}
+	if b.Ordering != "fifo" && b.Ordering != "priority" {
+		errs = append(errs, fmt.Errorf("BATCH_ORDERING must be fifo or priority (got %q)", b.Ordering))
+	}
+	if b.RadiusMode != "fixed" && b.RadiusMode != "adaptive" {
+		errs = append(errs, fmt.Errorf("BATCH_RADIUS_MODE must be fixed or adaptive (got %q)", b.RadiusMode))
+	}
+	weights := map[string]float64{
+		"BATCH_WEIGHT_AGE": b.WeightAge, "BATCH_WEIGHT_VALUE": b.WeightValue,
+		"BATCH_WEIGHT_RATING": b.WeightRating, "BATCH_WEIGHT_URGENCY": b.WeightUrgency,
+	}
+	negative := false
+	for name, w := range weights {
+		if w < 0 || w > 1 {
+			negative = true
+			errs = append(errs, fmt.Errorf("%s must be between 0 and 1 (got %v)", name, w))
+		}
+	}
+	if sum := b.WeightAge + b.WeightValue + b.WeightRating + b.WeightUrgency; !negative && math.Abs(sum-1) > weightSumTolerance {
+		errs = append(errs, fmt.Errorf("the BATCH_WEIGHT_* values must sum to 1.0 (got %v)", sum))
+	}
+	if b.DensityRadiusKM <= 0 || b.DensityRadiusKM > maxBatchRadiusKM {
+		errs = append(errs, fmt.Errorf("BATCH_DENSITY_RADIUS_KM must be greater than 0 and at most %v (got %v)", maxBatchRadiusKM, b.DensityRadiusKM))
+	}
+	if b.DensityLowThreshold < 0 || b.DensityHighThreshold <= b.DensityLowThreshold {
+		errs = append(errs, fmt.Errorf("BATCH_DENSITY thresholds must be non-negative and low must be below high"))
+	}
+	for name, radius := range map[string]float64{
+		"BATCH_DENSITY_LOW_RADIUS_KM": b.DensityLowRadiusKM, "BATCH_DENSITY_MEDIUM_RADIUS_KM": b.DensityMediumRadiusKM, "BATCH_DENSITY_HIGH_RADIUS_KM": b.DensityHighRadiusKM,
+	} {
+		if radius <= 0 || radius > maxBatchRadiusKM {
+			errs = append(errs, fmt.Errorf("%s must be greater than 0 and at most %v (got %v)", name, maxBatchRadiusKM, radius))
+		}
 	}
 	return errs
 }

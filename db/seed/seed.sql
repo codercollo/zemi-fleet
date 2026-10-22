@@ -37,14 +37,14 @@ INSERT INTO vendors (id, name, phone, lat, lng) VALUES
 INSERT INTO riders (id, full_name, phone, is_available, max_capacity, current_orders_count, last_lat, last_lng,
     last_bearing_deg, last_speed_kmh, location_updated_at, offers_count, accepted_count) VALUES
   ('rider_001', 'Brian Otieno', '+254722000001', TRUE, 5, 0, -1.266, 36.806, 95, 22, now() - interval '2 minutes', 40, 31),
-  ('rider_002', 'Mercy Wanjiru', '+254722000002', TRUE, 5, 2, -1.289, 36.79, 180, 18, now() - interval '3 minutes', 25, 22),
-  ('rider_003', 'Kevin Mutua', '+254722000003', TRUE, 5, 5, -1.285, 36.82, 270, 15, now() - interval '4 minutes', 18, 9),
-  ('rider_004', 'Faith Achieng', '+254722000004', TRUE, 5, 1, -1.308, 36.832, 0, 0, now() - interval '5 minutes', 12, 11),
+  ('rider_002', 'Mercy Wanjiru', '+254722000002', TRUE, 5, 0, -1.289, 36.79, 180, 18, now() - interval '3 minutes', 25, 22),
+  ('rider_003', 'Kevin Mutua', '+254722000003', TRUE, 5, 0, -1.285, 36.82, 270, 15, now() - interval '4 minutes', 18, 9),
+  ('rider_004', 'Faith Achieng', '+254722000004', TRUE, 5, 0, -1.308, 36.832, 0, 0, now() - interval '5 minutes', 12, 11),
   ('rider_005', 'Samuel Kiprop', '+254722000005', FALSE, 5, 0, -1.276, 36.784, NULL, NULL, now() - interval '6 minutes', 30, 12),
-  ('rider_006', 'Grace Njeri', '+254722000006', TRUE, 3, 1, -1.27, 36.777, 45, 25, now() - interval '7 minutes', 50, 44),
-  ('rider_007', 'Peter Ochieng', '+254722000007', TRUE, 5, 3, -1.296, 36.818, 135, 20, now() - interval '8 minutes', 16, 5),
+  ('rider_006', 'Grace Njeri', '+254722000006', TRUE, 3, 0, -1.27, 36.777, 45, 25, now() - interval '7 minutes', 50, 44),
+  ('rider_007', 'Peter Ochieng', '+254722000007', TRUE, 5, 0, -1.296, 36.818, 135, 20, now() - interval '8 minutes', 16, 5),
   ('rider_008', 'Lucy Wambui', '+254722000008', TRUE, 5, 0, NULL, NULL, NULL, NULL, NULL, 0, 0),
-  ('rider_009', 'David Kamau', '+254722000009', TRUE, 5, 4, -1.262, 36.815, 315, 28, now() - interval '10 minutes', 60, 48),
+  ('rider_009', 'David Kamau', '+254722000009', TRUE, 5, 0, -1.262, 36.815, 315, 28, now() - interval '10 minutes', 60, 48),
   ('rider_010', 'Aisha Hassan', '+254722000010', TRUE, 4, 0, -1.293, 36.786, 225, 12, now() - interval '11 minutes', 35, 30);
 
 -- Preferences: riders 4, 8 and 10 have no preference row; riders 7 and 9 have a row but no category/area lists

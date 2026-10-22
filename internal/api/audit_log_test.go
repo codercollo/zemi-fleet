@@ -32,7 +32,7 @@ func auditLines(t *testing.T, logs *bytes.Buffer, msg string) []map[string]any {
 
 func TestAudit_BatchAcceptedIsLogged(t *testing.T) {
 	h, store, logs := newStoreHandlerWithLogs(t)
-	store.EXPECT().AcceptBatchTx(gomock.Any(), gomock.Any()).Return(acceptedBatch("rider_002"), nil)
+	store.EXPECT().AcceptBatchTx(gomock.Any(), gomock.Any()).Return(acceptedBatch("rider_002"), false, nil)
 
 	rec := send(t, h, http.MethodPost, acceptPath("batch_X1"), `{"rider_id":"rider_002"}`, "X-Request-ID", "audit-accept-1")
 
@@ -59,7 +59,7 @@ func TestAudit_ConflictAndCapacityRejectionAreLogged(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			h, store, logs := newStoreHandlerWithLogs(t)
-			store.EXPECT().AcceptBatchTx(gomock.Any(), gomock.Any()).Return(domain.Batch{}, tc.err)
+			store.EXPECT().AcceptBatchTx(gomock.Any(), gomock.Any()).Return(domain.Batch{}, false, tc.err)
 
 			rec := send(t, h, http.MethodPost, acceptPath("batch_X1"), `{"rider_id":"rider_002"}`, "X-Request-ID", "audit-2")
 
@@ -78,7 +78,7 @@ func TestAudit_ConflictAndCapacityRejectionAreLogged(t *testing.T) {
 func TestAudit_OtherAcceptFailuresAreNotAuditLines(t *testing.T) {
 	for _, err := range []error{domain.ErrNotFound, domain.ErrRiderUnavailable} {
 		h, store, logs := newStoreHandlerWithLogs(t)
-		store.EXPECT().AcceptBatchTx(gomock.Any(), gomock.Any()).Return(domain.Batch{}, err)
+		store.EXPECT().AcceptBatchTx(gomock.Any(), gomock.Any()).Return(domain.Batch{}, false, err)
 
 		send(t, h, http.MethodPost, acceptPath("batch_X1"), `{"rider_id":"rider_002"}`)
 

@@ -19,16 +19,21 @@ const metresPerKM = 1000
 
 // MatchingService finds pending pickups for a moving rider.
 type MatchingService struct {
-	store   repository.Store
-	clock   clock.Clock
-	logger  *slog.Logger
-	params  matching.ConeParams
-	metrics *metrics.Counters
+	store    repository.Store
+	clock    clock.Clock
+	logger   *slog.Logger
+	params   matching.ConeParams
+	metrics  *metrics.Counters
+	capacity capacityPolicy
 }
 
 // NewMatchingService wires the service. The cone settings come from config (kilometres there,
 // metres in the algorithm).
-func NewMatchingService(store repository.Store, clk clock.Clock, logger *slog.Logger, cone config.ConeConfig) *MatchingService {
+func NewMatchingService(store repository.Store, clk clock.Clock, logger *slog.Logger, cone config.ConeConfig, capacityCfg ...config.CapacityConfig) *MatchingService {
+	var cc config.CapacityConfig
+	if len(capacityCfg) > 0 {
+		cc = capacityCfg[0]
+	}
 	return &MatchingService{
 		store:  store,
 		clock:  clk,
@@ -39,6 +44,7 @@ func NewMatchingService(store repository.Store, clk clock.Clock, logger *slog.Lo
 			MinSpeedKMH:  cone.MinSpeedKMH,
 			MaxResults:   cone.MaxResults,
 		},
+		capacity: newCapacityPolicy(cc),
 	}
 }
 
@@ -104,7 +110,11 @@ func (s *MatchingService) MatchOrders(ctx context.Context, in MatchOrdersInput) 
 		return MatchOrdersResult{}, fmt.Errorf("store rider position: %w", err)
 	}
 
-	spare := int(rider.MaxCapacity) - int(rider.CurrentOrdersCount)
+	effective, err := s.capacity.effective(ctx, s.store, rider, s.clock.Now())
+	if err != nil {
+		return MatchOrdersResult{}, fmt.Errorf("calculate rider capacity: %w", err)
+	}
+	spare := effective - int(rider.CurrentOrdersCount)
 	if !rider.IsAvailable || spare <= 0 {
 		return MatchOrdersResult{Matches: []matching.Match{}}, nil
 	}

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/codercollo/zemi-fleet/internal/batching"
 	"github.com/codercollo/zemi-fleet/internal/clock"
@@ -15,25 +14,52 @@ import (
 	"github.com/codercollo/zemi-fleet/internal/geo"
 	"github.com/codercollo/zemi-fleet/internal/metrics"
 	"github.com/codercollo/zemi-fleet/internal/repository"
+	"github.com/codercollo/zemi-fleet/internal/routing"
 )
 
 // BatchService forms and offers batches of pending orders.
 type BatchService struct {
-	store   repository.Store
-	clock   clock.Clock
-	cfg     config.BatchConfig
-	metrics *metrics.Counters
+	store    repository.Store
+	clock    clock.Clock
+	cfg      config.BatchConfig
+	capacity capacityPolicy
+	metrics  *metrics.Counters
+	router   routing.Router
+	routing  config.RoutingConfig
 }
 
 // NewBatchService wires the service to its store, clock and batching settings.
-func NewBatchService(store repository.Store, clk clock.Clock, cfg config.BatchConfig) *BatchService {
-	return &BatchService{store: store, clock: clk, cfg: cfg}
+func NewBatchService(store repository.Store, clk clock.Clock, cfg config.BatchConfig, capacityCfg ...config.CapacityConfig) *BatchService {
+	var cc config.CapacityConfig
+	if len(capacityCfg) > 0 {
+		cc = capacityCfg[0]
+	}
+	return &BatchService{store: store, clock: clk, cfg: cfg, capacity: newCapacityPolicy(cc)}
+}
+
+// WithRouting enables road-aware distances for newly formed batches.
+func (s *BatchService) WithRouting(r routing.Router, cfg config.RoutingConfig) *BatchService {
+	s.router, s.routing = r, cfg
+	return s
 }
 
 // WithMetrics makes the service count business events in c. Without it nothing is counted.
 func (s *BatchService) WithMetrics(c *metrics.Counters) *BatchService {
 	s.metrics = c
 	return s
+}
+
+// ExpireBatches runs one expiry sweep. The repository reports only committed
+// batches, so the metric cannot count work that was rolled back.
+func (s *BatchService) ExpireBatches(ctx context.Context) (int, error) {
+	n, err := s.store.ExpireBatchesTx(ctx, s.clock.Now())
+	if err != nil {
+		return 0, err
+	}
+	if n > 0 {
+		s.metrics.BatchesExpired(n)
+	}
+	return n, nil
 }
 
 // CreateBatchesInput is a validated POST /orders/batch request.
@@ -64,14 +90,18 @@ func (s *BatchService) CreateBatches(ctx context.Context, in CreateBatchesInput)
 		return nil, fmt.Errorf("get rider: %w", err)
 	}
 
-	spare := int(rider.MaxCapacity) - int(rider.CurrentOrdersCount)
+	effective, err := s.capacity.effective(ctx, s.store, rider, s.clock.Now())
+	if err != nil {
+		return nil, fmt.Errorf("calculate rider capacity: %w", err)
+	}
+	spare := effective - int(rider.CurrentOrdersCount)
 	if !rider.IsAvailable || spare <= 0 {
 		return []BatchOffer{}, nil
 	}
 	size := min(in.MaxOrders, spare)
 
 	now := s.clock.Now()
-	batches, err := s.store.CreateBatchesTx(ctx, repository.CreateBatchesParams{
+	batches, formed, err := s.store.CreateBatchesTx(ctx, repository.CreateBatchesParams{
 		RiderID:       rider.ID,
 		RiderLocation: in.RiderLocation,
 		Now:           now,
@@ -83,19 +113,29 @@ func (s *BatchService) CreateBatches(ctx context.Context, in CreateBatchesInput)
 			DirectionToleranceDeg: s.cfg.DirectionToleranceDeg,
 			AvgSpeedKMH:           s.cfg.AvgSpeedKMH,
 			StopDwellMin:          s.cfg.StopDwellMin,
+			Ordering:              s.cfg.Ordering,
+			Now:                   now,
+			WeightAge:             s.cfg.WeightAge,
+			WeightValue:           s.cfg.WeightValue,
+			WeightRating:          s.cfg.WeightRating,
+			WeightUrgency:         s.cfg.WeightUrgency,
+			RadiusMode:            s.cfg.RadiusMode,
+			DensityRadiusM:        s.cfg.DensityRadiusKM * metresPerKM,
+			DensityLowThreshold:   s.cfg.DensityLowThreshold,
+			DensityHighThreshold:  s.cfg.DensityHighThreshold,
+			DensityLowRadiusM:     s.cfg.DensityLowRadiusKM * metresPerKM,
+			DensityMediumRadiusM:  s.cfg.DensityMediumRadiusKM * metresPerKM,
+			DensityHighRadiusM:    s.cfg.DensityHighRadiusKM * metresPerKM,
+			Sequencer:             s.routing.Sequencer,
+			MinScore:              s.routing.MinScore,
 		},
+		Router: s.router,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	// The transaction returns every open batch on offer, new or not. The ones it just formed carry this call's time.
-	formed := 0
-	for _, b := range batches {
-		if sameInstant(b.CreatedAt, now) {
-			formed++
-		}
-	}
+	// The transaction returns every open batch on offer, new or not; formed counts only the ones it just created.
 	s.metrics.BatchesFormed(formed)
 
 	offers := make([]BatchOffer, 0, len(batches))
@@ -122,21 +162,22 @@ func (s *BatchService) CreateBatches(ctx context.Context, in CreateBatchesInput)
 // Errors: domain.ErrNotFound (rider or batch), ErrRiderUnavailable, ErrRiderAtCapacity, ErrBatchTaken.
 func (s *BatchService) Accept(ctx context.Context, batchID, riderID string) (domain.Batch, error) {
 	now := s.clock.Now()
-	batch, err := s.store.AcceptBatchTx(ctx, repository.AcceptBatchParams{BatchID: batchID, RiderID: riderID, Now: now})
+	arg := repository.AcceptBatchParams{BatchID: batchID, RiderID: riderID, Now: now}
+	if s.capacity.params.Mode == "dynamic" {
+		arg.Capacity, arg.Timezone = s.capacity.params, s.capacity.timezone
+	}
+	batch, alreadyHeld, err := s.store.AcceptBatchTx(ctx, arg)
 	switch {
 	case errors.Is(err, domain.ErrBatchTaken):
 		s.metrics.BatchAcceptConflict()
 	case errors.Is(err, domain.ErrRiderAtCapacity):
 		s.metrics.BatchCapacityRejection()
-	case err == nil && batch.AcceptedAt != nil && sameInstant(*batch.AcceptedAt, now):
-		// An idempotent retry by the winner also returns 200, but its accepted_at is the first call's time.
+	case err == nil && !alreadyHeld:
+		// An idempotent retry by the winner also returns 200, but it is not a second win.
 		s.metrics.BatchAccepted()
 	}
 	return batch, err
 }
-
-// sameInstant reports whether two times are the same moment up to the database's microsecond precision.
-func sameInstant(a, b time.Time) bool { return a.Sub(b).Abs() < time.Millisecond }
 
 // ListBatchesInput is a validated GET /batches request.
 type ListBatchesInput struct {
@@ -156,11 +197,12 @@ type BatchPage struct {
 // It is read-only: no offers are recorded and nothing is expired (expired batches are just not listed).
 func (s *BatchService) ListBatches(ctx context.Context, in ListBatchesInput) (BatchPage, error) {
 	batches, total, err := s.store.ListOpenBatches(ctx, repository.ListOpenBatchesParams{
-		Point:    in.Point,
-		RadiusM:  in.RadiusKM * metresPerKM,
-		Now:      s.clock.Now(),
-		Page:     in.Page,
-		PageSize: in.PageSize,
+		Point:            in.Point,
+		RadiusM:          in.RadiusKM * metresPerKM,
+		Now:              s.clock.Now(),
+		Page:             in.Page,
+		PageSize:         in.PageSize,
+		SpatialQueryMode: s.cfg.SpatialQueryMode,
 	})
 	if err != nil {
 		return BatchPage{}, err

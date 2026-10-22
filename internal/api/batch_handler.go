@@ -53,6 +53,9 @@ func (s *Server) createBatchesHandler(c *gin.Context) {
 			v.Check(validator.Between(*lng, -maxLongitude, maxLongitude), "rider_location.longitude", "must be between -180 and 180")
 			position.Lng = *lng
 		}
+		if req.RiderLocation.Latitude != nil && req.RiderLocation.Longitude != nil {
+			s.checkServiceArea(v, "rider_location", position)
+		}
 	}
 
 	batch := s.cfg.Batch
@@ -75,12 +78,14 @@ func (s *Server) createBatchesHandler(c *gin.Context) {
 		return
 	}
 
+	started := s.clock.Now()
 	offers, err := s.batches.CreateBatches(c.Request.Context(), service.CreateBatchesInput{
 		RiderID:       req.RiderID,
 		RiderLocation: position,
 		MaxOrders:     maxOrders,
 		RadiusKM:      radiusKM,
 	})
+	s.prom.observeAlgorithm("batching", s.clock.Now().Sub(started))
 	if err != nil {
 		s.handleServiceError(c, err)
 		return

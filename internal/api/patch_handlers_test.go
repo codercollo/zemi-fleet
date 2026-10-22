@@ -34,13 +34,11 @@ func expectPreferencesLoad(store *mock.MockStore, id string) {
 func TestPatchLocation(t *testing.T) {
 	const path = "/api/v2/riders/rider_003/location"
 
-	t.Run("200 applies the ping and bumps the version", func(t *testing.T) {
+	t.Run("200 applies the ping without bumping the version", func(t *testing.T) {
 		h, store := newStoreHandler(t)
-		store.EXPECT().GetRider(gomock.Any(), "rider_003").Return(fakeRiderRow("rider_003"), nil) // version 3
-		store.EXPECT().UpdateRiderLocation(gomock.Any(), gomock.Any()).DoAndReturn(
-			func(_ context.Context, p sqlc.UpdateRiderLocationParams) (sqlc.Rider, error) {
+		store.EXPECT().UpdateRiderLocationTelemetry(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, p sqlc.UpdateRiderLocationTelemetryParams) (sqlc.Rider, error) {
 				assert.Equal(t, "rider_003", p.ID)
-				assert.EqualValues(t, 3, p.Version, "the UPDATE is conditional on the version that was read")
 				assert.Equal(t, -1.3, *p.LastLat)
 				assert.Equal(t, 36.9, *p.LastLng)
 				assert.Equal(t, 270.5, *p.LastBearingDeg)
@@ -48,7 +46,7 @@ func TestPatchLocation(t *testing.T) {
 				assert.True(t, p.LocationUpdatedAt.Equal(testNow), "location_updated_at comes from the injected clock")
 				row := fakeRiderRow("rider_003")
 				row.LastLat, row.LastLng, row.LastBearingDeg, row.LastSpeedKmh = p.LastLat, p.LastLng, p.LastBearingDeg, p.LastSpeedKmh
-				row.Version = 4
+				row.Version = 3
 				return row, nil
 			})
 		expectPreferencesLoad(store, "rider_003")
@@ -57,7 +55,7 @@ func TestPatchLocation(t *testing.T) {
 
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		rider := decode(t, rec)["rider"].(map[string]any)
-		assert.EqualValues(t, 4, rider["version"])
+		assert.EqualValues(t, 3, rider["version"])
 		assert.InDelta(t, 270.5, rider["bearing_degrees"], 1e-9, "bearings come back without float noise")
 		assert.InDelta(t, -1.3, rider["current_location"].(map[string]any)["lat"], 1e-9)
 	})
@@ -78,9 +76,8 @@ func TestPatchLocation(t *testing.T) {
 		for _, tc := range tests {
 			t.Run(tc.name, func(t *testing.T) {
 				h, store := newStoreHandler(t)
-				store.EXPECT().GetRider(gomock.Any(), "rider_003").Return(fakeRiderRow("rider_003"), nil)
-				store.EXPECT().UpdateRiderLocation(gomock.Any(), gomock.Any()).DoAndReturn(
-					func(_ context.Context, p sqlc.UpdateRiderLocationParams) (sqlc.Rider, error) {
+				store.EXPECT().UpdateRiderLocationTelemetry(gomock.Any(), gomock.Any()).DoAndReturn(
+					func(_ context.Context, p sqlc.UpdateRiderLocationTelemetryParams) (sqlc.Rider, error) {
 						assert.Equal(t, tc.wantBearing, p.LastBearingDeg)
 						assert.Equal(t, tc.wantSpeed, p.LastSpeedKmh)
 						row := fakeRiderRow("rider_003")
@@ -107,8 +104,7 @@ func TestPatchLocation(t *testing.T) {
 
 	t.Run("200 when X-Expected-Version matches", func(t *testing.T) {
 		h, store := newStoreHandler(t)
-		store.EXPECT().GetRider(gomock.Any(), "rider_003").Return(fakeRiderRow("rider_003"), nil)
-		store.EXPECT().UpdateRiderLocation(gomock.Any(), gomock.Any()).Return(fakeRiderRow("rider_003"), nil)
+		store.EXPECT().UpdateRiderLocationTelemetry(gomock.Any(), gomock.Any()).Return(fakeRiderRow("rider_003"), nil)
 		expectPreferencesLoad(store, "rider_003")
 
 		rec := send(t, h, http.MethodPatch, path, `{"latitude":-1.3,"longitude":36.9}`, "X-Expected-Version", "3")
@@ -125,8 +121,6 @@ func TestPatchLocation(t *testing.T) {
 			{"bad json", `{"latitude":`, nil},
 			{"unknown field", `{"latitude":-1.3,"longitude":36.9,"altitude":10}`, nil},
 			{"wrong type", `{"latitude":"north","longitude":36.9}`, nil},
-			{"non-numeric version header", `{"latitude":-1.3,"longitude":36.9}`, []string{"X-Expected-Version", "abc"}},
-			{"zero version header", `{"latitude":-1.3,"longitude":36.9}`, []string{"X-Expected-Version", "0"}},
 		}
 		for _, tc := range tests {
 			t.Run(tc.name, func(t *testing.T) {
@@ -141,32 +135,30 @@ func TestPatchLocation(t *testing.T) {
 
 	t.Run("404 for unknown rider", func(t *testing.T) {
 		h, store := newStoreHandler(t)
-		store.EXPECT().GetRider(gomock.Any(), "rider_003").Return(sqlc.Rider{}, domain.ErrNotFound)
+		store.EXPECT().UpdateRiderLocationTelemetry(gomock.Any(), gomock.Any()).Return(sqlc.Rider{}, domain.ErrNotFound)
 
 		rec := send(t, h, http.MethodPatch, path, `{"latitude":-1.3,"longitude":36.9}`)
 
 		assert.Equal(t, http.StatusNotFound, rec.Code)
 	})
 
-	t.Run("409 when X-Expected-Version is stale, without touching the row", func(t *testing.T) {
+	t.Run("200 when X-Expected-Version is stale because telemetry ignores it", func(t *testing.T) {
 		h, store := newStoreHandler(t)
-		store.EXPECT().GetRider(gomock.Any(), "rider_003").Return(fakeRiderRow("rider_003"), nil) // version 3
+		store.EXPECT().UpdateRiderLocationTelemetry(gomock.Any(), gomock.Any()).Return(fakeRiderRow("rider_003"), nil)
+		expectPreferencesLoad(store, "rider_003")
 
 		rec := send(t, h, http.MethodPatch, path, `{"latitude":-1.3,"longitude":36.9}`, "X-Expected-Version", "2")
 
-		assert.Equal(t, http.StatusConflict, rec.Code)
-		assert.Equal(t, conflictBody, strings.TrimSpace(rec.Body.String()))
+		assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	})
 
-	t.Run("409 when another request changed the rider in between", func(t *testing.T) {
+	t.Run("404 when the rider disappears", func(t *testing.T) {
 		h, store := newStoreHandler(t)
-		store.EXPECT().GetRider(gomock.Any(), "rider_003").Return(fakeRiderRow("rider_003"), nil)
-		store.EXPECT().UpdateRiderLocation(gomock.Any(), gomock.Any()).Return(sqlc.Rider{}, domain.ErrNotFound) // 0 rows
+		store.EXPECT().UpdateRiderLocationTelemetry(gomock.Any(), gomock.Any()).Return(sqlc.Rider{}, domain.ErrNotFound)
 
 		rec := send(t, h, http.MethodPatch, path, `{"latitude":-1.3,"longitude":36.9}`)
 
-		assert.Equal(t, http.StatusConflict, rec.Code)
-		assert.Equal(t, conflictBody, strings.TrimSpace(rec.Body.String()))
+		assert.Equal(t, http.StatusNotFound, rec.Code)
 	})
 
 	t.Run("422 with per-field messages", func(t *testing.T) {
@@ -194,8 +186,7 @@ func TestPatchLocation(t *testing.T) {
 
 	t.Run("422 boundaries are accepted", func(t *testing.T) {
 		h, store := newStoreHandler(t)
-		store.EXPECT().GetRider(gomock.Any(), "rider_003").Return(fakeRiderRow("rider_003"), nil)
-		store.EXPECT().UpdateRiderLocation(gomock.Any(), gomock.Any()).Return(fakeRiderRow("rider_003"), nil)
+		store.EXPECT().UpdateRiderLocationTelemetry(gomock.Any(), gomock.Any()).Return(fakeRiderRow("rider_003"), nil)
 		expectPreferencesLoad(store, "rider_003")
 
 		rec := send(t, h, http.MethodPatch, path, `{"latitude":-90,"longitude":180,"bearing_degrees":359.99,"speed_kmh":200}`)

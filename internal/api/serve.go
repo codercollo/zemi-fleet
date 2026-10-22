@@ -43,6 +43,15 @@ func (s *Server) Serve(ctx context.Context, srv *http.Server, ln net.Listener, t
 	if s.limiter != nil {
 		s.background(func() { s.limiter.runCleanup(bgCtx) })
 	}
+	if s.batches != nil && s.cfg.Batch.ExpiryInterval > 0 {
+		s.background(func() { s.runBatchExpiry(bgCtx) })
+	}
+	if s.offline != nil && s.cfg.RiderOfflineAfter > 0 && s.cfg.RiderOfflineSweepInterval > 0 {
+		s.background(func() { s.runOfflineSweep(bgCtx) })
+	}
+	if s.webhookDispatcher != nil && s.cfg.Webhooks.Enabled {
+		s.background(func() { s.runWebhookDispatch(bgCtx) })
+	}
 
 	serveErr := make(chan error, 1)
 	go func() {
@@ -75,4 +84,66 @@ func (s *Server) Serve(ctx context.Context, srv *http.Server, ln net.Listener, t
 	}
 	s.logger.Info("stopped server", "addr", srv.Addr)
 	return nil
+}
+
+func (s *Server) runWebhookDispatch(ctx context.Context) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		if err := s.webhookDispatcher.RunOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			s.logger.Error("webhook dispatch failed", "error", err)
+		}
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (s *Server) runBatchExpiry(ctx context.Context) {
+	sweep := func() {
+		n, err := s.batches.ExpireBatches(ctx)
+		if err == nil {
+			s.prom.setBatchSweep(s.clock.Now(), n)
+		} else if !errors.Is(err, context.Canceled) {
+			s.logger.Error("batch expiry sweep failed", "error", err)
+		}
+	}
+
+	// Sweep immediately on startup, then keep the interval bounded by the
+	// configured cadence. The injected clock supplies business time to SQL.
+	sweep()
+	ticker := time.NewTicker(s.cfg.Batch.ExpiryInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			sweep()
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (s *Server) runOfflineSweep(ctx context.Context) {
+	sweep := func() {
+		n, err := s.offline.Sweep(ctx, s.cfg.RiderOfflineAfter)
+		if err == nil {
+			s.prom.setOfflineSweep(s.clock.Now(), n)
+		} else if !errors.Is(err, context.Canceled) {
+			s.logger.Error("rider offline sweep failed", "error", err)
+		}
+	}
+	sweep()
+	ticker := time.NewTicker(s.cfg.RiderOfflineSweepInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			sweep()
+		case <-ctx.Done():
+			return
+		}
+	}
 }

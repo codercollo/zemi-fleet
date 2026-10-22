@@ -95,7 +95,13 @@ func (s *Server) metricsMiddleware() gin.HandlerFunc {
 			}
 			s.metrics.sent.Add(1)
 			s.metrics.byStatus.Add(strconv.Itoa(status), 1)
-			s.metrics.processingUS.Add(s.clock.Now().Sub(start).Microseconds())
+			duration := s.clock.Now().Sub(start)
+			s.metrics.processingUS.Add(duration.Microseconds())
+			route := c.FullPath()
+			if route == "" {
+				route = "unmatched"
+			}
+			s.prom.observeRequest(route, c.Request.Method, status, duration)
 		}()
 		c.Next()
 		completed = true

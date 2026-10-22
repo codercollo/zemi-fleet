@@ -77,22 +77,38 @@ func TestIntegration_WebhookDeliveriesFollowBatchLifecycle(t *testing.T) {
 
 	_, err := pool.Exec(ctx, `
 		INSERT INTO webhook_subscriptions (id, client_name, url, secret)
-		VALUES ($1, 'batch-lifecycle', 'https://example.com/hook', 'secret');
+		VALUES ($1, 'batch-lifecycle', 'https://example.com/hook', 'secret')`,
+		subscriptionID)
+	require.NoError(t, err)
+
+	_, err = pool.Exec(ctx, `
 		INSERT INTO riders (id, full_name, phone, is_available, max_capacity)
-		VALUES ($2, 'Lifecycle Rider', '+254700000098', true, 5);
+		VALUES ($1, 'Lifecycle Rider', '+254700000098', true, 5)`,
+		riderID)
+	require.NoError(t, err)
+
+	_, err = pool.Exec(ctx, `
 		INSERT INTO batches (id, pickup_centroid_lat, pickup_centroid_lng, pickup_spread_m, orders_count,
 			total_distance_m, estimated_duration_s, total_delivery_fee_cents, estimated_earnings_cents,
 			route_optimization_score, expires_at, created_at)
-		VALUES ($3, -1.2635, 36.803, 0, 1, 1000, 600, 1000, 900, 0.900, $4, $5);
+		VALUES ($1, -1.2635, 36.803, 0, 1, 1000, 600, 1000, 900, 0.900, $2, $3)`,
+		batchID, now.Add(time.Hour), now)
+	require.NoError(t, err)
+
+	_, err = pool.Exec(ctx, `
 		INSERT INTO orders (id, vendor_id, category_code, status, pickup_lat, pickup_lng, delivery_lat, delivery_lng,
 			trip_distance_m, trip_bearing_deg, value_cents, delivery_fee_cents, rider_payout_bps, batch_id, batch_seq,
 			created_at)
-		VALUES ($6, 'ven_001', 'electronics', 'batched', -1.2635, 36.803, -1.2700, 36.8100,
-			1000, 45, 5000, 1000, 9000, $3, 1, $5);
+		VALUES ($1, 'ven_001', 'electronics', 'batched', -1.2635, 36.803, -1.2700, 36.8100,
+			1000, 45, 5000, 1000, 9000, $2, 1, $3)`,
+		orderID, batchID, now)
+	require.NoError(t, err)
+
+	_, err = pool.Exec(ctx, `
 		INSERT INTO batch_stops (batch_id, seq, order_id, type, lat, lng, leg_distance_m, eta_offset_s)
-		VALUES ($3, 1, $6, 'pickup', -1.2635, 36.803, 0, 0),
-		       ($3, 2, $6, 'delivery', -1.2700, 36.8100, 1000, 600);`,
-		subscriptionID, riderID, batchID, now.Add(time.Hour), now, orderID)
+		VALUES ($1, 1, $2, 'pickup', -1.2635, 36.803, 0, 0),
+		       ($1, 2, $2, 'delivery', -1.2700, 36.8100, 1000, 600)`,
+		batchID, orderID)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_, _ = pool.Exec(ctx, `DELETE FROM webhook_subscriptions WHERE id = $1`, subscriptionID)
